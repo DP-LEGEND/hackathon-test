@@ -87,3 +87,13 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - Never commit API keys, credentials, or `.env.local`; `.gitignore` excludes `.env*` files.
 - Keep AI/provider credentials and other secrets server-side; never put them in `NEXT_PUBLIC_*` values.
 - Treat client bundles, responses, logs, and error messages as potential secret disclosure surfaces.
+
+## Multi-agent safety (mandatory, see docs/COLLABORATION.md)
+- Several AI agents and four developers work on this repo at once. Assume another agent may be editing nearby.
+- Never commit or push to `main`; work only on the current feature branch. If you are on `main`, stop and ask.
+- Only edit the folders the developer named for this task. Do not edit shared files (`package.json`, `package-lock.json`, `app/globals.css`, `app/layout.tsx`, `components/ui/`, `components/layout/`, config files, `AGENTS.md`, `CLAUDE.md`, `docs/interfaces.md`) unless explicitly told to.
+- Never run: `git push --force`/`-f`, `git push origin main`, `git reset --hard`, `git checkout -- .`, `git restore .`, `git clean`, `git stash drop`/`clear`, `git rebase` on shared branches, or `npm install <package>` (ask the repo owner).
+- Never resolve merge conflicts by discarding one side of a file; show the conflict to the developer.
+- Run `git status` before editing; if there are changes you did not make, stop and ask instead of overwriting them.
+- Never read, print or commit `.env`/`.env.local` files.
+- No repo-wide reformatting or sweeping refactors.

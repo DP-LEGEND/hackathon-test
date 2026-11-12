@@ -1,0 +1,12 @@
+{
+  "recommendations": [
+    "dbaeumer.vscode-eslint",
+    "bradlc.vscode-tailwindcss",
+    "eamodio.gitlens",
+    "ms-vsliveshare.vsliveshare",
+    "anthropic.claude-code",
+    "openai.chatgpt",
+    "ms-python.python",
+    "ms-toolsai.jupyter"
+  ]
+}
