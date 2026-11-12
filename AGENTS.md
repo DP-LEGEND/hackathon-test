@@ -97,3 +97,17 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - Run `git status` before editing; if there are changes you did not make, stop and ask instead of overwriting them.
 - Never read, print or commit `.env`/`.env.local` files.
 - No repo-wide reformatting or sweeping refactors.
+
+## Code review priorities
+
+Review changes for correctness, reliability, security and demo-breaking regressions.
+
+Prioritise:
+- Exposed secrets, unsafe server/client boundaries and untrusted input.
+- Broken API request/response contracts between teammates' features.
+- Runtime failures, unhandled async errors, race conditions and duplicate submissions.
+- Regressions to core demo functionality and deployment.
+- Unauthorised changes to shared files, dependencies and configuration.
+- Material accessibility and responsive usability issues.
+
+Report actionable findings with severity, file/line, concrete impact and proposed fix. Avoid speculative nitpicks, minor formatting complaints and issues already caught by lint. Never claim tests passed unless executed. Do not merge automatically.
