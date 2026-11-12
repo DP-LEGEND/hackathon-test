@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Pulse — Business Overview",
-  description: "A clearer view of your business. Revenue, subscriptions, and customers in one workspace.",
+  title: "Your app — Starter",
+  description: "A flexible foundation for your next idea.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
