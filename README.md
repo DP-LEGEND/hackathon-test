@@ -1,8 +1,42 @@
-# AI Hackathon Starter
+# Imperial AI Hackathon (14–15 Nov 2026)
+
+Team repo for the Imperial AI Hackathon: build an agentic AI product in a weekend. Product: _to be picked Saturday after the sponsor briefs_ (see `PRODUCT_BRIEF.template.md`).
+
+## Team and roles
+| Who | GitHub | Owns |
+|---|---|---|
+| _fill in_ | DP-LEGEND | _fill in_ |
+| _fill in_ | jeffrey-sammy | _fill in_ |
+| _fill in_ | 5quiwyrm | _fill in_ |
+| aryan | Programmer-123 | _fill in_ |
+
+Suggested split: agent loop + repo owner (merges PRs) · core data/vision/physics logic · frontend · demo lead (test data, real-user testing, pitch, demo script, backup recording).
+
+## Before Saturday (setup only, no product code)
+- [ ] Accept the GitHub invite and clone the repo
+- [ ] `npm ci` then `npm run dev`, check http://localhost:3000 loads (Node.js 26, see section 2 below)
+- [ ] Install the recommended VS Code extensions
+- [ ] Claim Adaption credits (link in the hackathon page announcements) and start Figma for Education verification
+- [ ] Put your own keys in `.env.local` (never committed). Never paste keys in WhatsApp, Discord or a commit
+- [ ] Draft `PRODUCT_BRIEF.md` for the top two ideas so Saturday starts fast
+
+## Safety rules for humans and agents
+Read `docs/COLLABORATION.md` before running any AI agent. Short version: one agent per folder (use `git worktree` for a second), nobody pushes to `main`, only the repo owner merges and installs packages, and agents never run destructive git commands.
+
+## Saturday timeline
+- 09:00 check-in, everyone there by 10:00 (after 12:00 = disqualified)
+- After sponsor briefs: pick the idea, finish `PRODUCT_BRIEF.md`
+- +1 h: agree the contracts between pieces in `docs/interfaces.md`
+- 15:00: ugly end-to-end version working, then improve
+- 21:00 venue closes, no overnight. Sunday: polish, rehearse, demo
+
+---
+
+# Starter guide (from DP-LEGEND/hackathon-test)
 
 A reusable, production-oriented Next.js starter designed for rapid AI product development at hackathons.
 
-Built for a four-person team working collaboratively with Codex, GitHub, and Vercel.
+Built for a four-person team working collaboratively with Codex or Claude Code, GitHub, and Vercel.
 
 **Goal:** Go from sponsor announcement to a polished, functional MVP as quickly as possible.
 
@@ -26,13 +60,13 @@ It does not include a working AI provider, database, or authentication system. T
 
 ## 2. Starting a New Hackathon Project
 
-### Create the repository
+### Get the repository
 
-1. Open this repository on GitHub.
-2. Select **Use this template → Create a new repository**.
-3. Name the new repository after your hackathon product.
-4. Clone the new repository to your computer.
-5. Open the project in VS Code.
+Accept the GitHub invite, then clone the repository:
+
+`git clone https://github.com/DP-LEGEND/hackathon-test.git`
+
+Open the folder in VS Code and install the recommended extensions when prompted.
 
 ### Install dependencies
 
@@ -51,10 +85,10 @@ On Windows PowerShell, use `npm.cmd` if PowerShell blocks npm scripts.
 1. Copy `PRODUCT_BRIEF.template.md` to `PRODUCT_BRIEF.md`.
 2. Complete the product brief with your team.
 3. Agree on the core demo journey, MVP scope, technical ownership, and initial design direction.
-4. Open Codex in VS Code.
-5. Prompt Codex: **"Read HACKATHON_START_PROMPT.md and begin."**
+4. Open Codex or Claude Code in VS Code.
+5. Prompt it: **"Read HACKATHON_START_PROMPT.md and begin."**
 
-Codex should follow `AGENTS.md` and `UI_WORKFLOW.md` when developing the product.
+Codex reads `AGENTS.md` directly; Claude Code reads `CLAUDE.md`, which points to `AGENTS.md`. Both should follow `UI_WORKFLOW.md` for UI work.
 
 ## 3. Repository Structure
 
