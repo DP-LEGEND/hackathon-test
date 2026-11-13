@@ -12,6 +12,8 @@
 
 # testing
 /coverage
+# Browser screenshots, reports, traces, and locally reviewed visual baselines.
+/build/browser-tests/
 
 # next.js
 /.next/
