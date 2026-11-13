@@ -1,5 +1,8 @@
 name: CI
 
+permissions:
+  contents: read
+
 on:
   pull_request:
     branches: [main]
@@ -9,6 +12,7 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - name: Checkout repository
@@ -22,9 +26,73 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
 
       - name: Lint
         run: npm run lint
 
       - name: Production build
         run: npm run build
+
+      - name: Install Microsoft Edge and system dependencies
+        run: |
+          npm exec --no -- playwright install --with-deps msedge
+          npm exec --no -- playwright --version
+          microsoft-edge-stable --version
+
+      - name: Run UI lab smoke tests against a dedicated production server
+        shell: bash
+        env:
+          UI_LAB_BASE_URL: http://127.0.0.1:3100
+          UI_LAB_VISUAL: '0'
+        run: |
+          set -euo pipefail
+          server_log="$RUNNER_TEMP/ui-lab-server.log"
+          setsid node node_modules/next/dist/bin/next start --hostname 127.0.0.1 --port 3100 > "$server_log" 2>&1 &
+          server_pid=$!
+
+          cleanup() {
+            # Signal only the process group created for this job's test server.
+            kill -TERM -- "-$server_pid" 2>/dev/null || true
+            for attempt in {1..10}; do
+              if ! kill -0 -- "-$server_pid" 2>/dev/null; then break; fi
+              sleep 1
+            done
+            kill -KILL -- "-$server_pid" 2>/dev/null || true
+            wait "$server_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+
+          deadline=$((SECONDS + 60))
+          until curl --fail --silent --max-time 2 --output /dev/null "$UI_LAB_BASE_URL/ui-lab"; do
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              echo 'The dedicated Next.js test server exited before readiness.'
+              cat "$server_log"
+              exit 1
+            fi
+            if (( SECONDS >= deadline )); then
+              echo 'Timed out waiting for /ui-lab on the dedicated test server.'
+              cat "$server_log"
+              exit 1
+            fi
+            sleep 1
+          done
+
+          # Preserve test failures. Playwright fixtures own browser/context cleanup;
+          # timeout bounds hangs and the EXIT trap always cleans the test server.
+          timeout --signal=TERM --kill-after=10s 5m npm run test:ui
+
+      - name: Upload browser reports and failure evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-lab-browser-tests-${{ runner.os }}-${{ github.run_attempt }}
+          path: |
+            build/browser-tests/report/
+            build/browser-tests/results/
+            ${{ runner.temp }}/ui-lab-server.log
+          if-no-files-found: ignore
+          retention-days: 7

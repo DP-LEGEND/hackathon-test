@@ -139,3 +139,51 @@ Visual comparison requires an exact pixel match (both colour and differing-pixel
 tolerances are zero); use failures as review evidence, not permission to
 overwrite references. This smoke suite is not a full accessibility audit or
 cross-browser/device test matrix.
+
+## GitHub Actions
+
+The existing `validate` job in `.github/workflows/ci.yml` runs on pull requests
+targeting `main` and pushes to `main`. It retains Node 26, `npm ci`, lint, and
+the production build. After a successful build it:
+
+1. Uses the lockfile-pinned Playwright CLI to install Edge Stable and its Linux
+   dependencies with `npm exec --no -- playwright install --with-deps msedge`.
+   The Playwright and Edge versions are printed in the job log. Every project
+   still uses `channel: "msedge"`; CI never substitutes downloaded Chromium.
+2. Starts the production build on `127.0.0.1:3100` in its own process group,
+   then polls `/ui-lab` for a successful HTTP response for up to 60 seconds.
+   A dead server or readiness timeout fails the job with server diagnostics.
+3. Runs the unchanged nine-test suite with `UI_LAB_BASE_URL` set to that server
+   and `UI_LAB_VISUAL=0`. Test failures fail the job. A five-minute command
+   timeout bounds hung tests; the overall job is limited to 20 minutes.
+4. Closes browser contexts/processes through Playwright's fixtures. A shell
+   exit trap terminates only the dedicated server process group, including
+   on test failure or shell interruption, with a bounded forced-stop fallback.
+   GitHub-hosted runners are disposable if a job is forcibly terminated.
+5. Uploads the HTML report, results (including failure screenshots/traces), and
+   test-server log as `ui-lab-browser-tests-<OS>-<attempt>` for seven days.
+   Upload runs after success or failure when the job has not been cancelled;
+   missing artifacts after an early setup/build failure are ignored.
+
+The CI server runs in a fresh GitHub-hosted checkout and uses only that job's
+production `.next` output. This does not affect an existing local development
+server. No Playwright config, application, package, lockfile, or test changes
+are required for CI. Local Windows commands and existing-server behavior stay
+the same; the Edge installation command above is for the disposable Linux
+runner, not for replacing anyone's local Edge installation.
+
+Playwright supports the branded Edge Stable channel. Its browser installer
+obtains current Edge Stable from Microsoft, rather than a browser revision
+pinned to the npm lockfile. Thus the runner is pinned but Edge is rolling;
+version logs and actual browser launch/tests expose incompatibilities instead
+of silently falling back to another browser. When updating Playwright, review
+the supported Edge channel in the [official browser guidance](https://playwright.dev/docs/browsers).
+
+Download the artifact from the workflow run to inspect the report and traces.
+Artifacts contain synthetic test inputs and may contain DOM/network details;
+inspect them before sharing. No provider credentials or deployment secrets are
+passed to this job, and the job token is restricted to repository read access.
+CI captures evidence but never creates, approves, compares, or updates visual
+baselines. The CI install, Linux server lifecycle, and artifact upload require
+a real Actions run for full verification; local Windows smoke tests alone do
+not prove the workflow has executed successfully on GitHub.
