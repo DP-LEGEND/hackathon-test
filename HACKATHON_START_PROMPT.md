@@ -4,6 +4,9 @@ Read and follow:
 
 - `AGENTS.md`
 - `UI_WORKFLOW.md`
+- `SECURITY.md`
+- `docs/COLLABORATION.md`
+- `docs/BROWSER_TESTING.md`
 - `PRODUCT_BRIEF.md`
 
 The product brief is the source of truth for the product we are building.
@@ -39,37 +42,46 @@ Identify anything in the starter that should be reused, adapted, or removed.
 
 Do not start by rebuilding infrastructure that already works.
 
+Before substantial frontend implementation, use
+[the design-contract template](docs/DESIGN_CONTRACT.template.md) to record one
+concise design direction in the task's authorised destination. Establish
+information priority, screen composition, typography/colour/spacing roles,
+two or three task-serving distinctive choices, responsive behaviour and state
+acceptance conditions. Analyse supplied references using `UI_WORKFLOW.md`:
+separate visible observations from assumptions and explain what to adopt,
+adapt or avoid. Use original or authorised assets.
+
+If the product brief is missing or a material scope decision is unresolved,
+surface it rather than inventing a product. Routine visual choices can be
+made autonomously within the task. Do not add a new approval gate for every
+design choice or delay a working demo to build a large design system.
+
 ## Implementation strategy
 
 Prioritise the shortest complete path through the product.
 
 Build in this order:
 
-1. Core user journey
-2. Required screens and navigation
-3. Functional inputs/actions
-4. Backend/API integration
-5. AI functionality
-6. Loading, empty, error, and success states
-7. Responsive behaviour
-8. Visual polish
-9. Secondary features only if time remains
+1. Brief design contract and responsive composition for the core journey
+2. Smallest working end-to-end path: required screens, navigation and inputs/actions
+3. Required backend/API and AI integration; make permitted temporary mocks explicit
+4. Useful loading, empty, success and error/recovery states as the journey is built
+5. Capture and validate the core path at desktop, tablet and mobile widths
+6. Two bounded, evidence-based visual-refinement rounds from `UI_WORKFLOW.md`
+7. Secondary features only if time remains and required acceptance conditions pass
 
 The first implementation should already demonstrate the core value proposition.
+Do not postpone core responsive behaviour and accessible interactions to a
+final polish phase; preserve them throughout implementation and refinement.
 
 ## UI/UX
 
-Use `UI_WORKFLOW.md`.
+Use `UI_WORKFLOW.md` and the [visual review rubric](docs/VISUAL_REVIEW_RUBRIC.md).
 
 The interface must feel designed specifically for this product rather than adapted from a generic dashboard.
 
-Before substantial UI implementation:
-
-- establish visual hierarchy
-- choose the appropriate information density
-- establish colour and typography direction
-- determine the most important action on each screen
-- decide how the interface should behave on mobile and desktop
+Use the contract established above for hierarchy, density, visual roles and
+responsive composition; do not create a second design specification.
 
 Preserve reusable starter components where they help, but do not retain UI patterns that do not suit the product.
 
@@ -82,7 +94,9 @@ Do not be afraid to substantially change:
 - light/dark theme
 - page composition
 
-The starter is infrastructure, not a visual constraint.
+The starter is infrastructure, not a visual constraint. These design options
+apply only within the task's authorised file scope; shared-token, layout,
+primitive and dependency changes still require the permissions in `AGENTS.md`.
 
 ## Components
 
@@ -113,7 +127,8 @@ Avoid unnecessary edits to:
 - UI primitives
 - configuration
 
-unless the current task requires them.
+Shared files may change only with explicit authorisation under `AGENTS.md` and
+`docs/COLLABORATION.md`; a design preference or this prompt is not permission.
 
 Keep API contracts explicit and typed so frontend, backend, and AI work can progress independently.
 
@@ -149,6 +164,19 @@ After meaningful changes:
 - check mobile and desktop layouts
 - confirm secrets are not exposed
 - review the rendered result critically
+
+Follow the required loop, finding format and two-round work budgets in
+[UI_WORKFLOW.md](UI_WORKFLOW.md#6-codex-execution-workflow). It is the canonical
+execution procedure; the contract records product decisions and the rubric
+supplies review criteria. Actually inspect captured images, and continue
+authorised fixes for functional or significant accessibility failures or report
+a concrete blocker as incomplete work.
+
+Reuse the Playwright/Edge setup described in `docs/BROWSER_TESTING.md`. The
+current smoke suite verifies `/ui-lab`, not arbitrary product routes; exercise
+the product's own journey separately. Preserve server isolation and baseline
+approval rules. Report untested conditions rather than treating a passing test
+or screenshot comparison as proof of design quality.
 
 Do not claim checks passed unless they were actually executed.
 
