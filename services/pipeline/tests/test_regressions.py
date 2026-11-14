@@ -67,3 +67,15 @@ def test_clean_only_fills_short_bounded_gaps():
     assert np.isnan(y[:3, 5]).all()
     assert np.isfinite(y[5:7, 5]).all()
     assert np.isnan(y[10:17, 5]).all()
+
+
+@pytest.mark.parametrize('start,end', [(100, None), (.001, .002)])
+def test_empty_extraction_window(tmp_path, start, end):
+    import cv2
+    path = str(tmp_path / 'small.avi')
+    writer = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*'MJPG'), 30, (32, 32))
+    for _ in range(3):
+        writer.write(np.zeros((32, 32, 3), np.uint8))
+    writer.release()
+    with pytest.raises(ValueError, match='contains no video frames'):
+        extract_raw(path, start_s=start, end_s=end)

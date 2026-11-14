@@ -47,46 +47,54 @@ def extract_raw(
     max_width: int = 1280,
 ) -> dict:
     """Run pose on [start_s, end_s) of a clip. Returns numpy arrays (see module doc)."""
+    if not np.isfinite(start_s) or start_s < 0 or max_width <= 0:
+        raise ValueError("Invalid extraction start or max_width")
+    if end_s is not None and (not np.isfinite(end_s) or end_s <= start_s):
+        raise ValueError("Invalid extraction end")
     cap = cv2.VideoCapture(video_path)
-    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    n_total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    if not cap.isOpened() or w <= 0 or h <= 0 or n_total <= 0:
-        cap.release()
-        raise ValueError(f"Cannot read video: {video_path}")
-    if start_s < 0 or (end_s is not None and end_s <= start_s) or max_width <= 0:
-        cap.release()
-        raise ValueError("Invalid extraction interval or max_width")
-    import mediapipe as mp
-
-    f0 = int(start_s * fps)
-    f1 = n_total if end_s is None else min(n_total, int(end_s * fps))
-    cap.set(cv2.CAP_PROP_POS_FRAMES, f0)
-    scale = min(1.0, max_width / w)
-
     t, img, world, vis = [], [], [], []
-    with _landmarker(model_path) as lm:
-        for i in range(f0, f1):
-            ok, frame = cap.read()
-            if not ok:
-                break
-            if scale < 1.0:
-                frame = cv2.resize(frame, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            res = lm.detect_for_video(
-                mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb), int(i * 1000 / fps)
-            )
-            t.append(i / fps)
-            if res.pose_landmarks:
-                p, q = res.pose_landmarks[0], res.pose_world_landmarks[0]
-                img.append([[l.x * w, l.y * h, l.z * w] for l in p])
-                world.append([[l.x, l.y, l.z] for l in q])
-                vis.append([l.visibility for l in p])
-            else:
-                img.append(np.full((33, 3), np.nan))
-                world.append(np.full((33, 3), np.nan))
-                vis.append(np.zeros(33))
-    cap.release()
+    try:
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        n_total = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+        w, h = cap.get(cv2.CAP_PROP_FRAME_WIDTH), cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+        if (not cap.isOpened() or not np.isfinite([fps, n_total, w, h]).all()
+                or min(fps, n_total, w, h) <= 0):
+            raise ValueError(f"Cannot read video: {video_path}")
+        n_total, w, h = int(n_total), int(w), int(h)
+        f0 = int(start_s * fps)
+        f1 = n_total if end_s is None else min(n_total, int(end_s * fps))
+        if f0 >= f1:
+            raise ValueError("Extraction interval contains no video frames")
+        import mediapipe as mp
+
+        cap.set(cv2.CAP_PROP_POS_FRAMES, f0)
+        scale = min(1.0, max_width / w)
+        with _landmarker(model_path) as lm:
+            for i in range(f0, f1):
+                ok, frame = cap.read()
+                if not ok:
+                    break
+                if scale < 1.0:
+                    frame = cv2.resize(frame, (max(1, int(w * scale)), max(1, int(h * scale))), interpolation=cv2.INTER_AREA)
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                res = lm.detect_for_video(
+                    mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb), int(i * 1000 / fps)
+                )
+                t.append(i / fps)
+                if res.pose_landmarks:
+                    p, q = res.pose_landmarks[0], res.pose_world_landmarks[0]
+                    img.append([[l.x * w, l.y * h, l.z * w] for l in p])
+                    world.append([[l.x, l.y, l.z] for l in q])
+                    vis.append([l.visibility for l in p])
+                else:
+                    img.append(np.full((33, 3), np.nan))
+                    world.append(np.full((33, 3), np.nan))
+                    vis.append(np.zeros(33))
+        if not t:
+            raise ValueError("No video frames could be decoded in the extraction interval")
+    finally:
+        cap.release()
+
     return {
         "fps": fps,
         "size": (w, h),
