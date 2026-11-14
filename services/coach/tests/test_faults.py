@@ -813,7 +813,7 @@ def test_every_rule_measurement_knows_its_joints(sample: dict) -> None:
 @pytest.mark.parametrize("measurement", [
     "elbow_at_contact_deg", "elbow_min_before_deg", "wrist_angle_change_pre_deg", "wrist_uncock_deg",
     "wrist_uncock_ms", "wrist_release_ms", "shoulder_turn_deg", "hip_turn_range_deg",
-    "stance_width_ratio", "stance_open_deg"])
+    "stance_width_ratio", "stance_open_deg", "wrist_at_contact_deg"])
 def test_a_filled_joint_at_contact_nulls_each_measurement_that_reads_it(sample: dict, measurement: str) -> None:
     joints = {j for part, _ in _reads(sample, measurement) for j in part}
     for joint in sorted(joints):
@@ -829,7 +829,7 @@ def test_a_filled_joint_at_contact_nulls_each_measurement_that_reads_it(sample: 
 
 ALL_MEASUREMENTS = ["elbow_at_contact_deg", "elbow_min_before_deg", "wrist_angle_change_pre_deg",
                     "wrist_uncock_deg", "wrist_uncock_ms", "wrist_release_ms", "shoulder_turn_deg",
-                    "hip_turn_range_deg", "stance_width_ratio", "stance_open_deg"]
+                    "hip_turn_range_deg", "stance_width_ratio", "stance_open_deg", "wrist_at_contact_deg"]
 
 
 @pytest.mark.parametrize("offset", [-1, 1])

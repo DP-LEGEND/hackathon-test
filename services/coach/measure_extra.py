@@ -164,6 +164,7 @@ def measurement_reads(swing: dict, hand: str, contact: int, fps: float) -> dict[
     direction = [] if n and np.isfinite(tip).all(axis=1).mean() > 0.8 else [a["wr"]]
     return {
         "elbow_at_contact_deg": [(arm, frames(c, c))],  # physics, unsmoothed
+        "wrist_at_contact_deg": [(wrist, frames(c, c))],  # physics: elbow-wrist-index at contact
         "elbow_min_before_deg": [(arm, frames(0, c + fh))],  # pipeline.features
         "wrist_angle_change_pre_deg": [(wrist, frames(0, c + fh))],  # pipeline.features
         "wrist_uncock_deg": [(wrist, frames(0, c + wh))],
