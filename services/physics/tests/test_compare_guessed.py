@@ -47,3 +47,17 @@ def test_guessed_metrics_are_left_out_not_shown():
 def test_fix_editing_a_guessed_measurement_is_refused(fix, joint):
     with pytest.raises(GuessedFixError, match=f"couldn't see the right {joint} around contact"):
         compare(_wrist_guessed(), fix, 10, fps_real=120, hand="R", side="backhand")
+
+
+def test_amount_zero_unchanged_comparison_always_works():
+    r = compare(_wrist_guessed(), "straighten_elbow", 0.0, fps_real=120, hand="R", side="backhand")
+    assert r["fix"]["amount"] == 0.0 and "elbow_at_contact_deg" in r["notMeasured"]
+
+
+def test_shoulder_fixes_are_refused_when_shoulders_are_guessed():
+    s = _wrist_guessed()
+    for f in s["frames"]:
+        f["filled"] = (f.get("filled") or [False] * 33)
+        f["filled"][12] = True
+    with pytest.raises(GuessedFixError, match="couldn't see the right shoulder"):
+        compare(s, "turn_shoulders_more", 15, fps_real=120, hand="R", side="backhand")
