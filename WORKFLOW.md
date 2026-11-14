@@ -2,6 +2,8 @@
 
 One page. Follow it in order every time. Mac commands first. Where Windows PowerShell is different, it's shown underneath.
 
+**Windows (Dev, Sammy):** run each command on its own line. Windows PowerShell 5.1 doesn't understand `&&`, so never chain commands with it (use separate lines, or `;`). Use `npm.cmd` instead of `npm`.
+
 ## Key times
 
 | When | What |
@@ -47,7 +49,7 @@ git commit -m "Short description of what works now"
 
 ## 3. Test before you open a PR
 
-Stop `npm run dev` first, then run the full check:
+Stop the dev server first (`npm run dev`, Windows `npm.cmd run dev`), then run the full check:
 
 ```
 bash scripts/check.sh
@@ -58,7 +60,7 @@ Windows:
 powershell -ExecutionPolicy Bypass -File scripts\check.ps1
 ```
 
-Every line of the summary must say PASS. Then **look at it working**: run `npm run dev` and open http://localhost:3000/ghost, or run your Python command. Details are in [TEAM.md](TEAM.md#how-to-test-pull-run-check).
+Every line of the summary must say PASS. Then **look at it working**: run `npm run dev` (Windows: `npm.cmd run dev`) and open http://localhost:3000/ghost, or run your Python command. Details are in [TEAM.md](TEAM.md#how-to-test-pull-run-check).
 
 ## 4. Open a PR
 
@@ -70,16 +72,29 @@ Open https://github.com/DP-LEGEND/hackathon-test/compare/main...YOUR-BRANCH and 
 
 In the PR description, write what you changed, which checks passed and how to see it working.
 
-## 5. Merging (Dev only)
+## 5. Merging (fast lane)
 
-Merge a PR as soon as all of these are true. Don't let PRs sit, because small and fast beats big and late.
+Don't let PRs sit, because small and fast beats big and late.
 
+**Your own folders only:** once the CI check is green, ask any teammate to click Approve (GitHub needs one approval), then click "Merge pull request" yourself. You don't need to wait for Dev.
+
+**Shared files:** Dev reviews and merges anything that touches `package.json`, the lockfile, `lib/ghost/types.ts`, `docs/interfaces.md`, `CLAUDE.md`, `AGENTS.md`, config, layout or global CSS.
+
+Before anyone merges, check that:
 - The CI check is green.
-- It only touches the author's own folders. Shared files (`package.json`, the lockfile, `lib/ghost/types.ts`, config, layout, global CSS) need a quick team OK.
-- No keys, `.env` files, videos or model weights in the diff.
-- No merge conflict.
+- There are no keys, `.env` files, videos or model weights in the diff.
+- There's no merge conflict.
+
+**Codex review comments:** a yellow **P2** comment doesn't block merging. Fix it only if it's a real bug for the demo, otherwise skip it or fold it into your next PR. Red **P0/P1** comments must be fixed first.
 
 After **Sunday 09:00**, merge bug fixes only, no new features.
+
+## Going fast
+
+- **Don't wait on other people's PRs.** Build against mock data and the Swing contract in `lib/ghost/types.ts`. `data/samples/swing_sample.json` is a real swing in that shape. When the real piece lands, you swap one import.
+- **One small PR every 1 to 2 hours.** Small PRs get approved in a minute. Big ones sit.
+- **Keep Claude Code on one task.** Run `/clear` between tasks, and paste the whole error, not a summary.
+- **Use `--quick` (Windows `-Quick`)** with the check script while you work. Run the full check once, before the PR.
 
 ## 6. After any merge (everyone)
 

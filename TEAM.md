@@ -54,7 +54,7 @@ Or tell Claude Code: "Commit and push my work and give me the pull request link.
 
 **4. Open a pull request:** open the link Claude gives you (or the yellow "Compare & pull request" button on GitHub), then post the link in the team chat.
 
-**5. Dev merges.** Then go back to step 1 for your next task.
+**5. Merge.** Once CI is green, a teammate approves and you merge PRs that only touch your own folders; Dev merges anything touching shared files (see [WORKFLOW.md](WORKFLOW.md#5-merging-fast-lane)). Then go back to step 1 for your next task.
 
 **Every hour**, pull other people's merged work into your branch: `git pull origin main`. If it says "conflict", stop and ask Claude Code: "Explain this merge conflict. Don't fix it yet." Never let it delete someone else's side.
 
