@@ -7,8 +7,9 @@ from pathlib import Path
 
 import pytest
 
+from wrist.impact import G
 from wrist.sync import (
-    MIN_SWING_DPS, Spike, SyncError, align, find_impacts, read_contacts, synchronise,
+    MIN_IMPACT_G, MIN_SWING_DPS, TAP_ONLY_CLEAR_MS, Spike, SyncError, align, find_impacts, read_contacts, synchronise,
 )
 
 
@@ -35,7 +36,7 @@ def test_first_tap_alignment_reports_small_errors(session) -> None:
     assert a["error_ms"]["n_ok"] == a["error_ms"]["n_pairs"] == 10
     assert a["error_ms"]["mean_abs"] < 20 and a["error_ms"]["max_abs"] < 40
     assert set(session.sync["impacts"]) == set(session.truth["swings"])
-    assert session.sync["warnings"] == []
+    assert session.sync["warnings"] == [] and session.sync["tap_only"] == {}
 
 
 def test_without_video_tap_the_offset_is_fitted_and_flagged(session) -> None:
@@ -72,11 +73,47 @@ def test_wrong_time_scale_shows_up_as_alignment_errors(session) -> None:
     assert any("off by more than" in w for w in s["warnings"])
 
 
-def test_impacts_need_a_moving_forearm_and_one_per_swing() -> None:
-    spikes = [Spike(5.0, 50, 10), Spike(10.0, 80, 900), Spike(10.3, 120, 1100), Spike(20.0, 90, 1000)]
+def test_impacts_need_a_moving_forearm_a_real_knock_and_one_per_swing() -> None:
+    spikes = [Spike(5.0, 50, 10), Spike(10.0, 80, 900), Spike(10.3, 120, 1100), Spike(20.0, 90, 1000),
+              Spike(30.0, 11, 1300)]  # a fast swing's own pull: ~1 g after the high-pass, no ball
     impacts, rejected = find_impacts(spikes, after_t=1.0)
     assert [s.t for s in impacts] == [10.3, 20.0], "the biggest spike of a swing wins"
-    assert len(rejected) == 1 and rejected[0]["t"] == 5.0 and str(int(MIN_SWING_DPS)) in rejected[0]["why"]
+    assert [r["t"] for r in rejected] == [5.0, 30.0]
+    assert str(int(MIN_SWING_DPS)) in rejected[0]["why"]
+    assert "too small" in rejected[1]["why"] and f"{MIN_IMPACT_G:g} g" in rejected[1]["why"]
+    assert find_impacts([Spike(30.0, MIN_IMPACT_G * G + 0.1, 1300)], after_t=1.0)[0], "just over the floor counts"
+
+
+def test_a_shadow_swing_is_timed_from_the_double_tap(shadow) -> None:
+    a = shadow.sync["alignment"]
+    assert [t["swing"] for t in a["tap_only"]] == ["synth-05"] and not a["count_mismatch"]
+    true_contact = shadow.truth["swings"]["synth-05"]["impact_s"]  # when the ball would have been hit
+    assert a["tap_only"][0]["contact_s"] == pytest.approx(true_contact, abs=0.04), "within the sync error"
+    assert shadow.sync["tap_only"] == {"synth-05": a["tap_only"][0]["contact_s"]}
+    assert set(shadow.sync["impacts"]) == set(shadow.truth["swings"]) - {"synth-05"}, "the other 9 pair as before"
+    assert a["error_ms"]["n_ok"] == a["error_ms"]["n_pairs"] == 9
+    assert any("synth-05" in w and "double tap" in w for w in shadow.sync["warnings"])
+    assert any(abs(r["t"] - true_contact) < 0.03 and "too small" in r["why"] for r in shadow.sync["rejected_spikes"])
+
+
+def test_without_the_video_tap_a_shadow_swing_is_not_timed(shadow) -> None:
+    s = synchronise(shadow.rec, shadow.contacts)
+    assert s["alignment"]["tap_only"] == [] and s["tap_only"] == {}
+    assert s["alignment"]["count_mismatch"] and s["alignment"]["error_ms"]["n_ok"] < 10
+
+
+def test_tap_only_needs_no_impact_nearby_and_a_swinging_arm() -> None:
+    contacts = [("near", 8.2), ("shadow", 13.0), ("still", 16.0), ("hit", 18.0)]   # offset 2.0 from the tap
+    a = align([10.0, 20.0], contacts, tap_s=2.0, video_tap_s=0.0, swinging=lambda t: t != 18.0)
+    pairs = {p["swing"]: p for p in a["pairs"]}
+    assert a["tap_only"] == [{"swing": "shadow", "contact_s": 15.0, "contact_video_s": 13.0}]
+    assert pairs["still"]["ok"] is False, "no impact near, but the arm isn't swinging: untrusted, as before"
+    assert pairs["near"]["ok"] is False and pairs["near"]["error_ms"] == pytest.approx(-200)
+    assert 100 < abs(pairs["near"]["error_ms"]) < TAP_ONLY_CLEAR_MS, "an impact 200 ms off is a sync failure"
+    assert pairs["hit"]["ok"] is True
+    b = align([10.0, 20.0], contacts, tap_s=2.0, video_tap_s=0.0, swinging=lambda t: False)
+    assert b["tap_only"] == [], "an arm that isn't swinging is never a shadow swing"
+    assert align([10.0, 20.0], contacts, tap_s=2.0, video_tap_s=0.0)["tap_only"] == [], "no swinging check, no tap-only"
 
 
 def test_align_by_index_without_tap() -> None:

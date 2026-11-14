@@ -9,6 +9,8 @@ total turn rate |gyro| (smoothed over SMOOTH_MS):
 - follow_through_end_ms: the forearm settles after contact (speed back under `rest`).
 - backswing_ms, forward_swing_ms and follow_through_ms are the gaps between those events.
   tempo_ratio = backswing_ms / forward_swing_ms.
+- backswing_to_contact_ms: backswing start to contact, the whole swing's duration. It needs
+  only the backswing start, so it exists even when the top of the backswing can't be found.
 
 rest = max(REST_DPS, REST_FRACTION x the swing's peak speed). "Moving" stretches closer
 together than MERGE_GAP_MS count as one. A separate earlier stretch counts as the
@@ -81,6 +83,7 @@ def tempo(rec: Recording, impact_s: float, speed: Optional[np.ndarray] = None) -
     out: dict[str, Any] = {"estimate": True, "label": "ESTIMATE", "backswing_start_ms": None, "forward_start_ms": None,
                            "contact_ms": 0, "follow_through_end_ms": None, "backswing_ms": None,
                            "forward_swing_ms": None, "follow_through_ms": None, "tempo_ratio": None,
+                           "backswing_to_contact_ms": None,
                            "peak_dps": round(peak), "rest_dps": round(rest), "reasons": []}
     fwd = next((r for r in runs if r[0] <= ipk <= r[1]), None)
     if fwd is None:
@@ -118,6 +121,8 @@ def tempo(rec: Recording, impact_s: float, speed: Optional[np.ndarray] = None) -
             out["reasons"].append("no turn-around at the top of the backswing in the gyro")
 
     bs, fs, fe = out["backswing_start_ms"], out["forward_start_ms"], out["follow_through_end_ms"]
+    if bs is not None:
+        out["backswing_to_contact_ms"] = -bs
     if bs is not None and fs is not None:
         out["backswing_ms"] = fs - bs
         out["forward_swing_ms"] = -fs
