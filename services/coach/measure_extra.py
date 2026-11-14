@@ -54,6 +54,28 @@ def stance_joints_filled(swing: dict, contact: int) -> dict[int, str]:
     return out
 
 
+def wrist_index_filled(swing: dict, hand: str, contact: int) -> str | None:
+    """Why the hitting-side index finger can't be trusted for wrist angles, or None if it can.
+
+    The wrist angle is elbow-wrist-index. The pipeline fills a missing index finger
+    by copying the wrist (pipeline/process.py complete_optional_joints); the hand
+    segment then has zero length and pipeline.features reads a fake 90 deg angle.
+    - "approximated": listed in metadata.approximatedJoints (per swing, so any frame).
+    - "copied from wrist at frame N": exactly the wrist's position on a frame up to
+      contact, the fill signature (a real fingertip never sits on the wrist).
+    """
+    index, wrist = ARM[hand]["index"], ARM[hand]["wr"]
+    listed = set((swing.get("metadata") or {}).get("approximatedJoints") or [])
+    if index in listed:
+        return f"joint {index} approximated"
+    P = to_array(swing)
+    for f in range(min(contact, len(P) - 1) + 1):
+        i, w = P[f, index], P[f, wrist]
+        if np.isfinite(i).all() and np.isfinite(w).all() and np.array_equal(i, w):
+            return f"joint {index} copied from wrist at frame {f}"
+    return None
+
+
 def _flat(v: np.ndarray, up: np.ndarray) -> np.ndarray:
     """Project vector(s) onto the floor plane."""
     return v - np.outer(v @ up, up) if v.ndim > 1 else v - (v @ up) * up

@@ -35,7 +35,9 @@ from physics.metrics import measure, real_fps
 from physics.skeleton import L_SH, R_SH, to_array
 from pipeline.features import swing_features
 
-from coach.measure_extra import STROKES, stance_joints_filled, stance_open_deg, stroke_side
+from coach.measure_extra import (
+    STROKES, stance_joints_filled, stance_open_deg, stroke_side, wrist_index_filled,
+)
 
 Stroke = Literal["forehand", "backhand"]
 Confidence = Literal["high", "medium", "low"]
@@ -235,6 +237,12 @@ def measure_swing(swing: dict, stroke: Optional[Stroke] = None, fps_real: Option
     if filled:
         m["stance_open_deg"] = None
         m["stance_width_ratio"] = None
+
+    # The wrist angle needs the hitting-side index finger. A filled-in index sits on
+    # the wrist and gives a fake 90 deg angle, so the angle change is unmeasured.
+    m["wrist_skipped"] = wrist_index_filled(swing, m["hand"], m["contact_frame"])
+    if m["wrist_skipped"]:
+        m["wrist_angle_change_pre_deg"] = None
     return m
 
 

@@ -430,3 +430,61 @@ def test_other_faults_still_fire_when_stance_is_skipped(sample: dict) -> None:
     swing = _with(sample, metadata={"approximatedJoints": [L_ANKLE, R_ANKLE]})
     skipped = {f["id"] for f in detect_faults(swing, "backhand")}
     assert skipped == clean - {STANCE_FAULT}
+
+
+# ---- A filled-in index finger never produces a wrist fault --------------------------
+
+WRIST_FAULT = "early_wrist_snap"
+R_WRIST, L_INDEX, R_INDEX = 16, 19, 20  # the sample is right-handed
+
+
+def test_real_index_is_measured(sample: dict) -> None:
+    m = measure_swing(sample, "forehand")
+    assert m["wrist_skipped"] is None and math.isfinite(m["wrist_angle_change_pre_deg"])
+    assert WRIST_FAULT in {f["id"] for f in detect_faults(sample, metrics=m)}  # real fault on the sample
+
+
+def test_index_listed_as_approximated_skips_wrist_angle(sample: dict) -> None:
+    swing = _with(sample, metadata={"approximatedJoints": [R_INDEX]})
+    m = measure_swing(swing, "forehand")
+    assert m["wrist_angle_change_pre_deg"] is None
+    assert m["wrist_skipped"] == "joint 20 approximated"
+    result = coach_swing(swing, stroke="forehand")
+    assert WRIST_FAULT not in [result["fault"]["id"]] + result["other_faults"]
+    assert WRIST_FAULT in result["not_measured"]
+    json.dumps(result, allow_nan=False)
+
+
+@pytest.mark.parametrize("frame_offset", [-30, 0])  # before contact, and at contact
+def test_index_copied_onto_wrist_up_to_contact_skips_wrist_angle(sample: dict, frame_offset: int) -> None:
+    swing = _with(sample)
+    f = swing["contactFrame"] + frame_offset
+    swing["frames"][f]["joints"][R_INDEX] = list(swing["frames"][f]["joints"][R_WRIST])
+    m = measure_swing(swing, "forehand")
+    assert m["wrist_skipped"] == f"joint 20 copied from wrist at frame {f}"
+    assert m["wrist_angle_change_pre_deg"] is None
+    assert WRIST_FAULT not in {x["id"] for x in detect_faults(swing, metrics=m)}
+
+
+def test_copy_after_contact_or_off_side_index_keeps_wrist_angle(sample: dict) -> None:
+    swing = _with(sample, metadata={"approximatedJoints": [L_INDEX, 27]})  # non-hitting index, an ankle
+    after = swing["contactFrame"] + 5
+    swing["frames"][after]["joints"][R_INDEX] = list(swing["frames"][after]["joints"][R_WRIST])
+    m = measure_swing(swing, "forehand")
+    assert m["wrist_skipped"] is None and math.isfinite(m["wrist_angle_change_pre_deg"])
+    assert m["stance_skipped"] is not None  # the ankle is still handled separately
+
+
+def test_left_hander_checks_the_left_index(sample: dict) -> None:
+    from coach.measure_extra import wrist_index_filled
+
+    c = sample["contactFrame"]
+    assert wrist_index_filled({**sample, "metadata": {"approximatedJoints": [L_INDEX]}}, "L", c) == "joint 19 approximated"
+    assert wrist_index_filled({**sample, "metadata": {"approximatedJoints": [R_INDEX]}}, "L", c) is None
+
+
+def test_other_faults_still_fire_when_wrist_is_skipped(sample: dict) -> None:
+    clean = {f["id"] for f in detect_faults(sample, "forehand")}
+    swing = _with(sample, metadata={"approximatedJoints": [R_INDEX]})
+    skipped = {f["id"] for f in detect_faults(swing, "forehand")}
+    assert skipped == clean - {WRIST_FAULT}
