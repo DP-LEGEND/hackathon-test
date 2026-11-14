@@ -1,29 +1,30 @@
-"""Impact quality from the forearm phone: clean hit or mishit. Owner: Henoch.
+"""Impact from the forearm phone: how hard the knock was and how long the arm rang. Owner: Henoch.
 
-ESTIMATE, and RELATIVE: each impact is judged against the same player's other impacts in
-the session, because nobody has labelled real mishits yet. A phone at 100 Hz on the
-forearm also can't resolve racket-frame vibration directly, only its echo in the arm.
+ESTIMATE, REPORTED BUT NOT JUDGED: nobody has labelled real clean hits and mishits yet, so
+nothing here says "clean" or "mishit". A phone at 100 Hz on the forearm also can't resolve
+racket-frame vibration directly (that's hundreds of Hz), only its slower echo in the arm, and
+it samples every 10 ms: resolution_ms says so.
 
 Per impact (the sensor's own spike, sync.py), after the same high-pass sync uses (the
 swing's own smooth acceleration removed):
 - peak_g: the spike's height in g.
 - width_ms: how long the spike stays at or above half its height (first to last sample,
-  within +-WIDTH_LIMIT_MS). A clean hit is one sharp knock. An off-centre hit sets the racket
-  and arm shaking, so the spike lasts longer, and its height is often unusual.
+  within +-WIDTH_LIMIT_MS).
+- ring_down_ms: from the peak until the shaking dies away: the last sample at or above
+  threshold_g (RING_FRACTION of the peak, or the recording's noise floor if that's higher)
+  before the signal stays below it for RING_QUIET_MS. Ringing passes through zero between
+  shakes, so short dips don't end it, and a lone noise blip after a quiet stretch doesn't
+  extend it. A clean knock dies in a sample or two; an off-centre hit keeps the racket and
+  arm shaking. ring_down_capped: no RING_QUIET_MS quiet run was found before the search
+  stopped, either RING_LIMIT_MS after the peak or at the end of the recording (an impact
+  near the end), so ring_down_ms is only a floor.
 - clipped: the accelerometer reached its range limit during the spike, so peak_g is only
   a floor.
-
-judge() turns these into robust z-scores against the session's OTHER impacts (median and
-MAD, with floors so identical swings don't divide by zero):
-    z_peak  = (peak - usual) / spread      both ways: a frame hit jolts harder, a shank barely touches
-    z_width = (width - usual) / spread     one way: only a longer spike is worse
-An impact is a mishit when |z_peak| or z_width passes MISHIT_Z. Its score runs from 100
-(your usual impact) through 50 (on the mishit line) to 0 (twice as far out).
 """
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 
@@ -32,8 +33,10 @@ from wrist.load import Recording
 G = 9.80665
 PEAK_SEARCH_MS = 40.0       # the spike's peak is looked for this close to the impact time
 WIDTH_LIMIT_MS = 100.0      # a spike can't be wider than this either side of its peak
-MISHIT_Z = 3.0              # robust SDs from your usual impact
-MIN_BASELINE = 4            # other impacts needed to judge one
+RING_FRACTION = 0.1         # ring-down ends when the shaking stays below this fraction of the peak
+RING_LIMIT_MS = 300.0       # ...looked for this long after the peak
+RING_QUIET_MS = 50.0        # ...and must stay below it this long to count as over
+NOISE_K = 3.0               # noise floor = median + NOISE_K x MAD of the high-passed signal
 CLIP_FRACTION, CLIP_MIN_SAMPLES = 0.995, 3   # a flat top this close to the max, this often = saturated
 
 
@@ -45,10 +48,17 @@ def clip_levels(rec: Recording) -> np.ndarray:
     return np.where(flat, top, np.inf)
 
 
-def impact_shape(rec: Recording, hp: np.ndarray, impact_s: float, clip: np.ndarray) -> dict[str, Any]:
-    """peak_g, width_ms (full width at half maximum) and clipped for the spike at impact_s.
+def noise_floor(hp: np.ndarray) -> float:
+    """The high-passed signal's ordinary level (m/s^2): ring-down never counts noise as shaking."""
+    med = float(np.median(hp))
+    return med + NOISE_K * 1.4826 * float(np.median(np.abs(hp - med)))
 
-    hp: sync.spike_signal(rec), the high-passed acceleration magnitude.
+
+def impact_shape(rec: Recording, hp: np.ndarray, impact_s: float, clip: np.ndarray,
+                 floor: float = 0.0) -> dict[str, Any]:
+    """peak_g, width_ms (full width at half maximum), ring-down and clipped for the spike at impact_s.
+
+    hp: sync.spike_signal(rec), the high-passed acceleration magnitude. floor: noise_floor(hp).
     """
     t, n, dt = rec.t, rec.t.size, 1.0 / rec.rate_hz
     i0 = int(np.argmin(np.abs(t - impact_s)))
@@ -67,50 +77,34 @@ def impact_shape(rec: Recording, hp: np.ndarray, impact_s: float, clip: np.ndarr
         if left > 0 and hp[left - 1] < half else t[left]
     t_right = t[right] + dt * (hp[right] - half) / (hp[right] - hp[right + 1]) \
         if right < n - 1 and hp[right + 1] < half else t[right]
+    # Ring-down: walk on from the peak until RING_QUIET_MS in a row below the threshold.
+    thr = max(RING_FRACTION * peak, floor)
+    ring_lim = int(round(RING_LIMIT_MS / 1000 * rec.rate_hz))
+    quiet = max(1, int(round(RING_QUIET_MS / 1000 * rec.rate_hz)))
+    end = min(n - 1, i + ring_lim)
+    last, below, settled = i, 0, False
+    for k in range(i + 1, end + 1):
+        if hp[k] >= thr:
+            last, below = k, 0
+        else:
+            below += 1
+            if below >= quiet:
+                settled = True
+                break
+    t_end = t[last] + dt * (hp[last] - thr) / (hp[last] - hp[last + 1]) \
+        if last < n - 1 and hp[last + 1] < thr <= hp[last] else t[last]
     near = rec.acc[max(0, i - 2): i + 3]
     return {"peak_g": round(peak / G, 2), "width_ms": round(float(t_right - t_left) * 1000, 1),
+            "ring_down_ms": round(min(float(t_end - t[i]) * 1000, RING_LIMIT_MS), 1),
+            # No 50 ms quiet run before the search stopped, at the 300 ms limit or at the end of
+            # the recording: ring_down_ms is only a floor, never a completed decay.
+            "ring_down_capped": not settled,
+            "threshold_g": round(thr / G, 2),
             "clipped": bool((np.abs(near) >= CLIP_FRACTION * clip).any())}
 
 
-def _usual(values: list[float], floor: float) -> tuple[float, float]:
-    v = np.asarray(values, float)
-    med = float(np.median(v))
-    return med, max(1.4826 * float(np.median(np.abs(v - med))), floor)
-
-
-def judge(shapes: dict[str, Optional[dict[str, Any]]], rate_hz: float) -> dict[str, dict[str, Any]]:
-    """Each impact against the session's other (unclipped) impacts: quality, score, why."""
-    ids = [k for k, v in shapes.items() if v is not None]
-    out: dict[str, dict[str, Any]] = {}
-    for sid in ids:
-        s = shapes[sid]
-        assert s is not None
-        others = [shapes[o] for o in ids if o != sid and not shapes[o]["clipped"]]  # type: ignore[index]
-        entry: dict[str, Any] = {"estimate": True, "label": "ESTIMATE", **s, "quality": None, "score": None,
-                                 "z_peak": None, "z_width": None, "baseline_n": len(others), "reasons": [],
-                                 "relative_to": "this session's other impacts"}
-        if len(others) < MIN_BASELINE:
-            entry["reasons"] = [f"needs {MIN_BASELINE} other impacts to compare with, has {len(others)}"]
-            out[sid] = entry
-            continue
-        peak_med, peak_sd = _usual([o["peak_g"] for o in others], 0.05 * np.median([o["peak_g"] for o in others]))
-        widths = [o["width_ms"] for o in others]
-        width_med, width_sd = _usual(widths, max(0.1 * float(np.median(widths)), 500.0 / rate_hz))
-        zp = (s["peak_g"] - peak_med) / peak_sd
-        zw = (s["width_ms"] - width_med) / width_sd
-        z = max(abs(zp), zw)
-        reasons = []
-        if zp > MISHIT_Z:
-            reasons.append(f"spike {s['peak_g']:.1f} g, far above your usual {peak_med:.1f} g")
-        elif zp < -MISHIT_Z:
-            reasons.append(f"spike {s['peak_g']:.1f} g, far below your usual {peak_med:.1f} g")
-        if zw > MISHIT_Z:
-            reasons.append(f"spike {s['width_ms']:.0f} ms wide vs your usual {width_med:.0f} ms (the racket rang)")
-        if s["clipped"]:
-            reasons.append("the accelerometer hit its limit, so the real peak was higher")
-        entry.update(quality="mishit" if z > MISHIT_Z else "clean",
-                     score=int(round(100 * float(np.clip(1 - z / (2 * MISHIT_Z), 0.0, 1.0)))),
-                     z_peak=round(float(zp), 1) + 0.0, z_width=round(float(zw), 1) + 0.0,  # no -0.0
-                     reasons=reasons)
-        out[sid] = entry
-    return out
+def impact_report(rec: Recording, hp: np.ndarray, impact_s: float, clip: np.ndarray, floor: float) -> dict[str, Any]:
+    """One impact's numbers, labelled ESTIMATE and explicitly not judged."""
+    return {"estimate": True, "label": "ESTIMATE", **impact_shape(rec, hp, impact_s, clip, floor),
+            "resolution_ms": round(1000.0 / rec.rate_hz, 1), "judged": False,
+            "note": "reported only: not judged as clean or mishit until real labelled hits exist"}

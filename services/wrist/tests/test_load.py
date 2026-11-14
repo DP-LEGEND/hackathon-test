@@ -78,6 +78,17 @@ def test_roll_pitch_yaw_used_when_there_is_no_quaternion(export: Path, tmp_path:
     assert gyro_convention(rec)["ok"], "the Euler fallback still matches the gyro"
 
 
+def test_orientation_file_is_optional(export: Path, tmp_path: Path) -> None:
+    gone = tmp_path / "no-orientation"
+    shutil.copytree(export, gone)
+    (gone / "Orientation.csv").unlink()
+    rec = load_recording(gone)
+    full = load_recording(export)
+    assert rec.quat is None and rec.orientation == "none" and rec.mock is True
+    assert gyro_convention(rec)["ok"] is False and gyro_convention(rec)["convention"] is None
+    assert rec.t.size == pytest.approx(full.t.size, abs=2), "accelerometer and gyro still line up"
+
+
 def test_no_metadata_means_not_mock(export: Path) -> None:
     (export / "Metadata.csv").unlink()
     assert load_recording(export).mock is False
