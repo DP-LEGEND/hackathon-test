@@ -15,9 +15,9 @@ It prints one PASS (green) or FAIL (red) line per check and exits 1 if any check
                says over_rotation; the compare file for the coach's fix is in court coordinates,
                with the PREDICTED front wall at 1.92 m (within 0.05) at the ASSUMED 12 deg.
   3. backhand  The saved backhand: front wall at 0.78 m (within 0.05) at 3 deg, from anchor x = 2.0.
-  Both read the fix /ghost starts on: the coach's ghost_fix (else its first fault's fix). If that
-  fix has no usable compare file, the check fails rather than trying another fix. If the coach names
-  none, the first fix in catalogue order with a file is checked, and the PASS line says so.
+  Both read the fix /ghost starts on: the coach's ghost_fix, which must have a usable compare file
+  (else the check fails rather than trying another fix); without one, the first fault fix /ghost can
+  show; without that, the first usable fix in catalogue order. The PASS line names which.
   4. pages     /ghost and /upload answer 200.
   5. process   POST /process with no file answers exactly 422 (anything else fails, with the status).
 
@@ -85,42 +85,47 @@ class Smoke:
         return self.saved_files[name]
 
 
-def _coach_fix(coach: dict) -> str | None:
-    """The fix the coach names, the way /ghost reads it: ghost_fix, else the first fault's fix
-    (app/ghost/sources.ts coachPickFix). None when the coach names no fix ("Nothing to fix")."""
-    if isinstance(coach.get("ghost_fix"), str) and coach["ghost_fix"]:
-        return coach["ghost_fix"]
-    for fault in coach.get("faults") or []:
-        if isinstance(fault, dict) and isinstance(fault.get("fix"), str) and fault["fix"]:
-            return fault["fix"]
-    return None
+def _usable(option) -> bool:
+    """A catalogue fix /ghost can open: no error, and a compare file."""
+    return isinstance(option, dict) and not option.get("error") and bool(option.get("file"))
 
 
 def _compare_for(smoke: Smoke, entry: dict, coach: dict) -> tuple[str, dict, str]:
-    """(fix, compare file, why this fix). When the coach names a fix, its compare file must exist: a
-    missing or unavailable one fails here, and no other fix is checked instead. When the coach names
-    none, /ghost opens on the first fix in catalogue order that has a file, so that is checked.
+    """(fix, compare file, why this fix) for the fix /ghost starts on, in the page's order
+    (coachPickFix in app/ghost/sources.ts, then activeFix in app/ghost/ghost-demo.tsx):
+
+    1. The coach's ghost_fix. The coach promised this ghost, so it must have a usable compare file.
+       If it hasn't, the check fails; the page would quietly open another fix instead.
+    2. Else the first fault whose fix is usable. Like the page, skip fault fixes physics can't show
+       (e.g. firm_wrist), so a coach without a ghost fix doesn't fail here while the demo works.
+    3. Else the first usable fix in catalogue order ("Nothing to fix"). The PASS line says so.
+
     Every compare file of a swing has the same "you" ball, which is what the checks read."""
-    fixes = entry.get("fixes") or {}
-    named = _coach_fix(coach)
-    if named is not None:
-        option = fixes.get(named)
-        if option is None:
-            raise CheckFailed(f"{entry.get('id')}: the coach names {named!r}, which catalogue.json doesn't list")
-        if option.get("error") or not option.get("file"):
-            why = option.get("error") or "catalogue.json has no compare file for it"
-            raise CheckFailed(f"{entry.get('id')}: the coach names {named!r}, but it has no usable compare file: {why}")
+    swing, fixes = entry.get("id"), entry.get("fixes") or {}
+
+    def load(fix: str, why: str) -> tuple[str, dict, str]:
         try:
-            return named, smoke.saved(option["file"]), f"the coach's fix {named}"
+            return fix, smoke.saved(fixes[fix]["file"]), why
         except CheckFailed as e:
-            raise CheckFailed(f"{entry.get('id')}: the coach names {named!r}, but its compare file "
-                              f"is unavailable: {e}") from None
+            raise CheckFailed(f"{swing}: {why}, but its compare file is unavailable: {e}") from None
+
+    ghost = coach.get("ghost_fix")
+    if isinstance(ghost, str) and ghost:
+        option = fixes.get(ghost)
+        if option is None:
+            raise CheckFailed(f"{swing}: the coach's ghost fix {ghost!r} isn't listed in catalogue.json")
+        if not _usable(option):
+            reason = option.get("error") or "catalogue.json has no compare file for it"
+            raise CheckFailed(f"{swing}: the coach's ghost fix {ghost!r} has no usable compare file: {reason}")
+        return load(ghost, f"the coach's ghost fix {ghost}")
+    for fault in coach.get("faults") or []:
+        fix = fault.get("fix") if isinstance(fault, dict) else None
+        if isinstance(fix, str) and _usable(fixes.get(fix)):
+            return load(fix, f"no ghost fix, so the fix for the coach's {fault.get('id')} fault: {fix}")
     for fix in smoke.saved("catalogue.json").get("fixes") or list(fixes):
-        option = fixes.get(fix) or {}
-        if not option.get("error") and option.get("file"):
-            return fix, smoke.saved(option["file"]), (
-                f"the coach names no fix, so /ghost opens on the first fix in catalogue order: {fix}")
-    raise CheckFailed(f"{entry.get('id')}: no fix has a compare file in catalogue.json")
+        if _usable(fixes.get(fix)):
+            return load(fix, f"the coach names no fix, so /ghost opens on the first usable fix: {fix}")
+    raise CheckFailed(f"{swing}: no fix has a usable compare file in catalogue.json")
 
 
 def _court_problems(compare: dict, wall: float, elevation: float, anchor_x: float | None = None) -> list[str]:
@@ -158,7 +163,7 @@ def check_hero(smoke: Smoke) -> str:
     if entry is None:
         raise CheckFailed(f"catalogue.json's defaultSwing {hero!r} isn't in its swings")
     coach = smoke.saved(entry["coach"])
-    fix, compare, why = _compare_for(smoke, entry, coach)
+    _, compare, why = _compare_for(smoke, entry, coach)
     problems = _court_problems(compare, wall=1.92, elevation=12.0)
     fault = (coach.get("fault") or {}).get("id")
     if fault != "over_rotation":
@@ -176,7 +181,7 @@ def check_backhand(smoke: Smoke) -> str:
             break
     else:
         raise CheckFailed("no saved backhand in catalogue.json (no coach file says stroke 'backhand')")
-    fix, compare, why = _compare_for(smoke, entry, coach)
+    _, compare, why = _compare_for(smoke, entry, coach)
     problems = _court_problems(compare, wall=0.78, elevation=3.0, anchor_x=2.0)
     if problems:
         raise CheckFailed(f"{entry['id']}: " + "; ".join(problems))
