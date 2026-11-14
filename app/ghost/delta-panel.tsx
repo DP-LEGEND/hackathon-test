@@ -11,11 +11,22 @@ import {
   formatChange,
   formatValue,
   metricName,
+  notJudgedReason,
   type Change,
   type CompareResult,
+  type NotJudged,
 } from "./compare";
 
-type Row = { key: string; name: string; you: string; ghost: string; change: string; changed: boolean };
+type Row = {
+  key: string;
+  name: string;
+  you: string;
+  ghost: string;
+  change: string;
+  changed: boolean;
+  /** Why this number isn't a measurement, when the coach says it reads a guessed joint. */
+  caveat?: string;
+};
 
 function changeRow(key: string, name: string, c: Change, unit: string): Row {
   return {
@@ -32,24 +43,40 @@ export function BodyChanges({
   compare,
   flagged,
   coached,
+  notJudged,
 }: {
   compare: CompareResult;
   /** The coach found the fault this fix addresses. */
   flagged: boolean;
   /** False when no coach has looked at this swing. */
   coached: boolean;
+  /**
+   * Measurements the coach wouldn't judge because they read a guessed joint. Physics measures
+   * the same names here, but doesn't check for guessed joints itself, so those rows say so.
+   */
+  notJudged: NotJudged[];
 }) {
   const why = !coached
     ? "Demo size: no coach has looked at this swing."
     : flagged
       ? "The coach flagged this fault."
       : "Demo size: the coach didn't flag this fault.";
+  const rows = compare.metrics.map((m): Row => {
+    const skipped = notJudged.find((n) => n.measurement === m.key);
+    const row = changeRow(m.key, metricName(m.key), m, m.unit);
+    if (!skipped) return row;
+    const reason = notJudgedReason(skipped.why).text;
+    return { ...row, changed: false, caveat: `Not a measurement: ${reason}.` };
+  });
+  const guessed = rows.some((r) => r.caveat);
   return (
     <DeltaCard
       id="delta-body"
       title="What the fix changes"
-      note={`${fixName(compare.fix.id)} by ${formatValue(compare.fix.amount, compare.fix.unit)}, measured by code on both skeletons. ${why}`}
-      rows={compare.metrics.map((m) => changeRow(m.key, metricName(m.key), m, m.unit))}
+      note={`${fixName(compare.fix.id)} by ${formatValue(compare.fix.amount, compare.fix.unit)}, measured by code on both skeletons${
+        guessed ? ", except where a row reads a joint the camera couldn't see" : ""
+      }. ${why}`}
+      rows={rows}
     />
   );
 }
@@ -148,6 +175,7 @@ function DeltaCard({
             <tr key={row.key} className={cn("border-t align-top", !row.changed && "text-muted-foreground")}>
               <th scope="row" className="py-1.5 pr-2 text-left font-normal">
                 {row.name}
+                {row.caveat && <span className="mt-0.5 block text-xs text-pretty">{row.caveat}</span>}
               </th>
               <td className="px-2 py-1.5 text-right" style={row.changed ? { color: YOU_COLOUR } : undefined}>
                 {row.you}

@@ -23,6 +23,7 @@ import {
 import { BallChanges, BodyChanges } from "./delta-panel";
 import { FixPicker } from "./fix-picker";
 import { GhostStage, type StageStatus } from "./ghost-stage";
+import { PredictionPanel } from "./prediction-panel";
 import { SceneLegend } from "./scene-legend";
 import type { BallPathView, CameraView } from "./skeleton-scene";
 import {
@@ -358,9 +359,11 @@ export function GhostDemo() {
                 compare={compare}
                 flagged={faults.some((f) => f.fix === compare.fix.id)}
                 coached={coachCaption !== null}
+                notJudged={coachCaption?.notJudged ?? []}
               />
             </div>
           )}
+          {you && <PredictionPanel you={you} compare={compare} />}
         </>
       )}
     </div>

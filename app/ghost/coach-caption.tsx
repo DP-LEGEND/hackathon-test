@@ -6,7 +6,7 @@ import { RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { GHOST_COLOUR, YOU_COLOUR } from "./colours";
-import type { CoachCaption } from "./compare";
+import { groupNotJudged, listWords, type CoachCaption } from "./compare";
 
 export type CaptionState =
   | { kind: "loading" }
@@ -52,7 +52,11 @@ export function CoachCaptionBar({ state, size }: { state: CaptionState; size: "l
               className={cn("mt-1 font-medium text-balance", large ? "text-lg sm:text-2xl" : "text-sm sm:text-base")}
               style={{ color: YOU_COLOUR }}
             >
-              {state.caption.fault ? tidyLabel(state.caption.fault.label) : "No fault found"}
+              {state.caption.fault
+                ? tidyLabel(state.caption.fault.label)
+                : state.caption.notJudged.length > 0
+                  ? "No fault found in what the camera could see"
+                  : "No fault found"}
             </p>
             <blockquote
               className={cn(
@@ -68,9 +72,24 @@ export function CoachCaptionBar({ state, size }: { state: CaptionState; size: "l
                 {state.caption.ghostNote}
               </p>
             )}
+            <NotJudgedNote caption={state.caption} large={large} />
           </>
         )}
       </figure>
     </div>
+  );
+}
+
+/** One line saying some checks weren't judged, and which joints the camera couldn't see. */
+function NotJudgedNote({ caption, large }: { caption: CoachCaption; large: boolean }) {
+  const groups = groupNotJudged(caption.notJudged);
+  if (groups.length === 0) return null;
+  const checks = new Set(groups.flatMap((g) => g.checks)).size;
+  const joints = [...new Set(groups.map((g) => g.joint).filter((j): j is string => j !== null))];
+  return (
+    <p className={cn("mt-1.5 text-balance text-muted-foreground", large ? "text-sm sm:text-base" : "text-xs sm:text-sm")}>
+      Not judged: {checks} {checks === 1 ? "check" : "checks"}
+      {joints.length > 0 && `, because the camera couldn't see the ${listWords(joints)}`}.
+    </p>
   );
 }

@@ -6,8 +6,9 @@ The demo flow has four steps: **pick a swing**, **the coach's call**, **the ghos
 |---|---|
 | `ghost-demo.tsx` | The flow: steps, which swing and fix, loading |
 | `sources.ts` | Swings from the swing API or the saved samples |
-| `ghost-stage.tsx`, `skeleton-scene.ts` | The 3D view (three.js) and playback |
+| `ghost-stage.tsx`, `skeleton-scene.ts`, `skeleton-shape.ts` | The 3D view (three.js) and playback |
 | `compare.ts`, `swing.ts` | Checks the JSON before anything is drawn |
+| `provenance.ts`, `joint-legend.tsx`, `prediction-panel.tsx` | Which joints were measured and which guessed, and "How this was predicted" |
 
 ## Where swings come from
 
@@ -21,6 +22,25 @@ The ghost starts on the coach's `ghost_fix` with `ghost_fix_amount`, and the cap
 Pipeline skeletons are hip-centred, y up, and face +z. The court's front wall is at z = 0, so `skeleton-scene.ts` turns both figures 180° about y (`[x, y, z] -> [-x, y, -z]`). Seen from behind, a right-handed forehand then hits on the player's right, as in the phone video. On the court step, the player moves so the hitting wrist at the contact frame is exactly over the PREDICTED ball's first point in x and z. The wrist is joint 16 for `R` and 15 for `L`, from `metadata.hand`, else the hand compare used. The ghost moves by the same offset. Height isn't snapped: the wrist is about 0.9 m up at contact and the ball's assumed start is 0.6 m, so the feet stay on the floor and the ball leaves about 30 cm below the hand. Physics would need to start the ball at the measured hand height for both to line up.
 
 None of that applies when a compare response has top-level `"coordinateSystem": "court"`: physics has then already placed the swings in court coordinates. Those swings are drawn exactly as given, with no turn, floor offset or placement. Only the side-by-side 1.1 m ghost shift stays, and the ghost's PREDICTED ball path moves with it, so it still leaves from the ghost's hand. The page notes that this is display only. The camera aims at the hips at contact. Any other value, or no field, means hip-centred. The raw swing shown before a compare loads is always hip-centred.
+
+## Measured or guessed
+
+A guess is never drawn or written as a measurement. `provenance.ts` reads, per frame, whichever of these the swing JSON has. A joint counts as guessed (the camera couldn't see it) when:
+
+- `frames[i].filled[j]` is `true` (docs/interfaces.md, #39);
+- `frames[i].visibility[j]` is below 0.5, the coach's cut-off;
+- `frames[i].approximatedJoints` lists it, by index or by MediaPipe name (`right_wrist`, `RIGHT_WRIST` and `rightWrist` all work);
+- or `metadata.approximatedJoints` lists it, which covers the whole swing, so every frame.
+
+A list with the wrong length, or an entry that isn't a joint, is ignored. A file with none of these fields draws every joint solid, and the legend says the file doesn't mark guessed joints frame by frame: absence means unknown, not measured. Today's saved samples are like that. The ghost is your swing with one fix, so it also takes your flags frame for frame.
+
+- **3D view:** a guessed joint and every bone touching it are drawn at 35% of the figure's opacity, as thin dashes, on that frame only. The head fades with an ear and the neck with a shoulder. The frame counter names what's faded, e.g. `you f28 (est. right wrist)`, and the slider's screen-reader text says it too.
+- **Legend under the view:** solid = measured from video, faded = estimated (the camera couldn't see it).
+- **"How this was predicted"** (collapsed, under everything): two-camera 3D pose and this swing's camera count (`source`, else `metadata.reconstruction`); how physics stands you on court from the racket head at contact; every input the ball model used, each with the label the compare response gives it (`ESTIMATE`, `ASSUMED`, `RECORDED`, …), never one the page makes up; and how many frames show a faded joint, with which joints and frames. The share of frames counts the joints the figure draws. Guessed points it doesn't draw (face, little fingers, thumbs) are listed on their own.
+- **Coach:** the checks the coach skipped because they'd read a guessed joint (`metrics.guessed_joints`, plus the older `stance_skipped` / `wrist_skipped`) show as "Not judged: … The camera couldn't see the right wrist (filled at frame 26)." `not_measured` lists the faults it couldn't check. With no fault left to call, the caption says "No fault found in what the camera could see".
+- **What the fix changes:** physics doesn't check for guessed joints yet. Where the coach says a measurement with the same name reads one (e.g. `stance_open_deg`), that row says "Not a measurement" and why.
+
+To see it, serve a swing with flags through the live service. Write a folder holding the swing file and a `manifest.json` of `{"files": ["<swing>.json"]}`, then point `GHOST_SWINGS_DIR` at that folder.
 
 To try live swings, run this from the repo folder with the venv activated:
 
