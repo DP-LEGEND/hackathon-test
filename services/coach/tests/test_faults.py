@@ -265,8 +265,9 @@ def test_sample_backhand_ghost_fault_is_animatable(sample: dict) -> None:
 
 
 def test_no_ghost_fault_when_nothing_is_animatable(monkeypatch: pytest.MonkeyPatch, sample: dict) -> None:
+    monkeypatch.setattr("coach.faults.FIXES", {})  # no fix is built, whatever physics has today
     m = neutral_metrics("backhand")
-    m["stance_open_deg"] = THRESHOLDS["backhand"]["stance_too_open"]["severe_at"]  # close_stance: not built
+    m["stance_open_deg"] = THRESHOLDS["backhand"]["stance_too_open"]["severe_at"]
     faults = detect_faults({}, metrics=m)
     assert faults and not any(f["ghost_ready"] for f in faults)
     monkeypatch.setattr("coach.agent.detect_faults", lambda swing, metrics: faults)
