@@ -22,8 +22,9 @@ from physics.metrics import (
     RELEASE_WINDOW_MS, WRIST_SMOOTH_MS, _smooth, contact_frame, shoulder_coil, shoulder_yaw, wrist_angle,
 )
 from physics.skeleton import (
-    ARM, L_ANKLE, L_KNEE, L_SH, R_ANKLE, R_KNEE, R_SH, RACKET_TIP, hitting_hand, to_array, up_vector,
+    ARM, L_ANKLE, L_KNEE, L_SH, R_ANKLE, R_KNEE, R_SH, RACKET_TIP, to_array, up_vector,
 )
+from physics.skeleton import swing_hand as physics_swing_hand
 
 STROKES = ("forehand", "backhand")
 
@@ -147,21 +148,27 @@ def wrist_side_offset(P: np.ndarray, hand: str, contact: int, up: np.ndarray) ->
     return float(np.median(offsets)) if offsets else float("nan")
 
 
-def swing_hand(swing: dict) -> str | None:
-    """The hitting hand the pipeline recorded (metadata.hand, "R" or "L"), or None.
+def recorded_hand(swing: dict) -> str | None:
+    """The hand the pipeline recorded, or None if it would have to be guessed.
 
-    Prefer this to guessing: hitting_hand() picks the faster wrist, which can be the
-    wrong one on a two-handed preparation or a noisy clip.
+    Same sources, in the same order, as physics.skeleton.swing_hand (metadata.hand, then
+    swing["hand"]); only used to report whether the hand was recorded or guessed.
     """
-    hand = (swing.get("metadata") or {}).get("hand")
-    return hand if hand in ("R", "L") else None
+    meta = swing.get("metadata")
+    for hand in ((meta.get("hand") if isinstance(meta, dict) else None), swing.get("hand")):
+        if hand in ("R", "L"):
+            return hand
+    return None
 
 
 def resolve_hand(swing: dict, hand: str | None = None, P: np.ndarray | None = None) -> str:
-    """Explicit hand, else metadata.hand, else the faster wrist (a guess)."""
+    """Explicit hand, else physics' swing_hand (recorded hand, else the faster wrist).
+
+    One source of truth with physics, so the coach and physics never pick different arms.
+    """
     if hand in ("R", "L"):
         return hand
-    return swing_hand(swing) or hitting_hand(to_array(swing) if P is None else P)
+    return physics_swing_hand(swing, P)
 
 
 def stroke_side(swing: dict, hand: str | None = None) -> tuple[str, float]:

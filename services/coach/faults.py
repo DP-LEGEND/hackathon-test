@@ -36,7 +36,7 @@ from physics.skeleton import L_SH, R_SH, to_array
 from pipeline.features import swing_features
 
 from coach.measure_extra import (
-    STROKES, stance_joints_filled, stroke_side, swing_hand, wrist_index_filled, wrist_uncock,
+    STROKES, recorded_hand, stance_joints_filled, stroke_side, wrist_index_filled, wrist_uncock,
 )
 
 Stroke = Literal["forehand", "backhand"]
@@ -222,10 +222,10 @@ def _shoulder_width_m(P: np.ndarray, contact: int) -> float:
 
 def measure_swing(swing: dict, stroke: Optional[Stroke] = None, fps_real: Optional[float] = None) -> dict[str, Any]:
     """All numbers the fault rules use, plus which stroke and where it came from."""
-    # The pipeline records the hitting hand; guessing from wrist speed is the fallback.
-    recorded = swing_hand(swing)
-    m = measure(swing, fps_real, recorded)
-    m["hand_source"] = "metadata" if recorded else "detected"
+    # physics measure() picks the hand with physics.skeleton.swing_hand: the recorded hand
+    # (metadata.hand, else swing["hand"]), guessing from wrist speed only without one.
+    m = measure(swing, fps_real)
+    m["hand_source"] = "recorded" if recorded_hand(swing) else "detected"
     given = stroke or swing.get("stroke")
     if given is not None and given not in STROKES:
         raise ValueError(f"stroke must be one of {STROKES}, got {given!r}")

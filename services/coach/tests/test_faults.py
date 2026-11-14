@@ -568,7 +568,28 @@ def test_directional_release_matches_physics_on_a_clean_swing(sample: dict) -> N
 @pytest.mark.parametrize("hand", ["R", "L"])
 def test_metadata_hand_is_used_instead_of_guessing(sample: dict, hand: str) -> None:
     m = measure_swing(_with(sample, metadata={"hand": hand}), "backhand")
-    assert m["hand"] == hand and m["hand_source"] == "metadata"
+    assert m["hand"] == hand and m["hand_source"] == "recorded"
+
+
+def test_top_level_hand_counts_as_recorded_like_physics(sample: dict) -> None:
+    # physics.skeleton.swing_hand (PR #36) also trusts swing["hand"]; the coach agrees.
+    m = measure_swing(_with(sample, hand="L"), "backhand")
+    assert m["hand"] == "L" and m["hand_source"] == "recorded"
+    both = _with(sample, hand="R", metadata={"hand": "L"})  # metadata wins, as in physics
+    assert measure_swing(both, "backhand")["hand"] == "L"
+
+
+@pytest.mark.parametrize("swing_extra", [
+    {}, {"hand": "L"}, {"metadata": {"hand": "L"}}, {"metadata": {"hand": "X"}, "hand": "L"},
+    {"metadata": {"hand": "R"}, "hand": "L"},
+])
+def test_coach_and_physics_always_pick_the_same_hand(sample: dict, swing_extra: dict) -> None:
+    from coach.measure_extra import recorded_hand, resolve_hand
+    from physics.skeleton import swing_hand
+
+    swing = _with(sample, **swing_extra)
+    assert resolve_hand(swing) == swing_hand(swing) == measure_swing(swing, "backhand")["hand"]
+    assert recorded_hand(swing) in (None, swing_hand(swing))
 
 
 @pytest.mark.parametrize("metadata", [None, {}, {"hand": "X"}, {"hand": None}])
