@@ -232,22 +232,25 @@ def test_repaired_candidate_keeps_original_sound_before_admitted_peak(stereo_pai
     assert swing['metadata']['sourceStartFrame'] + swing['contactFrame'] == contact
 
 
-@pytest.mark.parametrize('delta,original_hit', [(.12, .4), (.1201, .4), (.12, None)])
+@pytest.mark.parametrize('delta,original_hit', [(.12, .4), (.25, .4), (.2501, .4), (.12, None)])
 def test_contact_anchor_range_and_unmatched_recovery(stereo_pair, monkeypatch, delta, original_hit):
+    """Main's sound contact is kept within CONTACT_MATCH_S real seconds."""
     import pipeline.process as process
+    from pipeline.segment import CONTACT_MATCH_S
     a = stereo_pair[0]
     a['audio_hits'] = np.array([.4, .6])
     # Place the original candidate exactly on/either side of the real-time
     # matching boundary; its native frame count alone cannot decide the match.
-    a['t'][58] = .6 - delta
+    reference_peak = 72 - int(round(delta * a['fps']))
+    a['t'][reference_peak] = .6 - delta
     def candidates(raw, **kwargs):
         reference = kwargs.get('contact_reference', False)
-        return [{'start': 0, 'end': 114, 'peak': 58 if reference else 72,
+        return [{'start': 0, 'end': 114, 'peak': reference_peak if reference else 72,
                  'speed': 20, 'hit': original_hit if reference else .6}]
     monkeypatch.setattr(process, 'find_swings', candidates)
     swings, report = swings_from_raw(a, options=Options(hand='R'))
     assert report['written'] == 1, report
-    expected = 48 if delta <= .12 and original_hit is not None else 72
+    expected = 48 if delta <= CONTACT_MATCH_S and original_hit is not None else 72
     assert swings[0]['metadata']['sourceContactFrame'] == expected
 
 

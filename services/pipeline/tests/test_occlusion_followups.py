@@ -113,3 +113,29 @@ def test_gate_accepts_checked_in_hero_skeleton_without_changing_contact(name, co
                               swing['contactFrame'])
     assert 6 <= evidence['peakWristSpeedMs'] < 12 and evidence['backswingVerified']
     assert swing == before and swing['contactFrame'] == contact
+
+
+def test_auto_hand_skips_a_wrist_that_is_hidden_at_the_peak(stereo_pair, monkeypatch):
+    """Real clip IMG_2115 swing 0022: the off-hand wrist reappears at the peak
+    and out-speeds the tracked racket wrist. The gate tests the tracked wrist."""
+    import pipeline.process as process
+    a = stereo_pair[0]
+    a['vis'][:73, 15] = 0                 # off-hand hidden through the peak
+    a['img'][73:, 15, 0] += 400           # its reappearance is a pixel jump
+    monkeypatch.setattr(process, 'find_swings', lambda *args, **kwargs: [
+        {'start': 24, 'end': 114, 'peak': 72, 'speed': 10}])
+    swings, report = swings_from_raw(a, options=Options(hand='auto'))
+    assert report['written'] == 1, report
+    assert swings[0]['metadata']['hand'] == 'R'
+    assert swings[0]['metadata']['backswingVerified']
+    assert swings[0]['metadata']['sourceContactFrame'] == 72
+
+
+def test_manual_hand_never_switches_to_the_other_wrist(stereo_pair, monkeypatch):
+    import pipeline.process as process
+    a = stereo_pair[0]
+    a['vis'][:73, 15] = 0
+    monkeypatch.setattr(process, 'find_swings', lambda *args, **kwargs: [
+        {'start': 24, 'end': 114, 'peak': 72, 'speed': 10}])
+    swings, report = swings_from_raw(a, options=Options(hand='L'))
+    assert report['written'] == 0 and swings == []

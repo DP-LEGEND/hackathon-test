@@ -11,9 +11,9 @@ import cv2
 
 from pipeline.cache import extract_pair
 from pipeline.pose import DEFAULT_MODEL, extract_raw, to_swing
-from pipeline.segment import (BACKSWING_LOOKBACK_S, REVERSAL_SUPPORT_S, PEAK_MATCH_S,
+from pipeline.segment import (BACKSWING_LOOKBACK_S, CONTACT_MATCH_S, REVERSAL_SUPPORT_S, PEAK_MATCH_S,
                               audio_hits, find_swings, wrist_speed, swing_evidence)
-from pipeline.kinematics import gap_limit
+from pipeline.kinematics import gap_limit, runs
 from pipeline.timing import Timeline
 from pipeline.stereo import calibrate, clean, normalise, triangulate
 
@@ -81,6 +81,37 @@ def classify_side(world: np.ndarray, contact: int, hand: str) -> str:
 
 
 CORE_JOINTS = (11, 12, 13, 14, 15, 16, 23, 24)
+
+
+def carry_offhand_wrist(points: np.ndarray, hand: str) -> tuple[np.ndarray, np.ndarray]:
+    """Carry a hidden NON-hitting wrist rigidly with its tracked elbow.
+
+    With hidden landmarks excluded from stereo, the off-hand wrist is often
+    behind the body for longer than the repair limit during a forehand. It is
+    not swing evidence, so keep the window: hold the forearm offset seen at the
+    nearest tracked frames (blended across the gap, bone length kept). Every
+    carried frame is returned as filled, i.e. guessed, never measured.
+    """
+    elbow, wrist = (13, 15) if hand == 'R' else (14, 16)
+    points = points.copy()
+    carried = np.zeros(len(points), dtype=bool)
+    seen = np.isfinite(points[:, wrist]).all(axis=1) & np.isfinite(points[:, elbow]).all(axis=1)
+    if not seen.any():
+        return points, carried
+    for start, end in runs(~np.isfinite(points[:, wrist]).all(axis=1)):
+        if not np.isfinite(points[start:end, elbow]).all():
+            continue
+        before = points[start - 1, wrist] - points[start - 1, elbow] if start > 0 else None
+        after = points[end, wrist] - points[end, elbow] if end < len(points) else None
+        before = after if before is None else before
+        after = before if after is None else after
+        weight = (np.arange(1, end - start + 1) / (end - start + 1))[:, None]
+        offset = (1 - weight) * before + weight * after
+        length = (1 - weight) * np.linalg.norm(before) + weight * np.linalg.norm(after)
+        offset *= length / np.maximum(np.linalg.norm(offset, axis=1, keepdims=True), 1e-9)
+        points[start:end, wrist] = points[start:end, elbow] + offset
+        carried[start:end] = True
+    return points, carried
 
 
 def complete_optional_joints(world: np.ndarray) -> tuple[np.ndarray, list[int]]:
@@ -239,11 +270,18 @@ def swings_from_raw(a: dict, b: dict | None = None, options: Options = Options()
         lo, hi = event['section']
         if anchors:
             reference = min(anchors, key=lambda e: abs(real_a[e['peak']] - real_a[event['peak']]))
-            if (reference.get('hit') is not None and reference['section'] == event['section']
-                    and abs(real_a[reference['peak']] - real_a[event['peak']]) <= PEAK_MATCH_S + 1e-9):
-                hit_frame = int(np.argmin(abs(real_a - reference['hit'])))
-                if lo <= hit_frame < hi:
-                    event['hit'] = reference['hit']
+            # Real seconds, not slow-mo playback: the reprojected track can move
+            # the speed peak ~0.2 s from main's, but the contact stays main's:
+            # its sound match, or its speed peak when neither has a sound.
+            if (reference['section'] == event['section']
+                    and abs(real_a[reference['peak']] - real_a[event['peak']]) <= CONTACT_MATCH_S + 1e-9):
+                if reference.get('hit') is not None:
+                    hit_frame = int(np.argmin(abs(real_a - reference['hit'])))
+                    if lo <= hit_frame < hi:
+                        event['hit'] = reference['hit']
+                if (event.get('hit') is None and lo <= reference['peak'] < hi
+                        and abs(real_a[reference['peak']] - real_a[event['peak']]) <= PEAK_MATCH_S + 1e-9):
+                    event['contactPeak'] = reference['peak']
         if event.get('hit') is not None:
             hit_frame = int(np.argmin(abs(real_a - event['hit'])))
             if lo <= hit_frame < hi:
@@ -269,11 +307,14 @@ def swings_from_raw(a: dict, b: dict | None = None, options: Options = Options()
                 event["peak"] = start + int(np.nanargmax(speeds[hand]))
         fps_real = event.get("fpsReal", fps_real)
         measured_contact = event.get("hit") is not None
-        contact_source = event["peak"] if not measured_contact else int(np.argmin(abs(real_a - event["hit"])))
+        estimate = event.get('contactPeak', event['peak'])
+        if not start <= estimate < end:
+            estimate = event['peak']
+        contact_source = estimate if not measured_contact else int(np.argmin(abs(real_a - event["hit"])))
         if not start <= contact_source < end:
             # A matching audio hit can lie outside the standard peak window.
             # Keep the rate-consistent window; do not fabricate a contact frame.
-            contact_source = event["peak"]
+            contact_source = estimate
             measured_contact = False
         lo, hi = event['section']
         start = max(lo, int(np.searchsorted(real_a, real_a[contact_source] - .6 - 1e-9)))
@@ -300,6 +341,7 @@ def swings_from_raw(a: dict, b: dict | None = None, options: Options = Options()
         contact = contact_source - start
         try:
             selected = stereo[start:end] if source == 'stereo' else mono[start:end]
+            selected, offhand_carried = carry_offhand_wrist(selected, hand)
             if not np.isfinite(selected[:, CORE_JOINTS]).all():
                 missing = [j for j in CORE_JOINTS if not np.isfinite(selected[:, j]).all()]
                 raise ValueError(f'Reconstruction contains missing key joints {missing}; hidden gap exceeds the repair limit')
@@ -311,7 +353,10 @@ def swings_from_raw(a: dict, b: dict | None = None, options: Options = Options()
                     raise
                 source = "mono"
                 fallback_reason = f"Stereo normalisation failed: {exc}"
-                normalised = normalise(mono[start:end], options.torso_m)
+                selected, offhand_carried = carry_offhand_wrist(mono[start:end], hand)
+                if not np.isfinite(selected[:, CORE_JOINTS]).all():
+                    raise
+                normalised = normalise(selected, options.torso_m)
             # Sound can be offset from the speed peak. Keep its requested .6 s
             # replay trim without throwing away earlier backswing evidence.
             # Metric and image peaks may differ by PEAK_MATCH_S. Read enough
@@ -326,10 +371,22 @@ def swings_from_raw(a: dict, b: dict | None = None, options: Options = Options()
             # The gate bridges bounded gaps and stops at longer missing runs.
             evidence_world = (normalised if evidence_start == start else
                               normalise(trajectory[evidence_start:end], options.torso_m))
-            evidence = swing_evidence(evidence_world, real_a[evidence_start:end], wrist,
-                                      event['peak'] - evidence_start, options.torso_m, options.max_gap_s)
+            try:
+                evidence = swing_evidence(evidence_world, real_a[evidence_start:end], wrist,
+                                          event['peak'] - evidence_start, options.torso_m, options.max_gap_s)
+            except ValueError:
+                # Auto hand can pick an off-hand wrist whose reappearance from
+                # behind the body looks like a speed peak. Then test the other
+                # wrist with the same, unrelaxed 3D gate before rejecting.
+                if options.hand != 'auto' or offhand_carried.any():
+                    raise  # never test a guessed off-hand wrist as swing evidence
+                other = 31 - wrist
+                evidence = swing_evidence(evidence_world, real_a[evidence_start:end], other,
+                                          event['peak'] - evidence_start, options.torso_m, options.max_gap_s)
+                wrist, hand = other, 'L' if other == 15 else 'R'
             joint_filled = (stereo_filled if source == "stereo" else mono_filled)[start:end].copy()
             joint_filled |= ~np.isfinite(normalised).all(axis=2)
+            joint_filled[offhand_carried, 15 if hand == 'R' else 16] = True
             world, filled = complete_optional_joints(normalised)
             confidence = (stereo_visibility if source == 'stereo' else mono_visibility)[start:end]
             raw = {"world": world, "filled": joint_filled, 'vis': confidence, "t": real_a[start:end],

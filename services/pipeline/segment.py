@@ -23,6 +23,9 @@ L_WRIST, R_WRIST, L_HIP, R_HIP, L_SH, R_SH = 15, 16, 23, 24, 11, 12
 BACKSWING_LOOKBACK_S = .6
 REVERSAL_SUPPORT_S = .05
 PEAK_MATCH_S = .12
+# Real seconds between this branch's admission peak and main's candidate peak
+# within which main's sound-matched contact frame is kept.
+CONTACT_MATCH_S = .25
 
 
 def torso_px(img: np.ndarray) -> float:

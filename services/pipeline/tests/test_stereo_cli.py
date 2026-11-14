@@ -209,7 +209,7 @@ def test_only_required_iphone_joints_are_enough_without_ipad(stereo_pair):
         np.testing.assert_allclose((joints[:, 23] + joints[:, 24]) / 2, 0, atol=1e-6)
 
 
-@pytest.mark.parametrize('joint', [11, 12, 13, 14, 15, 16, 23, 24])
+@pytest.mark.parametrize('joint', [11, 12, 13, 14, 16, 23, 24])
 def test_each_missing_key_joint_in_both_views_rejects(stereo_pair, monkeypatch, joint):
     import pipeline.process as process
     a, b, *_ = stereo_pair
@@ -222,7 +222,44 @@ def test_each_missing_key_joint_in_both_views_rejects(stereo_pair, monkeypatch, 
     a['img'][30:111, joint] = np.nan
     swings, report = swings_from_raw(a, b, Options(focal_a=900, focal_b=900))
     assert swings == [] and report['written'] == 0 and len(report['rejected']) == 1
-    assert 'missing key joints' in report['rejected'][0]['reason']
+    # A hidden racket wrist (16) can make auto hand try the off-hand; either
+    # way nothing guessed is published as the swing.
+    assert ('missing key joints' in report['rejected'][0]['reason']
+            or (joint == 16 and 'Not a swing' in report['rejected'][0]['reason']))
+
+
+def test_hidden_offhand_wrist_is_carried_with_its_elbow_and_flagged(stereo_pair, monkeypatch):
+    """Real clip IMG_2115 swing 0020: the off-hand wrist is behind the body in
+    both views for ~0.3 s around contact. It is carried rigidly with its elbow and
+    flagged as guessed; the racket arm stays measured."""
+    import pipeline.process as process
+    a, b, *_ = stereo_pair
+    monkeypatch.setattr(process, 'find_swings', lambda *args, **kw: [
+        {'start': 30, 'end': 110, 'peak': 70, 'speed': 10}])
+    for camera in (a, b):
+        camera['vis'][50:95, 15] = 0
+    swings, report = swings_from_raw(a, b, Options(focal_a=900, focal_b=900, hand='R'))
+    assert report['written'] == 1, report
+    swing = swings[0]
+    start = swing['metadata']['sourceStartFrame']
+    hidden = [i for i, frame in enumerate(swing['frames']) if 50 <= start + i < 95]
+    assert hidden and all(swing['frames'][i]['filled'][15] for i in hidden)
+    assert not any(swing['frames'][i]['filled'][16] for i in hidden)
+    joints = np.array([frame['joints'] for frame in swing['frames']])
+    forearm = np.linalg.norm(joints[:, 15] - joints[:, 13], axis=1)
+    assert np.ptp(forearm[hidden]) < .02 * forearm[hidden].mean()
+    assert swing['metadata']['sourceContactFrame'] == 70
+
+
+def test_hidden_offhand_wrist_with_manual_left_hand_is_the_racket_wrist(stereo_pair, monkeypatch):
+    import pipeline.process as process
+    a, b, *_ = stereo_pair
+    monkeypatch.setattr(process, 'find_swings', lambda *args, **kw: [
+        {'start': 30, 'end': 110, 'peak': 70, 'speed': 10}])
+    for camera in (a, b):
+        camera['vis'][30:111, 15] = 0
+    swings, report = swings_from_raw(a, b, Options(focal_a=900, focal_b=900, hand='L'))
+    assert swings == [] and report['written'] == 0
 
 
 def test_no_usable_swings_is_failed_and_reruns_use_cached_pose(tmp_path, monkeypatch, stereo_pair, capsys):
@@ -350,7 +387,7 @@ def test_permanently_hidden_joint_without_learned_bone_cannot_be_recovered(stere
     assert report['written'] == 0 and swings == []
 
 
-@pytest.mark.parametrize('visibility', [0., .1, float('nan')])
+@pytest.mark.parametrize('visibility', [0., .01, .1, float('nan')])
 def test_missing_or_below_minimum_visibility_rejects_mono(stereo_pair, visibility):
     a, b, *_ = stereo_pair
     a['vis'][:] = visibility

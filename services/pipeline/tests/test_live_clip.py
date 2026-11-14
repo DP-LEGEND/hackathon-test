@@ -173,6 +173,36 @@ def test_real_model_rejects_rotating_photo_as_non_swing(tmp_path, monkeypatch):
     assert TestClient(app).get('/swings').json() == {'swings': []}
     assert not list((tmp_path / 'processed').glob('*/manifest.json'))
 
+def test_end_to_end_short_clip_with_real_model(tmp_path, monkeypatch):
+    """Optional real decoder + MediaPipe end-to-end success on a real swing.
+
+    GHOST_LIVE_TEST_CLIP is a short real-time clip of one real squash swing
+    (kept outside the repo; e.g. a 4 s real-time cut of a forehand). Nothing is
+    mocked: decode, pose, swing gate, coach and ghost all run.
+    """
+    clip_path = os.environ.get('GHOST_LIVE_TEST_CLIP')
+    model_path = os.environ.get('GHOST_POSE_MODEL')
+    if not clip_path or not model_path:
+        pytest.skip('Set GHOST_LIVE_TEST_CLIP and GHOST_POSE_MODEL for real-model swing integration')
+    clip = Path(clip_path)
+    monkeypatch.setenv('GHOST_SWINGS_DIR', str(tmp_path / 'processed'))
+    client = TestClient(app)
+    response = client.post('/process', files={'file': (clip.name, clip.read_bytes(), 'video/mp4')})
+    assert response.status_code == 201, response.text
+    result = response.json()
+    swing_id = result['swingId']
+    swing = client.get(f'/swings/{swing_id}').json()
+    assert swing['metadata']['slowdown'] == 1 and swing['metadata']['slowdownSource'] == 'auto'
+    assert swing['metadata']['depth'] == 'estimated'
+    assert swing['metadata']['backswingVerified']
+    assert swing['metadata']['hand'] in ('L', 'R') and swing['metadata']['stroke'] in ('forehand', 'backhand')
+    assert result['coach']['metrics']['hand'] == swing['metadata']['hand']
+    assert result['compare']['you']['ball']['label'] == 'PREDICTED'
+    assert result['compare']['ghost']['ball']['label'] == 'PREDICTED'
+    assert any(row['id'] == swing_id for row in client.get('/swings').json()['swings'])
+    json.dumps(result, allow_nan=False)
+
+
 def test_manual_values_are_saved_through_coach_and_ghost(tmp_path, monkeypatch, stereo_pair):
     import pipeline.live as live
     a, _, *_ = stereo_pair

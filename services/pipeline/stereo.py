@@ -91,12 +91,15 @@ def calibrate(A: dict, B: dict, scale: float, offset: float, f_a=1400.0, f_b=140
             "inliers": float(good.mean()), "n": int(len(pa)), "reprojectionErrorPx": reprojection}
 
 
-def triangulate(A: dict, B: dict, cal: dict, f0: int, f1: int, min_vis=0.,
+def triangulate(A: dict, B: dict, cal: dict, f0: int, f1: int, min_vis=.1,
                 *, provenance: bool = False):
     """Weighted stereo, or a confident ray constrained by an observed bone.
 
     The optional provenance tuple is (points, filled, visibility). One-view
     depths are estimates even when their image landmark is confidently seen.
+    A landmark with visibility <= min_vis (default .1, the same cutoff the
+    swing finder uses) is hidden: its predicted pixels never enter the DLT, so
+    the bone-constrained one-view recovery can place it from the other camera.
     """
     from pipeline.kinematics import PARENTS
 

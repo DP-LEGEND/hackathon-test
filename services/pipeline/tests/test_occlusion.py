@@ -231,3 +231,21 @@ def test_candidate_spacing_precedes_final_gate(stereo_pair, monkeypatch):
     swings, report = swings_from_raw(a, options=Options(hand='R'))
     assert report['detected'] == 1 and report['written'] == 0 and not swings
     assert len(report['rejected']) == 1 and 'Not a swing' in report['rejected'][0]['reason']
+
+
+@pytest.mark.parametrize('visibility', [.01, .05, .1])
+def test_hidden_pixels_on_the_epipolar_line_never_enter_triangulation(stereo_pair, visibility):
+    """A hidden (vis <= .1) landmark is excluded before DLT, even when its
+    predicted pixels agree with the other view and reproject with zero error."""
+    a, b, truth, rotation, translation = stereo_pair
+    cal = calibration(a, b, rotation, translation)
+    window = slice(50, 60)
+    centre_b = -rotation.T @ translation
+    wrong = centre_b + 1.25 * (truth[window, 16] - centre_b)  # same B ray, wrong depth
+    projected = wrong @ cal['Ka'].T
+    a['img'][window, 16, :2] = projected[:, :2] / projected[:, 2:]
+    a['vis'][window, 16] = visibility
+    points, filled, _ = triangulate(a, b, cal, 0, len(truth), provenance=True)
+    assert np.max(np.linalg.norm(points[window, 16] - truth[window, 16], axis=1)) < .10
+    assert filled[window, 16].all()
+    assert np.min(np.linalg.norm(points[window, 16] - wrong, axis=1)) > .5
