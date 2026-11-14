@@ -51,7 +51,12 @@ log = logging.getLogger(__name__)
 Source = Literal["claude", "caption"]
 
 MAX_SPOKEN_WORDS = 20
-CLAUDE_TIMEOUT_S = 20.0  # a live request: fail fast to the caption rather than hang
+# The web proxy (app/api/[...path]/route.ts) aborts every request except /process after
+# 30 s, so Claude plus ElevenLabs must finish well inside that: at most 10 s + 12 s, with no
+# SDK retries (a retry would double Claude's time). A timeout falls back to the caption
+# (Claude) or to no audio (ElevenLabs), never to the proxy's 502.
+CLAUDE_TIMEOUT_S = 10.0
+TTS_TIMEOUT_S = 12.0
 DEFAULT_CACHE_DIR = Path(__file__).resolve().parent / ".voice_cache"
 
 
@@ -188,6 +193,18 @@ def check_direction(cue: str, facts: dict[str, str]) -> None:
                              f"cue says {sorted(used)}")
 
 
+def guarded(facts: dict[str, str]) -> bool:
+    """True if check_direction can guard Claude's rewording of this coach cue.
+
+    It can only when the coach cue uses a word from an OPPOSITES pair. Cues without one
+    (today early_wrist_snap's "Keep your wrist cocked..." and rolled_wrist's "Keep your
+    wrist firm...") have no direction to check, so Claude could reverse them unnoticed
+    ("Snap your wrist before contact."). Those are spoken verbatim instead.
+    """
+    coach = _words(facts.get("coach_cue", ""))
+    return any(coach & (a | b) for a, b in OPPOSITES)
+
+
 def check_worded_cue(cue: str, facts: dict[str, str]) -> str:
     """The cleaned cue if it's one short sentence quoting only numbers in the facts.
 
@@ -219,7 +236,7 @@ def check_worded_cue(cue: str, facts: dict[str, str]) -> str:
 
 def make_client() -> anthropic.Anthropic:
     return anthropic.Anthropic(api_key=require_env("ANTHROPIC_API_KEY"),
-                               timeout=CLAUDE_TIMEOUT_S, max_retries=1)
+                               timeout=CLAUDE_TIMEOUT_S, max_retries=0)
 
 
 def word_cue(facts: dict[str, str], client: Optional[anthropic.Anthropic] = None) -> str:
@@ -246,7 +263,7 @@ def word_cue(facts: dict[str, str], client: Optional[anthropic.Anthropic] = None
 
 def synthesize(text: str) -> bytes:
     """MP3 bytes of ElevenLabs saying `text` (coach.voice; raises VoiceError)."""
-    return voice.synthesize(text)
+    return voice.synthesize(text, timeout_s=TTS_TIMEOUT_S)
 
 
 def has_key(name: str) -> bool:
@@ -334,6 +351,8 @@ def _cue_for(swing_id: str, facts: Optional[dict[str, str]], caption: str,
              client: Optional[anthropic.Anthropic]) -> tuple[str, Source]:
     if facts is None:
         return caption, "caption"  # no fault: nothing for Claude to word
+    if not guarded(facts):
+        return caption, "caption"  # no direction to guard: speak the coach's cue verbatim
     name = f"cue-{_digest(swing_id, facts)}.json"
     with _lock(name):
         cached = _read(name)

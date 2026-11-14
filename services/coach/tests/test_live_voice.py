@@ -464,3 +464,87 @@ def test_any_spelled_out_number_is_rejected(cue: str) -> None:
 ])
 def test_one_as_everyday_english_and_the_live_cues_still_pass(facts: dict, cue: str) -> None:
     assert check_worded_cue(cue, facts) == cue
+
+
+# ---- Review fix on #60: cues with no direction to guard are spoken verbatim ------------
+
+from coach.faults import FAULTS  # noqa: E402
+
+
+def _fault_result(fault_id: str, label: str) -> dict:
+    cue = FAULTS[fault_id]["cue"]
+    return {"stroke": "forehand", "cue": cue, "fault": {"label": label, "cue": cue, "tip": None}}
+
+
+def test_only_the_wrist_cues_are_unguarded_today() -> None:
+    unguarded = {fid for fid, spec in FAULTS.items() if not live_voice.guarded({"coach_cue": spec["cue"]})}
+    assert unguarded == {"early_wrist_snap", "rolled_wrist"}
+
+
+@pytest.mark.parametrize("fault_id, label", [
+    ("early_wrist_snap", "Early wrist snap: wrist uncocks 61 deg before contact"),
+    ("rolled_wrist", "Rolled wrist: forearm rolls 45 deg through contact"),
+])
+def test_an_unguarded_coach_cue_is_spoken_verbatim_without_claude(env, fault_id: str, label: str) -> None:
+    env.keys("ANTHROPIC_API_KEY", "ELEVENLABS_API_KEY")
+    env.claude.cue = "Snap your wrist before contact."  # the reversal Claude must never get to say
+    out = voice_for_swing(f"swing-{fault_id}", _fault_result(fault_id, label))
+    coach_cue = FAULTS[fault_id]["cue"]
+    assert out["cue"] == coach_cue and out["source"] == "caption"
+    assert env.claude.calls == []  # Claude isn't called at all
+    assert env.spoken == [coach_cue] and _audio(out["audioUrl"]) == MP3  # the coach's own words are voiced
+
+
+def test_an_old_cached_claude_cue_for_an_unguarded_fault_is_not_served(env) -> None:
+    result = _fault_result("early_wrist_snap", "Early wrist snap: wrist uncocks 61 deg before contact")
+    path = env.cache / f"cue-{live_voice._digest('wrist', coach_facts(result))}.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"swing_id": "wrist", "cue": "Snap your wrist before contact."}))
+    assert voice_for_swing("wrist", result)["cue"] == FAULTS["early_wrist_snap"]["cue"]
+
+
+def test_guarded_turn_and_stance_cues_still_go_through_claude(env, result: dict) -> None:
+    env.keys("ANTHROPIC_API_KEY")
+    over = _fault_result("over_rotation", "Over-rotation: hips turn 110 deg")
+    env.claude.cue = "Turn a little less and stay balanced."
+    assert voice_for_swing("over", over) == {"cue": "Turn a little less and stay balanced.", "audioUrl": None,
+                                            "source": "claude"}
+    env.claude.cue = "Close your stance so your hips can hold the turn."
+    assert voice_for_swing("sample", result)["source"] == "claude"  # the real stance result
+    assert len(env.claude.calls) == 2
+
+
+# ---- Review fix on #60: Claude + ElevenLabs finish inside the proxy's 30 s ---------------
+
+def test_claude_has_no_retries_and_a_10_second_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(live_voice, "require_env", lambda name: "test-not-real")  # never read .env.local
+    client = live_voice.make_client()
+    assert client.max_retries == 0 and client.timeout == 10.0
+
+
+def test_elevenlabs_gets_the_short_live_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict = {}
+
+    def fake(text: str, timeout_s: float = 99) -> bytes:
+        seen["timeout_s"] = timeout_s
+        return MP3
+
+    monkeypatch.setattr("coach.voice.synthesize", fake)
+    assert live_voice.synthesize("Close your stance.") == MP3
+    assert seen["timeout_s"] == live_voice.TTS_TIMEOUT_S
+    assert live_voice.CLAUDE_TIMEOUT_S + live_voice.TTS_TIMEOUT_S <= 25  # proxy aborts at 30 s
+
+
+def test_timeouts_still_fall_back_to_the_caption_and_no_audio(env, result: dict) -> None:
+    env.keys("ANTHROPIC_API_KEY", "ELEVENLABS_API_KEY")
+    env.claude.error = anthropic.APITimeoutError(request=None)  # type: ignore[arg-type]
+    env.voice_error = VoiceError("Could not reach ElevenLabs. Check the internet connection.")
+    assert voice_for_swing("sample", result) == {"cue": result["cue"], "audioUrl": None, "source": "caption"}
+
+
+def test_voice_synthesize_default_timeout_is_unchanged() -> None:
+    import inspect
+
+    from coach import voice
+
+    assert inspect.signature(voice.synthesize).parameters["timeout_s"].default == voice.TIMEOUT_S == 20
