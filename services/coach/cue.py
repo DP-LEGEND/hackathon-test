@@ -58,32 +58,50 @@ Only skip a higher-priority metric if its measured value already looks sound.
 Rules:
 - Never invent or calculate a number. You may only quote numbers exactly as they appear in the metrics.
 - `fix`: one or two plain sentences saying what to change and why.
-- `cue`: one short sentence, under 12 words, spoken to the player before their next swing. No numbers in the cue.
+- `cue`: one short sentence, at most 12 words, spoken to the player before their next swing. No numbers in the cue.
 """
+
+MAX_CUE_WORDS = 12
 
 
 class CoachError(RuntimeError):
     """The coach could not produce a usable answer."""
 
 
-def _format_number(value: float) -> str:
-    return f"{value:g}"
-
-
-def _allowed_numbers(metrics: SwingMetrics) -> set[str]:
-    return {_format_number(v) for v in metrics.model_dump().values()}
+# A whole numeric token: optional sign, then 148 / 148.5 / 148. / .148, then optional exponent (1e3).
+# The lookbehind stops us reading a number out of the middle of a word or another number.
+_NUMBER = re.compile(r"(?<![\w.])[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?")
 
 
 def _numbers_in(text: str) -> list[str]:
-    return [_format_number(float(n)) for n in re.findall(r"-?\d+(?:\.\d+)?", text)]
+    return _NUMBER.findall(text)
+
+
+def _is_measured(token: str, measured: list[float]) -> bool:
+    # "-18 cm" and "18 cm behind your foot" quote the same measurement, so compare sizes.
+    value = abs(float(token))
+    return any(abs(value - abs(m)) < 1e-9 for m in measured)
 
 
 def check_only_measured_numbers(result: CoachCue, metrics: SwingMetrics) -> None:
     """Enforce 'code measures, Claude explains': reject any number we did not measure."""
-    allowed = _allowed_numbers(metrics)
-    invented = [n for n in _numbers_in(result.fix + " " + result.cue) if n not in allowed]
+    measured = list(metrics.model_dump().values())
+    invented = [n for n in _numbers_in(result.fix + " " + result.cue) if not _is_measured(n, measured)]
     if invented:
         raise CoachError(f"Coach used numbers that were not measured: {invented}")
+
+
+def check_cue_is_speakable(result: CoachCue) -> None:
+    """The cue is said aloud mid-session: one non-empty sentence of at most MAX_CUE_WORDS words."""
+    cue = result.cue.strip()
+    if not cue:
+        raise CoachError("Coach returned an empty cue.")
+    # A sentence end (. ! ?) followed by more text means more than one sentence.
+    if re.search(r"[.!?]+\s+\S", cue):
+        raise CoachError(f"Cue must be one sentence: {cue!r}")
+    words = len(cue.split())
+    if words > MAX_CUE_WORDS:
+        raise CoachError(f"Cue has {words} words; the limit is {MAX_CUE_WORDS}: {cue!r}")
 
 
 def get_cue(metrics: SwingMetrics, client: Optional[anthropic.Anthropic] = None) -> CoachCue:
@@ -124,6 +142,7 @@ def get_cue(metrics: SwingMetrics, client: Optional[anthropic.Anthropic] = None)
         raise CoachError(f"Claude returned no usable JSON (stop_reason={response.stop_reason}).")
 
     result = response.parsed_output
+    check_cue_is_speakable(result)
     check_only_measured_numbers(result, metrics)
     return result
 

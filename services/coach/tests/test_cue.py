@@ -45,6 +45,44 @@ def test_rejects_numbers_that_were_not_measured() -> None:
         get_cue(MOCK_METRICS, client=FakeClient(answer))  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize(
+    "fix",
+    [
+        "Your elbow is at .148 of a turn.",  # leading decimal: 0.148, not 148
+        "Your elbow is at 148.5 degrees.",  # 148 was measured, 148.5 was not
+        "Your elbow is at 1.5e2 degrees.",  # scientific notation is read whole: 150, not 1.5 or 2
+    ],
+)
+def test_rejects_numbers_that_only_look_measured(fix: str) -> None:
+    answer = CoachCue(metric="elbow_bend", fix=fix, cue="Bend your elbow a little more.")
+    with pytest.raises(CoachError, match="not measured"):
+        get_cue(MOCK_METRICS, client=FakeClient(answer))  # type: ignore[arg-type]
+
+
+def test_accepts_measured_number_at_sentence_end_and_as_a_size() -> None:
+    answer = CoachCue(
+        metric="contact_point",
+        fix="Your elbow was 148. You met the ball 18 cm behind your front foot.",
+        cue="Hit the ball in front of you.",
+    )
+    assert get_cue(MOCK_METRICS, client=FakeClient(answer)) == answer  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "cue, reason",
+    [
+        ("", "empty"),
+        ("   ", "empty"),
+        ("Step in. Hit it early.", "one sentence"),
+        ("Step in with your front foot and then hit the ball well out in front.", "limit is 12"),
+    ],
+)
+def test_rejects_cues_that_cannot_be_spoken_as_one_short_sentence(cue: str, reason: str) -> None:
+    answer = CoachCue(metric="contact_point", fix="Meet the ball in front.", cue=cue)
+    with pytest.raises(CoachError, match=reason):
+        get_cue(MOCK_METRICS, client=FakeClient(answer))  # type: ignore[arg-type]
+
+
 def test_refusal_raises_clear_error() -> None:
     with pytest.raises(CoachError, match="declined"):
         get_cue(MOCK_METRICS, client=FakeClient(None, stop_reason="refusal"))  # type: ignore[arg-type]
