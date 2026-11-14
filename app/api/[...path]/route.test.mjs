@@ -206,22 +206,46 @@ for (const overflow of [false, true]) {
   });
 }
 
-test("processing gets a 120-second timeout and propagates client cancellation", async (t) => {
+test("processing keeps a 600-second local timeout with a 300-second platform cap and client cancellation", async (t) => {
   const abort = new AbortController();
   const timeout = new AbortController();
+  let timeoutMilliseconds;
+  let forwardedSignal;
   t.mock.method(AbortSignal, "timeout", (milliseconds) => {
-    assert.equal(milliseconds, 120_000);
+    timeoutMilliseconds = milliseconds;
     return timeout.signal;
   });
   globalThis.fetch = async (_url, init) => {
-    assert.equal(init.signal.aborted, false);
+    forwardedSignal = init.signal;
     abort.abort();
-    assert.equal(init.signal.aborted, true);
     throw init.signal.reason;
   };
   const response = await POST(new Request("http://localhost:3000/api/process", {
     method: "POST", body: multipart, headers: { "Content-Type": contentType }, signal: abort.signal,
   }), context(["process"]));
-  assert.equal(maxDuration, 120);
+  assert.equal(timeoutMilliseconds, 10 * 60_000);
+  assert.equal(forwardedSignal.aborted, true);
+  assert.equal(maxDuration, 300);
   assert.equal(response.status, 502);
 });
+
+for (const path of [["swings"], ["coach", "sample"], ["compare", "sample"], ["processing"]]) {
+  test(`${path.join("/")} keeps a 30-second upstream timeout`, async (t) => {
+    const timeout = new AbortController();
+    let timeoutMilliseconds;
+    let forwardedSignal;
+    t.mock.method(AbortSignal, "timeout", (milliseconds) => {
+      timeoutMilliseconds = milliseconds;
+      return timeout.signal;
+    });
+    globalThis.fetch = async (_url, init) => {
+      forwardedSignal = init.signal;
+      timeout.abort();
+      throw init.signal.reason;
+    };
+    const response = await GET(new Request(`http://localhost:3000/api/${path.join("/")}`), context(path));
+    assert.equal(timeoutMilliseconds, 30_000);
+    assert.equal(forwardedSignal.aborted, true);
+    assert.equal(response.status, 502);
+  });
+}

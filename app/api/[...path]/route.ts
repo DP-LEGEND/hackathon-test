@@ -1,6 +1,6 @@
 type ProxyContext = { params: Promise<{ path: string[] }> };
 
-export const maxDuration = 120;
+export const maxDuration = 300;
 const MAX_UPLOAD_BYTES = 250 * 1024 * 1024;
 
 function uploadTooLarge(): Response {
@@ -61,7 +61,7 @@ async function forward(request: Request, context: ProxyContext): Promise<Respons
       duplex: "half",
       cache: "no-store",
       redirect: "manual",
-      signal: AbortSignal.any([request.signal, AbortSignal.timeout(120_000)]),
+      signal: AbortSignal.any([request.signal, AbortSignal.timeout(path[0] === "process" ? 10 * 60_000 : 30_000)]),
     };
     const upstream = await fetch(base, init);
     const responseHeaders = new Headers({ "Cache-Control": "no-store" });
