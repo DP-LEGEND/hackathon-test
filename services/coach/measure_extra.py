@@ -16,10 +16,106 @@ from __future__ import annotations
 
 import numpy as np
 
-from physics.metrics import contact_frame, shoulder_coil, shoulder_yaw
-from physics.skeleton import ARM, L_ANKLE, L_SH, R_ANKLE, R_SH, RACKET_TIP, hitting_hand, to_array, up_vector
+# _smooth, WRIST_SMOOTH_MS and RELEASE_WINDOW_MS: the exact smoothing and window physics
+# uses for wrist_release_ms, so the directional timing below matches it on clean swings.
+from physics.metrics import (
+    RELEASE_WINDOW_MS, WRIST_SMOOTH_MS, _smooth, contact_frame, shoulder_coil, shoulder_yaw, wrist_angle,
+)
+from physics.skeleton import (
+    ARM, L_ANKLE, L_KNEE, L_SH, R_ANKLE, R_KNEE, R_SH, RACKET_TIP, hitting_hand, to_array, up_vector,
+)
 
 STROKES = ("forehand", "backhand")
+
+# Stance is measured from the ankles. The pipeline fills a missing ankle by copying its
+# knee (pipeline/process.py complete_optional_joints) and lists it in
+# metadata.approximatedJoints. A filled ankle is a placeholder, not a measurement.
+STANCE_JOINTS = {L_ANKLE: L_KNEE, R_ANKLE: R_KNEE}
+
+
+def stance_joints_filled(swing: dict, contact: int) -> dict[int, str]:
+    """Ankles we can't trust for stance on this swing: {joint id: why}. Empty = OK.
+
+    - "approximated": listed in metadata.approximatedJoints. That list is per swing,
+      not per frame, so we can't rule out contact and treat it as filled there.
+    - "missing at contact": no finite position at the contact frame.
+    - "copied from knee at contact": exactly the knee's position, the pipeline's fill
+      signature (real ankle and knee points never coincide).
+    Short gaps the pipeline interpolates aren't flagged in the swing JSON, so they
+    can't be detected here.
+    """
+    listed = set((swing.get("metadata") or {}).get("approximatedJoints") or [])
+    P = to_array(swing)
+    out: dict[int, str] = {}
+    for ankle, knee in STANCE_JOINTS.items():
+        a, k = P[contact, ankle], P[contact, knee]
+        if ankle in listed:
+            out[ankle] = "approximated"
+        elif not np.isfinite(a).all():
+            out[ankle] = "missing at contact"
+        elif np.isfinite(k).all() and np.array_equal(a, k):
+            out[ankle] = "copied from knee at contact"
+    return out
+
+
+def wrist_uncock(swing: dict, hand: str, contact: int, fps: float) -> tuple[float, float | None]:
+    """(uncock_deg, uncock_ms): how the wrist RELEASES before contact, with direction.
+
+    The wrist angle is elbow-wrist-index: smaller = more cocked, 180 = racket in line,
+    so uncocking (releasing) makes it grow. Cocking, or holding the cock, never counts.
+    - uncock_deg: how far the angle has opened by contact from its most-cocked point
+      before contact (>= 0). A held or still-increasing cock gives ~0. Never more than
+      the max - min range of the same curve; on a real release it is close to the
+      range pipeline.features reports (which smooths slightly differently).
+    - uncock_ms: ms before contact of the fastest OPENING of the angle, in the same
+      window and smoothing as physics wrist_release_ms (negative = after contact).
+      None if the angle never opens there.
+    """
+    P = to_array(swing)
+    win = max(1, int(round(WRIST_SMOOTH_MS * fps / 1000)) | 1)
+    th = _smooth(wrist_angle(P, hand), win)
+    c = int(np.clip(contact, 0, len(th) - 1))
+    before = th[: c + 1]
+    uncock_deg = (float(max(0.0, th[c] - np.nanmin(before)))
+                  if np.isfinite(th[c]) and np.isfinite(before).any() else float("nan"))
+
+    if len(th) < 3:
+        return uncock_deg, None
+    rate = np.gradient(th) * fps  # signed: + = opening (uncocking)
+    lo = max(1, c - int(round(RELEASE_WINDOW_MS[0] * fps / 1000)))
+    hi = min(len(th) - 2, c + int(round(RELEASE_WINDOW_MS[1] * fps / 1000)))
+    window = rate[lo : hi + 1]
+    if hi < lo or not np.isfinite(window).any() or np.nanmax(window) <= 0:
+        return uncock_deg, None
+    k = lo + int(np.nanargmax(window))
+    # Sub-frame peak, as physics does.
+    y0, y1, y2 = rate[k - 1], rate[k], rate[k + 1]
+    den = y0 - 2 * y1 + y2
+    off = 0.5 * (y0 - y2) / den if np.isfinite(den) and abs(den) > 1e-12 else 0.0
+    off = float(np.clip(off, -0.5, 0.5))
+    return uncock_deg, (c - (k + off)) / fps * 1000
+
+
+def wrist_index_filled(swing: dict, hand: str, contact: int) -> str | None:
+    """Why the hitting-side index finger can't be trusted for wrist angles, or None if it can.
+
+    The wrist angle is elbow-wrist-index. The pipeline fills a missing index finger
+    by copying the wrist (pipeline/process.py complete_optional_joints); the hand
+    segment then has zero length and pipeline.features reads a fake 90 deg angle.
+    - "approximated": listed in metadata.approximatedJoints (per swing, so any frame).
+    - "copied from wrist at frame N": exactly the wrist's position on a frame up to
+      contact, the fill signature (a real fingertip never sits on the wrist).
+    """
+    index, wrist = ARM[hand]["index"], ARM[hand]["wr"]
+    listed = set((swing.get("metadata") or {}).get("approximatedJoints") or [])
+    if index in listed:
+        return f"joint {index} approximated"
+    P = to_array(swing)
+    for f in range(min(contact, len(P) - 1) + 1):
+        i, w = P[f, index], P[f, wrist]
+        if np.isfinite(i).all() and np.isfinite(w).all() and np.array_equal(i, w):
+            return f"joint {index} copied from wrist at frame {f}"
+    return None
 
 
 def _flat(v: np.ndarray, up: np.ndarray) -> np.ndarray:
