@@ -1,4 +1,4 @@
-# Demo kit (Owner: Teammate B)
+# Demo kit (Owner: Henoch)
 
 Put these here as they get written:
 

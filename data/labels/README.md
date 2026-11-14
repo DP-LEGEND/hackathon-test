@@ -1,4 +1,4 @@
-# Swing labels (Owner: Teammate B)
+# Swing labels (Owner: Henoch)
 
 One CSV per filming session, e.g. `2026-11-13_courts.csv`, with columns:
 
