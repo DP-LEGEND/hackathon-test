@@ -1,0 +1,32 @@
+# /upload
+
+"Try your own swing": one clip in, then the new swing opens in `/ghost?swing=<id>` at the coach's call.
+
+| File | Job |
+|---|---|
+| `upload-form.tsx` | The flow: clip, settings, send, progress, errors, then open the swing |
+| `clip-drop.tsx` | Drag and drop (anywhere on the page) or pick a video, with a preview |
+| `clip-settings.tsx` | Optional hitting hand, stroke and slowdown. Auto lets the service decide |
+| `progress-panel.tsx` | Real upload progress, then the steps while the service works |
+| `process-clip.ts` | `POST /api/process` and what each answer means |
+
+## The request
+
+Multipart `POST /api/process` with `file`, plus `hand` (`R`/`L`), `stroke` (`forehand`/`backhand`) and `slowdown` (`1`/`4`/`8`) when they aren't Auto. Auto fields are left out. The catch-all proxy (`app/api/[...path]/route.ts`) forwards it to `POST /process` in `services/pipeline/server.py` (PR #41). The service answers once, after pose, coach and ghost are saved, with `swingId`. The page then opens `/ghost?swing=<swingId>`.
+
+Upload progress is real (XMLHttpRequest). The service doesn't report its steps, so "Finding your swing… Measuring… Building your ghost…" move on a timer after the upload, and the panel says they're a rough guide.
+
+| Answer | The page shows |
+|---|---|
+| 201 | Opens the swing in `/ghost` |
+| 429 | "A clip is already processing" |
+| 413, or a file over 250 MB before it's sent | "Clip too large" |
+| 502 soon after the upload | The service isn't running, with the command to start it |
+| 502 after the proxy's 30 s wait | Still processing: the swing should appear in `/ghost`'s list |
+| Anything else (e.g. 422 "No fully tracked swing found…") | The server's message and a slowdown suggestion |
+
+The 250 MB limit and the accepted extensions (MOV, MP4, M4V, AVI) mirror `server.py`.
+
+## Known limit: the proxy's 30-second timeout
+
+The catch-all proxy (Dev's file) aborts any request 30 seconds after it has the whole upload. Processing a clip on CPU can take longer, as `services/pipeline/README.md` warns. A long clip then ends in the "still processing" message, although the service carries on and saves the swing. The fix is a longer timeout for `process` in the proxy.
