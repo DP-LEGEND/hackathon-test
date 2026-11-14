@@ -309,6 +309,24 @@ def test_an_auto_classified_stroke_label_is_checked_against_the_skeleton(backhan
         assert r["you"]["ball"]["speedKmh"] == pytest.approx(133.2, abs=0.05)
 
 
+def test_a_coach_inferred_stroke_label_is_checked_like_an_auto_one(backhand):
+    # pipeline/live.py hands an ambiguous stroke to the coach, whose shoulder-line detector calls
+    # IMG_2116 a forehand, and saves its answer with strokeSource "coach-inferred".
+    misread = {**backhand, "side": "forehand", "metadata": {"strokeSource": "coach-inferred"}}
+    a = compare(misread, "close_stance", 15)["assumptions"]
+    assert a["stroke"] == {"value": "backhand", "source": "measured (auto label overridden)", "label": "ESTIMATE"}
+    assert (a["anchor"]["x"], a["anchor"]["z"]) == (2.0, 7.0) and a["launchElevationDeg"] == 3.0
+    # The shape live.py actually saves: the coach's stroke in "stroke" and metadata, side "unknown".
+    live = {**backhand, "side": "unknown", "stroke": "forehand",
+            "metadata": {"stroke": "forehand", "strokeSource": "coach-inferred"}}
+    assert compare(live, "close_stance", 15)["assumptions"]["anchor"]["x"] == 2.0
+    # When the skeleton agrees, or is too close to call (frame 62), the coach's label stands.
+    agrees = {**misread, "side": "backhand"}
+    assert compare(agrees, "close_stance", 15)["assumptions"]["stroke"]["source"] == "recorded"
+    assert compare({**misread, "contactFrame": 62}, "close_stance", 15)["assumptions"]["stroke"] == {
+        "value": "forehand", "source": "recorded", "label": "RECORDED"}
+
+
 @pytest.mark.filterwarnings("ignore:Mean of empty slice")  # the all-NaN skeleton below
 def test_unknown_stroke_is_a_forehand_labelled_assumed(backhand):
     # At frame 62 (IMG_2116's hit sound) the racket head is only 4 cm to one side of the hips:
