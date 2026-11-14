@@ -90,9 +90,17 @@ def _swing_pattern(track: np.ndarray, peak: int, fps_real: float) -> bool:
 
 def audio_hits(wav_path: str, min_gap_s: float = 0.4, rise_db: float = 20.0) -> np.ndarray:
     """Times (clip seconds) of sharp transients (ball hits, claps) in a 16 kHz mono wav."""
-    w = wave.open(wav_path)
-    sr = w.getframerate()
-    x = np.frombuffer(w.readframes(w.getnframes()), np.int16).astype(float) / 32768
+    try:
+        stream = wave.open(wav_path)
+    except (wave.Error, EOFError) as exc:
+        raise ValueError("Invalid hits WAV; supply 16 kHz mono PCM16") from exc
+    with stream as w:
+        sr = w.getframerate()
+        if w.getnchannels() != 1 or w.getsampwidth() != 2 or sr != 16000:
+            raise ValueError("hits WAV must be 16 kHz mono PCM16 in camera A playback time")
+        x = np.frombuffer(w.readframes(w.getnframes()), np.int16).astype(float) / 32768
+    if len(x) < sr // 10:
+        return np.array([], dtype=float)
     x = sosfiltfilt(butter(4, [1500, 7000], btype="band", fs=sr, output="sos"), x)
     hop = sr // 200
     n = len(x) // hop * hop
@@ -109,6 +117,8 @@ def find_swings(
     hits: np.ndarray | None = None,
     confirm_s: float = 0.6,
     wrist: int = R_WRIST,
+    speed_fallback: bool = False,
+    require_audio: bool = False,
 ) -> list[dict]:
     """Return [{"peak": frame, "start": frame, "end": frame, "speed": .., "hit": t|None}]."""
     if len(raw["t"]) < 2:
@@ -121,7 +131,17 @@ def find_swings(
                        height=min_speed, prominence=min_speed * .25)
     # Filter before enforcing spacing: an unrelated fast feed must not suppress
     # the nearby real swing merely because its peak happens to be larger.
-    candidates = [int(p) for p in pk if _swing_pattern(track, int(p), fps * slowdown)]
+    patterns = {int(p): _swing_pattern(track, int(p), fps * slowdown) for p in pk}
+    candidates = [int(p) for p in pk if patterns[int(p)] or speed_fallback]
+    # Confirm before spacing, so an unconfirmed feed cannot suppress a hit.
+    matched = {}
+    for p in candidates:
+        if hits is not None and len(hits):
+            nearest = float(hits[np.argmin(np.abs(hits - raw["t"][p]))])
+            if abs(nearest - raw["t"][p]) / slowdown <= confirm_s:
+                matched[p] = nearest
+    if require_audio:
+        candidates = [p for p in candidates if p in matched]
     selected = []
     for p in sorted(candidates, key=lambda p: sp[p], reverse=True):
         if all(abs(p - other) >= gap for other in selected):
@@ -130,16 +150,13 @@ def find_swings(
     out = []
     pre, post = max(1, int(0.45 * fps * slowdown)), max(1, int(0.35 * fps * slowdown))
     for p in sorted(selected):
-        hit = None
-        if hits is not None and len(hits):
-            j = np.argmin(np.abs(hits - t[p]))
-            if abs(hits[j] - t[p]) <= confirm_s * slowdown / 4 + 0.15:
-                hit = float(hits[j])
+        hit = matched.get(p)
         out.append({
             "peak": int(p),
             "start": int(max(0, p - pre)),
             "end": int(min(len(t) - 1, p + post)),
             "speed": float(sp[p]),
             "hit": hit,
+            "detection": "pattern" if patterns[p] else "speed_peak",
         })
     return out

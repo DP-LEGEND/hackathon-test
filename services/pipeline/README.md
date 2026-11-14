@@ -111,8 +111,8 @@ source start and contact frame indices for comparison with the source video.
 - Exit 0: all detected swings written. Exit 2: some written, some rejected.
   Exit 1: none usable (`manifest.status: "failed"`), invalid input, no detections,
   model failure or output I/O failure. Existing accepted swing output is preserved.
-- `fpsReal` equals `fps`; `contactFrame` remains the window-relative peak index
-  returned by `find_swings`, including when a swing uses mono fallback.
+- `fpsReal` equals `fps`. `contactFrame` is window-relative: an audio transient
+  when confirmed within the same rate section, otherwise a wrist-speed estimate.
 
 ## Pose cache and safe reruns
 
@@ -150,3 +150,64 @@ strict JSON output, per-swing mono fallback, required/optional joints, cache reu
 and invalidation, output preservation and CLI error handling. Synthetic inputs
 are clearly confined to tests. Real clips and model weights must not be committed.
 The legacy `python -m pipeline.run <clip>` single-camera tool remains available.
+
+
+## Follow-ups: early release, playback switches, tap filtering
+
+The early-wrist block was lost at two checks: `_swing_pattern` required a
+canonical pullback/sweep; surviving peaks then failed the complete core-joint
+window gate. The CLI now permits plain speed peaks (`metadata.detection =
+"speed_peak"`) and crops occluded window edges only when at least .15 s before
+and .08 s after contact remain continuously tracked. It still rejects missing
+core joints through contact. Rejections include joint IDs, playback peak seconds,
+and the detection method, so inspect 715?950 s for IMG_2115. Synthetic regression
+coverage proves these paths; actual recovery counts need the real cached poses.
+
+Switch flags are **QuickTime playback seconds**, not real elapsed seconds:
+
+- IMG_2115: `--slowdown-a 4 --a-realtime-after 1476` (24:36).
+  PR #17 measured 1475.8; use that value if reproducing its exact boundary.
+  Its initial real-speed duration was only estimated (~15 s); add
+  `--a-realtime-before 15` only after checking the recording.
+- IMG_2116: `--slowdown-a 4 --a-realtime-before 80 --a-realtime-after 1310`
+  (01:20 and 21:50).
+- Camera B has equivalent `--b-realtime-before` / `--b-realtime-after` flags.
+
+Each clock integrates elapsed time continuously: initial real duration + slow
+playback duration / slowdown + ending real duration. Stereo samples both cameras
+on their mapped clocks. `--offset-b` means B playback seconds at A playback zero;
+negative times extrapolate B's initial rate. When using an observed shared hit
+at playback A=a, B=b, calculate the real offset as `clock_b.real(b) -
+clock_a.real(a)`, then convert it back to B playback seconds for `--offset-b`.
+The old constant-slowdown sync values must be rechecked when adding an initial
+real-speed segment. Exported windows stop at switches, so their FPS, timestamps,
+gap limits and contact indices all describe one constant real rate. Frames right
+at a switch can therefore have shortened swing context.
+
+`--hits-wav iphone-playback.wav` requires a transient within ?0.5 **real seconds**
+and uses it for contact where possible. Supply 16 kHz mono PCM16 audio from the
+same rendered A clip, with matching time zero; detection uses `rise_db=25`.
+`--tap-filter --hits-wav iphone-playback.wav` additionally sets peak speed ?7
+hip-relative torso lengths/real second and peak spacing ?2.5 real seconds.
+Audio confirmation runs before spacing, including spacing across rate switches.
+Without tap mode the existing speed threshold and .5 s spacing remain available.
+Audio transients are candidate hits, not a semantic classifier of ball sounds.
+
+## Swing API
+
+From `services/`, set `GHOST_SWINGS_DIR` to a processed session folder or its
+parent, then run `python -m uvicorn pipeline.server:app --port 8000`.
+PowerShell example: `$env:GHOST_SWINGS_DIR = '../data/processed'`.
+Only manifest-listed JSON files are served; IDs are filename stems.
+
+- `GET /swings` ? `{"swings":[{"id":"<session>-swing-0001"}]}`.
+- `GET /swings/{id}` ? the stored Swing JSON; unknown ID ? 404.
+- `POST /swings/{id}/ghost`, JSON `{"fix":"straighten_elbow","amount":12}`
+  ? `physics.compare.compare` output (`you`, `ghost`, `delta`, `assumptions`).
+  Invalid fixes/amounts or unusable swing data ? 422. Missing/broken catalogue
+  entries ? 503; an absent processed directory lists no swings.
+
+`GET /docs` exposes the request schema. CORS permits `http://localhost:3000` by
+default; set `GHOST_WEB_ORIGIN` before server startup for another web origin.
+The web app can call this local API directly; no Next.js proxy is required.
+PREDICTED ball labels and physics assumptions are preserved in compare responses.
