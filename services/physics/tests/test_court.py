@@ -13,7 +13,9 @@ import numpy as np
 import pytest
 
 from physics.ball import COURT_WIDTH_M, DEFAULT_CONTACT
-from physics.compare import AZIMUTH_LIMIT_DEG, compare, drive_spot, estimate_azimuth, main, swing_stroke
+from physics.compare import (
+    AZIMUTH_LIMIT_DEG, compare, decide_stroke, drive_spot, estimate_azimuth, main, swing_stroke,
+)
 from physics.ghost import apply_fix
 from physics.skeleton import (
     ARM, FEET, L_HIP, L_SH, N_POINTS, NOSE, R_SH, bone_lengths, court_axes, court_shift, mid, racket_head,
@@ -325,6 +327,18 @@ def test_a_coach_inferred_stroke_label_is_checked_like_an_auto_one(backhand):
     assert compare(agrees, "close_stance", 15)["assumptions"]["stroke"]["source"] == "recorded"
     assert compare({**misread, "contactFrame": 62}, "close_stance", 15)["assumptions"]["stroke"] == {
         "value": "forehand", "source": "recorded", "label": "RECORDED"}
+
+
+def test_a_stroke_decided_before_coaching_is_kept_as_an_estimate(backhand):
+    # pipeline/live.py calls decide_stroke() and writes the answer back before coaching.
+    misread = {**backhand, "side": "forehand", "metadata": {"strokeSource": "auto"}}
+    assert decide_stroke(misread) == ("backhand", "measured (auto label overridden)")
+    assert decide_stroke({**backhand, "side": "unknown"}) == ("backhand", "measured")
+    for source in ("measured", "measured (auto label overridden)"):
+        written_back = {**backhand, "stroke": "backhand", "metadata": {"strokeSource": source}}
+        a = compare(written_back, "close_stance", 15)["assumptions"]
+        assert a["stroke"] == {"value": "backhand", "source": source, "label": "ESTIMATE"}
+        assert a["anchor"]["x"] == 2.0
 
 
 @pytest.mark.filterwarnings("ignore:Mean of empty slice")  # the all-NaN skeleton below

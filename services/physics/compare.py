@@ -171,6 +171,9 @@ def ball_contact(swing: dict, P: np.ndarray, hand: str) -> tuple[int, str]:
 # classifier ("auto") or, for an ambiguous stroke, the coach (pipeline/live.py "coach-inferred").
 AUTO_STROKE_SOURCES = ("auto", "coach-inferred")
 AUTO_LABEL_OVERRIDDEN = "measured (auto label overridden)"
+# strokeSource values a caller writes back after decide_stroke() measured the stroke from the
+# skeleton (pipeline/live.py does, before coaching). compare() carries them through as ESTIMATE.
+MEASURED_STROKE_SOURCES = ("measured", AUTO_LABEL_OVERRIDDEN)
 STROKE_LABELS = {"given": "RECORDED", "recorded": "RECORDED", "measured": "ESTIMATE",
                  AUTO_LABEL_OVERRIDDEN: "ESTIMATE", "assumed": "ASSUMED"}
 
@@ -199,7 +202,8 @@ def swing_stroke(swing: dict, P: np.ndarray, hand: str, contact: int, side: str 
     AUTO_STROKE_SOURCES: the pipeline's classifier or the coach) is checked against the skeleton
     first, and the skeleton wins when they disagree: AUTO_LABEL_OVERRIDDEN. "measured": no label,
     so the skeleton (_measured_stroke). "assumed": nothing works, so it is a forehand, labelled
-    ASSUMED. Never a silent default.
+    ASSUMED. Never a silent default. A stroke a caller already measured and wrote back
+    (strokeSource in MEASURED_STROKE_SOURCES, e.g. pipeline/live.py before coaching) is kept.
 
     Why the skeleton can beat a guessed label: the coach's and the pipeline's classifiers measure
     along the shoulder line, which turns side-on at contact, and both call the labelled IMG_2116
@@ -211,13 +215,28 @@ def swing_stroke(swing: dict, P: np.ndarray, hand: str, contact: int, side: str 
         return side, "given"
     label = next((swing[key] for key in ("stroke", "side") if swing.get(key) in SIDES), None)
     meta = swing.get("metadata")
-    auto = isinstance(meta, dict) and meta.get("strokeSource") in AUTO_STROKE_SOURCES
+    source = meta.get("strokeSource") if isinstance(meta, dict) else None
+    if label is not None and source in MEASURED_STROKE_SOURCES:
+        return label, source  # already measured from this skeleton (decide_stroke) before coaching
+    auto = source in AUTO_STROKE_SOURCES
     if label is not None and not auto:
         return label, "recorded"
     measured = _measured_stroke(P, hand, contact)
     if label is not None:
         return (measured, AUTO_LABEL_OVERRIDDEN) if measured not in (None, label) else (label, "recorded")
     return (measured, "measured") if measured is not None else ("forehand", "assumed")
+
+
+def decide_stroke(swing: dict, hand: str | None = None) -> tuple[str, str]:
+    """swing_stroke() for a whole swing dict: the stroke compare() will use, and its source.
+
+    For callers that must agree with compare() before it runs. pipeline/live.py coaches with
+    this stroke, so the advice, the ghost fix and the ball path all use one stroke.
+    """
+    P = to_array(swing)
+    hand = hand or swing_hand(swing, P)
+    contact, _ = ball_contact(swing, P, hand)
+    return swing_stroke(swing, P, hand, contact)
 
 
 def drive_spot(hand: str, side: str) -> tuple[float, float]:
