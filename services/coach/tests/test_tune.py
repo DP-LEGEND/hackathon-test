@@ -415,11 +415,35 @@ def test_a_bare_id_from_another_labelled_run_is_missing_not_measured(tmp_path: P
     assert seen == ["run 5"] and missing == [SHARED]  # the fh-04 label never measures fh-05's swing
 
 
-def test_swings_in_one_flat_folder_still_match_bare_ids(tmp_path: Path) -> None:
-    _write(tmp_path, "raw", "swing-a", "a")  # folder name isn't a labelled run
+def test_fh_04_labels_alone_with_only_the_fh_05_folder_are_all_missing(tmp_path: Path) -> None:
+    # Codex case: no fh-05 label at all, so nothing else in the labels names fh-05. The
+    # fh-05 swing's id is unique in the folder (a bare alias exists), but it isn't fh-04's.
+    _write(tmp_path, "fh-05", SHARED, "run 5")
+    _write(tmp_path, "fh-05", "7178110a0b06-swing-0007", "run 5, 0007")
     swings = load_swings(tmp_path)
-    assert find_swing(_row("swing-a", "fh-04"), swings, frozenset({"fh-04", "fh-05"}))["marker"] == "a"
-    assert find_swing(_row("swing-a", ""), swings)["marker"] == "a"
+    assert SHARED in swings  # the bare alias that used to be matched
+    labels = [_row(SHARED, "fh-04"), _row("7178110a0b06-swing-0007", "fh-04")]
+    seen, missing = _measured(labels, swings)
+    assert seen == [] and missing == [SHARED, "7178110a0b06-swing-0007"]
+    report = tune(labels, swings, measure=lambda swing, stroke: {})
+    assert report["missing"] == 2
+
+
+def test_the_run_comes_from_the_column_else_the_id_suffix_and_they_must_agree(tmp_path: Path) -> None:
+    _write(tmp_path, "fh-04", SHARED, "run 4")
+    _write(tmp_path, "fh-05", SHARED, "run 5")
+    swings = load_swings(tmp_path)
+    assert find_swing(_row(f"{SHARED}@fh-05", ""), swings)["marker"] == "run 5"  # suffix supplies the run
+    assert find_swing(_row(SHARED, "fh-04"), swings)["marker"] == "run 4"  # column supplies the run
+    assert find_swing(_row(f"{SHARED}@fh-05", "fh-04"), swings) is None  # they disagree: missing
+    assert find_swing(_row(SHARED, ""), swings) is None  # no run and the id is shared: ambiguous
+
+
+def test_a_flat_folder_only_matches_labels_without_a_run(tmp_path: Path) -> None:
+    _write(tmp_path, "raw", "swing-a", "a")  # one folder that isn't a pipeline run
+    swings = load_swings(tmp_path)
+    assert find_swing(_row("swing-a", ""), swings)["marker"] == "a"  # no run on the label: bare id
+    assert find_swing(_row("swing-a", "fh-04"), swings) is None  # fh-04's folder wasn't given
 
 
 def test_every_real_label_finds_its_own_runs_swing(tmp_path: Path) -> None:
