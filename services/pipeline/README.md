@@ -265,14 +265,21 @@ It is a frame percentage, not a percentage of all 33 joint samples.
   includes .05 s before the search boundary to confirm an edge reversal and
   .12 s for the allowed difference between image and metric peaks. This extra
   evidence can cross a rate boundary; peak widths and lookback bounds use real
-  timestamps. It does not move the replay window or contact. No missing trajectory is
-  interpolated by the admission check.
+  timestamps. Admission bridges bounded gaps in the hip-relative wrist track up
+  to `max_gap_s` (default .25 real seconds), using timestamp-weighted interpolation.
+  This evidence-only fill does not modify the exported skeleton. Longer or
+  unbounded gaps stay missing; the gate cannot recenter out of a missing candidate
+  peak, and a reversal beyond an unfilled gap is not used.
   The earlier 2D proposal heuristic still uses .12 torso lengths of pullback,
   .25 before the peak and .10 after it, .50 total forward sweep, and net/path
   coherence at least .60. Candidate spacing matches main: .5 real seconds,
   or 2.5 with `--tap-filter`, before the final reconstruction and metric gates.
-  Backswing evidence stays inside the contiguous tracked hitting-wrist run;
-  a cropped replay window never reintroduces an earlier missing interval.
+  Contact matching separately retains main's raw-camera candidate and NaN-aware
+  moving average. When repaired detection moves a peak by at most .12 real seconds,
+  its original candidate's sound transient is retained, provided both belong to
+  the same rate section. Candidates without such an anchor keep their own sound
+  match. This reference track never supplies reconstructed joints or admission
+  evidence. The metric gate decides admission without changing contact.
   These are conservative geometric heuristics, not validated classifications:
   a cropped/foreshortened backswing can be missed, and a feed with a genuine
   swing-like motion can still pass. Tune against labelled real recordings;

@@ -194,7 +194,7 @@ def swings_from_raw(a: dict, b: dict | None = None, options: Options = Options()
         hits = np.asarray(a["audio_hits"])
     else:
         hits = timeline_a.real(audio_hits(options.hits_wav, rise_db=25)) if options.hits_wav else None
-    detections = []
+    detections, contact_references = [], []
     for lo, hi, factor in sections:
         if hi - lo < 2:
             continue
@@ -203,18 +203,19 @@ def swings_from_raw(a: dict, b: dict | None = None, options: Options = Options()
         section_events = []
         hands = ("R", "L") if options.hand == "auto" else (options.hand,)
         for hand in hands:
-            for event in find_swings(part, min_speed=7.0 if options.tap_filter else options.min_speed,
-                                     min_gap_real_s=2.5 if options.tap_filter else .5,
-                                     hits=hits, confirm_s=.5, require_audio=False,
-                                     speed_fallback=True, wrist=16 if hand == "R" else 15):
+            settings = dict(min_speed=7.0 if options.tap_filter else options.min_speed,
+                            min_gap_real_s=2.5 if options.tap_filter else .5,
+                            hits=hits, confirm_s=.5, require_audio=False,
+                            speed_fallback=True, wrist=16 if hand == "R" else 15)
+            if hits is not None and len(hits):
+                original = {**a, 'img': a['img'][lo:hi], 't': real_a[lo:hi], 'fps': a['fps'] * factor}
+                for reference in find_swings(original, **settings, contact_reference=True):
+                    contact_references.append({**reference, 'peak': reference['peak'] + lo,
+                                               'section': (lo, hi)})
+            for event in find_swings(part, **settings):
                 event["hand"] = hand
                 for key in ("start", "end", "peak"):
                     event[key] += lo
-                if event.get("hit") is not None:
-                    hit_frame = int(np.argmin(abs(real_a - event["hit"])))
-                    if lo <= hit_frame < hi:
-                        event["start"] = min(event["start"], hit_frame)
-                        event["end"] = max(event["end"], hit_frame)
                 event["fpsReal"] = float(a["fps"]) * factor
                 event['section'] = (lo, hi)
                 event["realtime"] = factor == 1
@@ -227,6 +228,27 @@ def swings_from_raw(a: dict, b: dict | None = None, options: Options = Options()
                for other in selected):
             selected.append(event)
     detections = sorted(selected, key=lambda e: e['peak'])
+    # Apply main's cross-hand/rate spacing to its original candidates, too.
+    # Recovery may move the admission peak, but must not choose a new transient.
+    anchors = []
+    for reference in sorted(contact_references, key=lambda e: e['speed'], reverse=True):
+        if all(abs(real_a[reference['peak']] - real_a[other['peak']]) >= (2.5 if options.tap_filter else .5)
+               for other in anchors):
+            anchors.append(reference)
+    for event in detections:
+        lo, hi = event['section']
+        if anchors:
+            reference = min(anchors, key=lambda e: abs(real_a[e['peak']] - real_a[event['peak']]))
+            if (reference.get('hit') is not None and reference['section'] == event['section']
+                    and abs(real_a[reference['peak']] - real_a[event['peak']]) <= PEAK_MATCH_S + 1e-9):
+                hit_frame = int(np.argmin(abs(real_a - reference['hit'])))
+                if lo <= hit_frame < hi:
+                    event['hit'] = reference['hit']
+        if event.get('hit') is not None:
+            hit_frame = int(np.argmin(abs(real_a - event['hit'])))
+            if lo <= hit_frame < hi:
+                event['start'] = min(event['start'], hit_frame)
+                event['end'] = max(event['end'], hit_frame)
     swings, rejected = [], []
     for number, event in enumerate(detections, 1):
         start, end = event["start"], event["end"] + 1  # finder uses inclusive end
@@ -300,15 +322,12 @@ def swings_from_raw(a: dict, b: dict | None = None, options: Options = Options()
                 real_a, real_a[event['peak']] - history_s - 1e-9))))
             trajectory = (stereo if source == 'stereo' else mono)
             wrist = 15 if hand == 'L' else 16
-            usable = np.isfinite(trajectory[:, [wrist, 23, 24]]).all(axis=(1, 2))
-            # Never re-expand a cropped windup through the same hidden wrist.
-            missing = np.flatnonzero(~usable[evidence_start:event['peak'] + 1])
-            if len(missing):
-                evidence_start += int(missing[-1]) + 1
+            # Keep the candidate's source index even when history contains gaps.
+            # The gate bridges bounded gaps and stops at longer missing runs.
             evidence_world = (normalised if evidence_start == start else
                               normalise(trajectory[evidence_start:end], options.torso_m))
             evidence = swing_evidence(evidence_world, real_a[evidence_start:end], wrist,
-                                      event['peak'] - evidence_start, options.torso_m)
+                                      event['peak'] - evidence_start, options.torso_m, options.max_gap_s)
             joint_filled = (stereo_filled if source == "stereo" else mono_filled)[start:end].copy()
             joint_filled |= ~np.isfinite(normalised).all(axis=2)
             world, filled = complete_optional_joints(normalised)

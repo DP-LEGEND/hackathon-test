@@ -4,7 +4,7 @@ import pytest
 from scipy.special import erf
 
 from pipeline.process import Options, swings_from_raw
-from pipeline.segment import swing_evidence
+from pipeline.segment import find_swings, swing_evidence
 from pipeline.stereo import _K
 from pipeline.tests.test_stereo_cli import stereo_pair
 
@@ -85,11 +85,39 @@ def test_peak_below_six_is_rejected_even_with_reversal():
         swing_evidence(world, times, 16, 120)
 
 
-def test_reversal_before_a_missing_interval_is_not_used():
+@pytest.mark.parametrize('fps', [30, 60, 120, 240])
+def test_reversal_before_a_tenth_second_gap_is_used_without_mutating_pose(fps):
+    world, times, _ = wrist_motion(fps=fps, delay=.5)
+    start = round(.65 * fps)
+    world[start:start + round(.1 * fps), 16] = np.nan
+    before = world.copy()
+    assert swing_evidence(world, times, 16, fps)['backswingVerified']
+    np.testing.assert_equal(world, before)
+
+
+@pytest.mark.parametrize('count,accepted', [(30, True), (31, False)])
+def test_reversal_gap_respects_quarter_second_limit(count, accepted):
     world, times, _ = wrist_motion(delay=.5)
-    world[(times > .65) & (times < .75), 16] = np.nan
+    world[78:78 + count, 16] = np.nan
+    if accepted:
+        assert swing_evidence(world, times, 16, 120)['backswingVerified']
+    else:
+        with pytest.raises(ValueError, match='Not a swing'):
+            swing_evidence(world, times, 16, 120)
+
+
+def test_reversal_gap_respects_configured_limit():
+    world, times, _ = wrist_motion(delay=.5)
+    world[78:90, 16] = np.nan
     with pytest.raises(ValueError, match='Not a swing'):
-        swing_evidence(world, times, 16, 120)
+        swing_evidence(world, times, 16, 120, max_gap_s=.05)
+
+
+def test_long_gap_at_candidate_cannot_be_escaped_by_recentering():
+    world, times, _ = wrist_motion(delay=.5)
+    world[88:119, 16] = np.nan  # a valid speed peak is immediately after the gap
+    with pytest.raises(ValueError, match='gap around candidate peak'):
+        swing_evidence(world, times, 16, 118)
 
 
 def test_reversal_older_than_six_tenths_is_not_used():
@@ -135,7 +163,8 @@ def test_pipeline_reads_reversal_before_candidate_window_and_preserves_contact(s
     assert swing['frames'][swing['contactFrame']]['t'] == pytest.approx(.6)
 
 
-def test_pipeline_reads_earlier_reversal_across_rate_boundary(stereo_pair, monkeypatch):
+@pytest.mark.parametrize('reference_hit', [1.2, .7])
+def test_pipeline_reads_earlier_reversal_across_rate_boundary(stereo_pair, monkeypatch, reference_hit):
     import pipeline.process as process
     a = stereo_pair[0]
     _, times, path = wrist_motion(delay=.5)
@@ -150,8 +179,12 @@ def test_pipeline_reads_earlier_reversal_across_rate_boundary(stereo_pair, monke
     keep = np.r_[np.arange(0, 96, 4), np.arange(96, n)]
     a = {**a, 'world': world[keep], 'img': image[keep], 'vis': np.ones((len(keep), 33)),
          't': np.arange(len(keep)) / 30, 'fps': 30}
+    a['audio_hits'] = np.array([reference_hit, 1.2])
+    # A reference sound in the preceding rate section was not a measured
+    # contact on main, so it must not replace the current section's sound.
     monkeypatch.setattr(process, 'find_swings', lambda raw, **kwargs: [] if raw['t'][0] < .8 else [
-        {'start': 0, 'end': 84, 'peak': 24, 'speed': 20, 'hit': 1.2}])
+        {'start': 0, 'end': 84, 'peak': 24, 'speed': 20,
+         'hit': reference_hit if kwargs.get('contact_reference') else 1.2}])
     swings, report = swings_from_raw(a, options=Options(hand='R', slowdown_a=4, a_realtime_before=.8))
     assert report['written'] == 1, report
     swing = swings[0]
@@ -159,3 +192,88 @@ def test_pipeline_reads_earlier_reversal_across_rate_boundary(stereo_pair, monke
     assert swing['metadata']['sourceContactFrame'] == 72
     assert swing['contactFrame'] == 48 and swing['fpsReal'] == 120
     assert swing['frames'][swing['contactFrame']]['t'] == pytest.approx(.4)
+
+
+def test_contact_reference_matches_main_with_hidden_and_missing_pixels(stereo_pair):
+    a = stereo_pair[0]
+    a['vis'][65:78, 16] = .05
+    a['img'][70:72, 16] = np.nan
+    candidates = find_swings(a, hits=np.array([.5, .6, 1.5]), confirm_s=.5,
+                              speed_fallback=True, contact_reference=True)
+    # Golden candidate/hit pairs checked against main's detector and smoother.
+    # Visibility-masking or finite-run smoothing changes this fixture's peaks.
+    assert [(event['peak'], event['hit']) for event in candidates] == [(73, .6), (181, 1.5)]
+
+
+@pytest.mark.parametrize('contact_offset', [10, 12, 15])
+@pytest.mark.parametrize('slowdown', [1, 4])
+def test_repaired_candidate_keeps_original_sound_before_admitted_peak(stereo_pair, monkeypatch, contact_offset, slowdown):
+    import pipeline.process as process
+    a = stereo_pair[0]
+    a['t'] *= slowdown
+    a['fps'] /= slowdown
+    contact = 72 - contact_offset
+    a['audio_hits'] = np.array([contact / 120, .6])
+    # Main attached the first transient to its original candidate. Recovered
+    # pixels propose frame 72, whose nearest sound is now the second transient.
+    def candidates(raw, **kwargs):
+        reference = kwargs.get('contact_reference', False)
+        return [{'start': 0, 'end': 114, 'peak': 60 if reference else 72,
+                 'speed': 20, 'hit': contact / 120 if reference else .6}]
+    monkeypatch.setattr(process, 'find_swings', candidates)
+    swings, report = swings_from_raw(a, options=Options(hand='R', slowdown_a=slowdown))
+    assert report['written'] == 1, report
+    swing = swings[0]
+    assert swing['metadata']['backswingVerified']
+    assert swing['metadata']['sourcePeakSeconds'] == pytest.approx(a['t'][72])
+    assert swing['metadata']['sourceContactFrame'] == contact
+    assert swing['metadata']['sourceContactSeconds'] == pytest.approx(a['t'][contact])
+    assert swing['metadata']['contactMethod'] == 'audio-transient'
+    assert swing['metadata']['sourceStartFrame'] + swing['contactFrame'] == contact
+
+
+@pytest.mark.parametrize('delta,original_hit', [(.12, .4), (.1201, .4), (.12, None)])
+def test_contact_anchor_range_and_unmatched_recovery(stereo_pair, monkeypatch, delta, original_hit):
+    import pipeline.process as process
+    a = stereo_pair[0]
+    a['audio_hits'] = np.array([.4, .6])
+    # Place the original candidate exactly on/either side of the real-time
+    # matching boundary; its native frame count alone cannot decide the match.
+    a['t'][58] = .6 - delta
+    def candidates(raw, **kwargs):
+        reference = kwargs.get('contact_reference', False)
+        return [{'start': 0, 'end': 114, 'peak': 58 if reference else 72,
+                 'speed': 20, 'hit': original_hit if reference else .6}]
+    monkeypatch.setattr(process, 'find_swings', candidates)
+    swings, report = swings_from_raw(a, options=Options(hand='R'))
+    assert report['written'] == 1, report
+    expected = 48 if delta <= .12 and original_hit is not None else 72
+    assert swings[0]['metadata']['sourceContactFrame'] == expected
+
+
+def test_short_peak_gap_across_rate_boundary_does_not_crop_candidate_out(stereo_pair, monkeypatch):
+    import pipeline.process as process
+    a = stereo_pair[0]
+    _, times, path = wrist_motion(delay=.5)
+    n = len(times)
+    world = np.repeat(a['world'][:1], n, axis=0)
+    angle = -1.2 + path
+    world[:, 14] = world[:, 12] + .3 * np.c_[np.sin(angle + .3), np.cos(angle + .3), np.zeros(n)]
+    world[:, 16] = world[:, 14] + .32 * np.c_[np.sin(angle), np.cos(angle), np.zeros(n)]
+    pixels = world @ _K(900, a['size']).T
+    image = np.concatenate([pixels[:, :, :2] / pixels[:, :, 2:], np.zeros((n, 33, 1))], axis=2)
+    keep = np.r_[np.arange(0, 120, 4), np.arange(120, n)]
+    a = {**a, 'world': world[keep], 'img': image[keep], 'vis': np.ones((len(keep), 33)),
+         't': np.arange(len(keep)) / 30, 'fps': 30}
+    a['vis'][(times[keep] >= .95) & (times[keep] <= 1.025), 16] = 0
+    # Per-section skeleton repair cannot fill a gap spanning both section edges.
+    # Replay crops to the later finite run; evidence must retain the peak's index
+    # and bridge the short gap using the full source clock.
+    monkeypatch.setattr(process, 'find_swings', lambda raw, **kwargs: [] if raw['t'][0] < 1. else [
+        {'start': 0, 'end': 70, 'peak': 0, 'speed': 20, 'hit': 1.2}])
+    swings, report = swings_from_raw(a, options=Options(hand='R', slowdown_a=4, a_realtime_before=1.))
+    assert report['written'] == 1, report
+    swing = swings[0]
+    assert swing['metadata']['sourceStartFrame'] > 30  # candidate peak is frame 30
+    assert swing['metadata']['sourceContactFrame'] == 54
+    assert swing['metadata']['sourceStartFrame'] + swing['contactFrame'] == 54
