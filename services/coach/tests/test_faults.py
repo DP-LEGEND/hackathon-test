@@ -793,10 +793,17 @@ def test_missing_or_malformed_flags_mean_unknown_not_guessed(sample: dict) -> No
     assert _ids(swing, "backhand") == _ids(sample, "backhand")
 
 
-def test_every_rule_measurement_knows_its_joints(sample: dict) -> None:
-    from coach.measure_extra import measurement_joints
+def _reads(swing: dict, measurement: str) -> list[tuple[list[int], range]]:
+    from coach.measure_extra import measurement_reads
 
-    joints = measurement_joints(sample, "R")
+    m = measure_swing(swing, "forehand")
+    return measurement_reads(swing, m["hand"], m["contact_frame"], m["fps_real"])[measurement]
+
+
+def test_every_rule_measurement_knows_its_joints(sample: dict) -> None:
+    from coach.measure_extra import measurement_reads
+
+    joints = measurement_reads(sample, "R", sample["contactFrame"], 120.0)
     used = {rule["measurement"] for rules in THRESHOLDS.values() for rule in rules.values()}
     used |= {rule["amount_from"]["measurement"] for rules in THRESHOLDS.values()
              for rule in rules.values() if "amount_from" in rule}
@@ -808,10 +815,92 @@ def test_every_rule_measurement_knows_its_joints(sample: dict) -> None:
     "wrist_uncock_ms", "wrist_release_ms", "shoulder_turn_deg", "hip_turn_range_deg",
     "stance_width_ratio", "stance_open_deg"])
 def test_a_filled_joint_at_contact_nulls_each_measurement_that_reads_it(sample: dict, measurement: str) -> None:
-    from coach.measure_extra import measurement_joints
-
-    joints, _ = measurement_joints(sample, "R")[measurement]
-    for joint in joints:
+    joints = {j for part, _ in _reads(sample, measurement) for j in part}
+    for joint in sorted(joints):
         m = measure_swing(_flagged(sample, sample["contactFrame"], joint), "forehand")
         assert m[measurement] is None, (measurement, joint)
         assert m["guessed_joints"][measurement] == f"joint {joint} filled at frame {sample['contactFrame']}"
+
+
+# ---- Review fix on #38: the check covers every frame a measurement reads -----------
+# Smoothing and derivatives reach past the frames a measurement is "about": the stance
+# shot direction is np.gradient of the hitting wrist AT contact, which reads the frames
+# either side of it.
+
+ALL_MEASUREMENTS = ["elbow_at_contact_deg", "elbow_min_before_deg", "wrist_angle_change_pre_deg",
+                    "wrist_uncock_deg", "wrist_uncock_ms", "wrist_release_ms", "shoulder_turn_deg",
+                    "hip_turn_range_deg", "stance_width_ratio", "stance_open_deg"]
+
+
+@pytest.mark.parametrize("offset", [-1, 1])
+def test_wrist_filled_next_to_contact_skips_stance(sample: dict, offset: int) -> None:
+    c = sample["contactFrame"]
+    assert R_WRIST in {j for part, _ in _reads(sample, "stance_open_deg") for j in part}  # no racket tracked
+    swing = _flagged(sample, c + offset, R_WRIST)
+    assert swing["frames"][c]["filled"][R_WRIST] is False  # real at contact
+    m = measure_swing(swing, "backhand")
+    assert m["stance_open_deg"] is None
+    assert m["guessed_joints"]["stance_open_deg"] == f"joint {R_WRIST} filled at frame {c + offset}"
+    result = coach_swing(swing, stroke="backhand")
+    assert STANCE_FAULT in result["not_measured"]
+    assert result["fault"] is None or result["fault"]["id"] != STANCE_FAULT
+    assert STANCE_FAULT not in result["other_faults"]
+    # The forehand stance ghost amount comes from the same angle, so it isn't sized either.
+    assert measure_swing(swing, "forehand")["stance_open_deg"] is None
+
+
+def test_wrist_filled_two_frames_from_contact_keeps_stance(sample: dict) -> None:
+    swing = _flagged(sample, sample["contactFrame"] + 2, R_WRIST)  # the gradient doesn't reach it
+    m = measure_swing(swing, "backhand")
+    assert math.isfinite(m["stance_open_deg"]) and "stance_open_deg" not in m["guessed_joints"]
+    assert STANCE_FAULT in _ids(swing, "backhand")
+
+
+def test_tracked_racket_gives_the_direction_so_a_filled_wrist_keeps_stance(sample: dict) -> None:
+    swing = _with(sample)
+    for f in swing["frames"]:
+        x, y, z = f["joints"][R_WRIST]
+        f["racketTip"] = [x + 0.3, y + 0.4, z]  # tracked on every frame
+    swing = _flagged(swing, swing["contactFrame"] - 1, R_WRIST)
+    assert R_WRIST not in {j for part, _ in _reads(swing, "stance_open_deg") for j in part}
+    assert "stance_open_deg" not in measure_swing(swing, "backhand")["guessed_joints"]
+
+
+def test_smoothing_reach_counts_as_read(sample: dict) -> None:
+    c = sample["contactFrame"]  # 120 fps: wrist angle smoothed +-1 frame, features +-2
+    near, far = _flagged(sample, c + 1, R_INDEX), _flagged(sample, c + 2, R_INDEX)
+    assert measure_swing(near, "forehand")["wrist_uncock_deg"] is None
+    assert math.isfinite(measure_swing(far, "forehand")["wrist_uncock_deg"])
+    assert measure_swing(far, "forehand")["wrist_angle_change_pre_deg"] is None  # features reach c+2
+    assert "wrist_angle_change_pre_deg" not in measure_swing(_flagged(sample, c + 3, R_INDEX), "forehand")[
+        "guessed_joints"]
+
+
+@pytest.mark.parametrize("measurement", ALL_MEASUREMENTS)
+def test_frames_outside_the_declared_reads_never_change_the_number(sample: dict, measurement: str) -> None:
+    """Proof the ranges are complete: moving a joint on a frame just outside what
+    measurement_reads declares leaves the measurement exactly as it was."""
+    base_swing = _with(sample, metadata={"hand": "R"})  # don't let a moved wrist re-guess the hand
+    base = measure_swing(base_swing, "forehand")[measurement]
+    assert _finite_or_none(base)
+    n = len(sample["frames"])
+    by_joint: dict[int, set[int]] = {}
+    for joints, span in _reads(base_swing, measurement):
+        for j in joints:
+            by_joint.setdefault(j, set()).update(span)
+    checked = 0
+    for joint, read in by_joint.items():
+        for f in {min(read) - 1, max(read) + 1, 0, n - 1} - read:
+            if not 0 <= f < n:
+                continue
+            moved = _with(base_swing)
+            x, y, z = moved["frames"][f]["joints"][joint]
+            moved["frames"][f]["joints"][joint] = [x + 0.05, y, z + 0.05]
+            assert measure_swing(moved, "forehand")[measurement] == pytest.approx(base, abs=1e-9), (joint, f)
+            checked += 1
+    if measurement != "hip_turn_range_deg":  # the hips are read on every frame
+        assert checked > 0
+
+
+def _finite_or_none(v: object) -> bool:
+    return v is None or (isinstance(v, float) and math.isfinite(v))
