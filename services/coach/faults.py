@@ -7,7 +7,8 @@ To tune: change THRESHOLDS only. Each rule has
 - measurement: which measured number the rule reads (see MEASUREMENTS)
 - threshold:   the fault fires once the measurement is past this value
 - severe_at:   severity reaches 1.0 here (rises linearly from 0 at threshold)
-- target:      where the ghost aims; fix_amount = |measured - target|
+- target:      where the ghost aims; fix_amount = how far past target on the faulty
+               side (0 if already on the good side, which makes it not ghost_ready)
 - source:      "labelled clips" (from real data) or "guess" (coaching rule of thumb)
 - amount_from: optional {measurement, target} when the ghost edit needs a different
                unit than the detection measurement (e.g. degrees detected, ms edited)
@@ -50,8 +51,11 @@ THRESHOLDS: dict[str, dict[str, dict[str, Any]]] = {
                              "severe_at": 61.0, "target": 30.0, "source": LABELLED,
                              "amount_from": {"measurement": "wrist_release_ms", "target": 10.0}},
         # Labelled clips: hip turn range, good 65 deg -> over-rotated 110 deg.
+        # The ghost's turn_shoulders_less only rotates the upper body, so its amount comes
+        # from the shoulders' own excess over 85 deg, never from the hip number.
         "over_rotation": {"measurement": "hip_turn_range_deg", "threshold": 87.5,
-                          "severe_at": 110.0, "target": 65.0, "source": LABELLED},
+                          "severe_at": 110.0, "target": 65.0, "source": LABELLED,
+                          "amount_from": {"measurement": "shoulder_turn_deg", "target": 85.0}},
         "under_rotation": {"measurement": "shoulder_turn_deg", "threshold": 60.0,
                            "severe_at": 30.0, "target": 80.0, "source": GUESS},
         "straight_arm": {"measurement": "elbow_at_contact_deg", "threshold": 160.0,
@@ -156,13 +160,21 @@ def severity(value: float, rule: dict[str, Any]) -> float:
 
 
 def fix_amount(fix: str, value: float, rule: dict[str, Any], metrics: dict[str, Any]) -> tuple[Optional[float], str]:
-    """(amount, unit) the ghost should move, capped at what apply_fix allows. None if unmeasured."""
+    """(amount, unit) the ghost should move, capped at what apply_fix allows. None if unmeasured.
+
+    Directional: the ghost only moves from the faulty side towards the target. If the
+    amount's measurement is already on the good side (e.g. a wrist release that is
+    already late, or shoulders that aren't over-turned), the amount is 0, which makes
+    the fault not ghost_ready.
+    """
     src = rule.get("amount_from") or {"measurement": rule["measurement"], "target": rule["target"]}
     measured = value if src["measurement"] == rule["measurement"] else metrics.get(src["measurement"])
     unit = MEASUREMENTS[src["measurement"]]["unit"]
     if not _finite(measured):
         return None, unit
-    amount = abs(measured - src["target"])
+    # A "too high" fault (severe_at above threshold) is fixed by lowering, and vice versa.
+    too_high = rule["severe_at"] > rule["threshold"]
+    amount = max(0.0, (measured - src["target"]) if too_high else (src["target"] - measured))
     if fix in FIXES:
         amount = min(amount, EDITS[FIXES[fix][0]]["max_abs"])
     return round(amount, 2 if unit == "shoulder widths" else 1), unit

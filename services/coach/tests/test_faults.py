@@ -49,7 +49,8 @@ def fires(value: float, rule: dict) -> bool:
 def expected_amount(fault_id: str, stroke: str, m: dict) -> float:
     rule = THRESHOLDS[stroke][fault_id]
     src = rule.get("amount_from") or rule
-    amount = abs(m[src["measurement"]] - src["target"])
+    gap = m[src["measurement"]] - src["target"]
+    amount = max(0.0, gap if rule["severe_at"] > rule["threshold"] else -gap)  # faulty side only
     fix = FAULTS[fault_id]["fix"]
     return min(amount, EDITS[FIXES[fix][0]]["max_abs"]) if fix in FIXES else amount
 
@@ -195,12 +196,65 @@ def test_no_shoulder_ghost_when_shoulders_barely_turn() -> None:
 def test_planned_fixes_become_ready_when_physics_adds_them(monkeypatch: pytest.MonkeyPatch) -> None:
     m = neutral_metrics("forehand")
     m["hip_turn_range_deg"] = 110.0
-    assert _fault(m, "over_rotation")["ghost_ready"] is ("turn_shoulders_less" in FIXES)
+    m["shoulder_turn_deg"] = 100.0  # shoulders over-turned too
+    monkeypatch.delitem(FIXES, "turn_shoulders_less", raising=False)
+    assert _fault(m, "over_rotation")["ghost_ready"] is False
 
     monkeypatch.setitem(FIXES, "turn_shoulders_less", ("shoulder_turn", -1.0))
-    assert _fault(m, "over_rotation")["ghost_ready"] is True  # 45 deg off an 80 deg turn
-    m["shoulder_turn_deg"] = 30.0
-    assert _fault(m, "over_rotation")["ghost_ready"] is False  # can't remove 45 of 30 deg
+    assert _fault(m, "over_rotation")["ghost_ready"] is True
+
+
+def test_over_rotation_ghost_amount_comes_from_shoulders_not_hips(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Codex P1 on #28: turn_shoulders_less only rotates the upper body, so the hip
+    # excess (110 - 65 = 45 deg) must never become a shoulder reduction.
+    monkeypatch.setitem(FIXES, "turn_shoulders_less", ("shoulder_turn", -1.0))
+    m = neutral_metrics("forehand")
+    m["hip_turn_range_deg"] = 110.0
+
+    m["shoulder_turn_deg"] = 100.0
+    f = _fault(m, "over_rotation")
+    assert f["fix"] == "turn_shoulders_less" and f["fix_unit"] == "deg"
+    assert f["fix_amount"] == pytest.approx(15.0) and f["ghost_ready"] is True  # 100 - 85
+
+    m["shoulder_turn_deg"] = 80.0  # hips over-rotate, shoulders don't
+    f = _fault(m, "over_rotation")
+    assert f["severity"] == 1.0, "the hip fault is still reported for the caption"
+    assert f["fix_amount"] == 0.0 and f["ghost_ready"] is False  # no shoulder reduction
+
+    m["shoulder_turn_deg"] = None
+    f = _fault(m, "over_rotation")
+    assert f["fix_amount"] is None and f["ghost_ready"] is False
+
+
+def test_late_wrist_release_gets_no_hold_wrist_cock(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Codex P2 on #28: hold_wrist_cock always delays the release, so a release that's
+    # already at or after the 10 ms target must not be pushed later.
+    m = neutral_metrics("forehand")
+    m["wrist_angle_change_pre_deg"] = 61.0  # the angle rule fires
+    for release_ms in (10.0, 0.0, -20.0):
+        m["wrist_release_ms"] = release_ms
+        f = _fault(m, "early_wrist_snap")
+        assert f["fix_amount"] == 0.0 and f["ghost_ready"] is False
+    m["wrist_release_ms"] = 56.0
+    assert _fault(m, "early_wrist_snap")["fix_amount"] == pytest.approx(46.0)
+
+
+@pytest.mark.parametrize("stroke", STROKES)
+@pytest.mark.parametrize("fault_id", sorted(FAULTS))
+def test_ghost_never_moves_past_the_target(stroke: str, fault_id: str) -> None:
+    """Directional amounts: on the good side of the target the ghost does nothing."""
+    rule = THRESHOLDS[stroke][fault_id]
+    src = rule.get("amount_from") or rule
+    m = neutral_metrics(stroke)
+    m[rule["measurement"]] = rule["severe_at"]  # the fault fires
+    if "amount_from" in rule:
+        good_side = -1.0 if rule["severe_at"] > rule["threshold"] else 1.0
+        m[src["measurement"]] = src["target"] + good_side * 5.0
+        f = _fault(m, fault_id)
+        assert f["fix_amount"] == 0.0 and f["ghost_ready"] is False
+    else:
+        f = _fault(m, fault_id)
+        assert f["fix_amount"] > 0  # severe_at is on the faulty side of the target
 
 
 def test_fix_with_wrong_unit_is_not_ready(monkeypatch: pytest.MonkeyPatch) -> None:
