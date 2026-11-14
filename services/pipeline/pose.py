@@ -146,8 +146,8 @@ def to_swing(raw: dict, f0: int = 0, f1: int | None = None, smooth_win: int = 3,
         if visibility.shape != original.shape[:2] or not np.isfinite(visibility).all() or np.any((visibility < 0) | (visibility > 1)):
             raise ValueError('vis must contain 33 finite confidence values in [0, 1] per frame')
         original = original.copy()
-        original[(visibility < .5) & ~filled] = np.nan
-        filled |= ~np.isfinite(original).all(axis=2)
+        original[(visibility <= .1) & ~filled] = np.nan
+        filled |= ~np.isfinite(original).all(axis=2) | (visibility < .5)
     visibility = visibility[f0:f1]
     filled = filled[f0:f1]
     from pipeline.kinematics import gap_limit, repair_pose

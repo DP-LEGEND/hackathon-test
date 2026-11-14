@@ -137,17 +137,17 @@ def swings_from_raw(a: dict, b: dict | None = None, options: Options = Options()
         repaired = filled.copy()
         for lo, hi, factor in sections:
             real_fps = a['fps'] * factor
-            limit = min(gap_limit(real_fps), int(options.max_gap_s * real_fps))
+            limit = gap_limit(real_fps, options.max_gap_s)
             section_win = min(win, max(1, int(round(.04 * real_fps)) | 1))
             out[lo:hi], repaired[lo:hi] = clean(points[lo:hi], win=section_win, max_gap=limit,
                                                 filled=filled[lo:hi], provenance=True)
         return out, repaired
     mono = np.asarray(a["world"], dtype=float).copy()
-    observed = np.isfinite(a["img"][:, :, :2]).all(axis=2) & (a["vis"] >= .5)
+    observed = np.isfinite(a["img"][:, :, :2]).all(axis=2) & (a["vis"] > .1)
     mono_visibility = np.clip(np.nan_to_num(a['vis'], nan=0., posinf=0., neginf=0.), 0, 1)
     mono_visibility[~np.isfinite(a['img'][:, :, :2]).all(axis=2)] = 0
     mono[~observed] = np.nan
-    mono_filled = ~np.isfinite(mono).all(axis=2)
+    mono_filled = ~np.isfinite(mono).all(axis=2) | (mono_visibility < .5)
     mono, mono_filled = clean_sections(mono, mono_filled)
     cal, calibration_error = None, None
     stereo = np.full_like(mono, np.nan)
@@ -203,7 +203,7 @@ def swings_from_raw(a: dict, b: dict | None = None, options: Options = Options()
         hands = ("R", "L") if options.hand == "auto" else (options.hand,)
         for hand in hands:
             for event in find_swings(part, min_speed=7.0 if options.tap_filter else options.min_speed,
-                                     min_gap_real_s=0,
+                                     min_gap_real_s=2.5 if options.tap_filter else .5,
                                      hits=hits, confirm_s=.5, require_audio=False,
                                      speed_fallback=True, wrist=16 if hand == "R" else 15):
                 event["hand"] = hand
@@ -219,14 +219,14 @@ def swings_from_raw(a: dict, b: dict | None = None, options: Options = Options()
                 event["realtime"] = factor == 1
                 section_events.append(event)
         detections.extend(section_events)
-    # Deduplicate exact candidate frames here; enforce spacing only AFTER the
-    # metric/backswing gate so a stronger catch cannot suppress a valid swing.
-    unique = {}
-    for event in sorted(detections, key=lambda e: e['speed']):
-        unique[event['peak']] = event
-    detections = sorted(unique.values(), key=lambda e: e['peak'])
+    # Match main's candidate spacing, including across hands/rate sections.
+    selected = []
+    for event in sorted(detections, key=lambda e: e['speed'], reverse=True):
+        if all(abs(real_a[event['peak']] - real_a[other['peak']]) >= (2.5 if options.tap_filter else .5)
+               for other in selected):
+            selected.append(event)
+    detections = sorted(selected, key=lambda e: e['peak'])
     swings, rejected = [], []
-    accepted_events = []
     for number, event in enumerate(detections, 1):
         start, end = event["start"], event["end"] + 1  # finder uses inclusive end
         hand = event.get("hand", options.hand)
@@ -292,9 +292,16 @@ def swings_from_raw(a: dict, b: dict | None = None, options: Options = Options()
             # Sound can be offset from the speed peak. Keep its requested .6 s
             # replay trim without throwing away earlier backswing evidence.
             evidence_start = max(lo, min(start, event['peak'] - int(round(.6 * fps_real))))
+            trajectory = (stereo if source == 'stereo' else mono)
+            wrist = 15 if hand == 'L' else 16
+            usable = np.isfinite(trajectory[:, [wrist, 23, 24]]).all(axis=(1, 2))
+            # Never re-expand a cropped windup through the same hidden wrist.
+            missing = np.flatnonzero(~usable[evidence_start:event['peak'] + 1])
+            if len(missing):
+                evidence_start += int(missing[-1]) + 1
             evidence_world = (normalised if evidence_start == start else
-                              normalise((stereo if source == 'stereo' else mono)[evidence_start:end], options.torso_m))
-            evidence = swing_evidence(evidence_world, real_a[evidence_start:end], 15 if hand == 'L' else 16,
+                              normalise(trajectory[evidence_start:end], options.torso_m))
+            evidence = swing_evidence(evidence_world, real_a[evidence_start:end], wrist,
                                       event['peak'] - evidence_start, options.torso_m)
             joint_filled = (stereo_filled if source == "stereo" else mono_filled)[start:end].copy()
             joint_filled |= ~np.isfinite(normalised).all(axis=2)
@@ -337,13 +344,6 @@ def swings_from_raw(a: dict, b: dict | None = None, options: Options = Options()
             "optionalJointPolicy": "missing optional joints repeat their parent; not measured",
         }
         swings.append(swing)
-        accepted_events.append(event)
-    spaced = []
-    for swing, event in sorted(zip(swings, accepted_events), key=lambda row: row[1]['speed'], reverse=True):
-        if all(abs(real_a[event['peak']] - real_a[other['peak']]) >= (2.5 if options.tap_filter else .5)
-               for _, other in spaced):
-            spaced.append((swing, event))
-    swings = [swing for swing, event in sorted(spaced, key=lambda row: row[1]['peak'])]
     report = {"detected": len(detections), "written": len(swings), "rejected": rejected,
               "sync": {"scale": scale, "offset": options.offset_b, "realOffset": real_offset, "timeline": "piecewise"},
               "calibration": ({k: cal[k] for k in ("inliers", "n", "reprojectionErrorPx")}

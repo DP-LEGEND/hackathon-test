@@ -214,8 +214,9 @@ source start and contact frame indices for comparison with the source video.
 ## Filled joint flags
 
 Every newly serialized frame includes `filled`: 33 booleans parallel to `joints`.
-True means that joint used temporal interpolation, bounded gap filling, a
-one-view depth estimate, or a parent copy. Partial-coordinate repairs mark the whole joint. Stereo joints that
+True means that joint used temporal interpolation, bounded gap filling,
+evidence below .5 visibility, a one-view depth estimate, or a parent copy.
+Partial-coordinate repairs mark the whole joint. Stereo joints that
 use camera B interpolated between recorded timestamps are also marked. Fallback
 to mono uses the original camera-A observation mask. Flags are recorded before
 cleaning, so smoothing cannot hide a gap; copying optional children marks each
@@ -245,8 +246,8 @@ It is a frame percentage, not a percentage of all 33 joint samples.
 
 - Swing proposals use hip-relative dominant-wrist speed (default threshold
   **8 torso lengths / second**, minimum accepted-peak spacing .5 real seconds),
-  followed by a mandatory measured 3D gate: peak wrist speed above **12 m/s**,
-  prominence at least 6 m/s, half-prominence peak width at most .18 real seconds,
+  followed by a mandatory measured 3D gate: peak wrist speed at least **6 m/s**,
+  prominence at least 3 m/s, half-prominence peak width at most .18 real seconds,
   and a preceding backswing/sweep/follow-through. `--min-speed` adjusts proposal
   sensitivity; it does not bypass the metric gate. `metadata.peakWristSpeedMs`
   and `metadata.backswingVerified` record the accepted evidence. Saved windows
@@ -258,7 +259,10 @@ It is a frame percentage, not a percentage of all 33 joint samples.
   the wrist near the peak, so hand choice and image rotation do not set its sign.
   Starting heuristic thresholds: .12 torso lengths of preceding pullback,
   .25 before the peak and .10 after it, .50 total forward sweep, and net/path
-  coherence at least .60. Pattern filtering precedes duplicate suppression.
+  coherence at least .60. Candidate spacing matches main: .5 real seconds,
+  or 2.5 with `--tap-filter`, before the final reconstruction and metric gates.
+  Backswing evidence stays inside the contiguous tracked hitting-wrist run;
+  a cropped replay window never reintroduces an earlier missing interval.
   These are conservative geometric heuristics, not validated classifications:
   a cropped/foreshortened backswing can be missed, and a feed with a genuine
   swing-like motion can still pass. Tune against labelled real recordings;
@@ -268,11 +272,13 @@ It is a frame percentage, not a percentage of all 33 joint samples.
   validate it against labels before using it to score technique.
 - Essential-matrix self-calibration uses visible shared 2D joints, then
   triangulates using confidence-weighted DLT (each camera's equations weighted
-  by the square root of its visibility). Both views must have visibility >= .5.
+  by the square root of its visibility). Finite joints with positive visibility
+  remain weighted evidence even below .5; they are flagged `filled` so a guessed
+  position can support replay without silently becoming a coach measurement.
   It rejects insufficient correspondences, poor cheirality and
   excessive median reprojection error. Each joint must be in front of both
-  cameras and reproject within 12 pixels in each confident image. If exactly one
-  view is confident, its ray is intersected with a bone-length sphere around a
+  cameras and reproject within 12 pixels in each image. If stereo fails and one
+  reliable view remains, its ray is intersected with a bone-length sphere around a
   recovered parent. Length is learned from jointly observed frames; a reliable
   bone direction within .25 real seconds disambiguates depth. Without an anchor,
   length or consistent ray, the joint stays missing. The bad camera is not used.
@@ -295,17 +301,20 @@ It is a frame percentage, not a percentage of all 33 joint samples.
   estimated-scale reconstruction, not a calibrated motion-capture measurement.
 - The selected reconstruction must retain **shoulders (11/12), elbows (13/14),
   wrists (15/16) and hips (23/24)**; camera B can rescue a hidden A joint.
-  Mono requires finite image/world coordinates and **visibility >= .5**.
+  Mono retains finite image/world coordinates with **visibility > .1**, matching
+  main's fallback policy. Values below .5 remain available but are marked filled.
   Per swing, `metadata.coreVisibility` reports the mean
   core-joint visibility (six decimal places), and `metadata.lowConfidence` flags
   values below .3 without discarding the swing. Nonfinite visibility is reported
-  as zero confidence. Only bounded short gaps are repaired by interpolating
+  as zero confidence. Only bounded gaps are repaired by interpolating
   unit bone directions on the sphere (joint angles), retaining observed median
-  bone lengths. The hard limit is **6 frames at 120 real fps, 3 at 30** (4 at 60;
-  never more than 6). `--max-gap-s` can tighten this limit, not relax it. Cleaning
+  bone lengths; the translating root uses bounded position interpolation.
+  The default tolerance is **.25 real seconds**, matching main (30 missing
+  frames at 120 fps, 7 at 30). `--max-gap-s` changes this tolerance. Cleaning
   is independent within each rate section; smoothing never mixes opposite sides
-  of an unfilled gap. A ten-frame gap hidden in both cameras is not filled; a
-  ten-frame A-only gap may still be reconstructed from actual B observations.
+  of an unfilled gap. Ten-to-fifteen-frame hidden-arm intervals at 120 fps can
+  be filled with explicit provenance; an A-only gap may also be reconstructed
+  from actual B observations. Low visibility alone does not erase a joint.
   Longer/end gaps in required joints cause cropping or rejection.
   Knees, ankles, face, hand and foot landmarks are optional. Missing optional
   coordinates repeat their parent **after** orientation/scaling; their indices

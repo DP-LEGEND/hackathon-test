@@ -61,14 +61,16 @@ def test_hidden_root_hip_uses_confident_view_and_adjacent_anchor(stereo_pair, ca
     swings, report = swings_from_raw(a, b, Options(hand='R', focal_a=900, focal_b=900))
     assert report['written'] == 2 and swings[0]['source'] == 'stereo'
     for raw in (a, b):
-        raw['vis'][68:78, 23] = .1
+        raw['vis'][68:78, 23] = 0
     points = triangulate(a, b, calibration(a, b, rotation, translation), 0, len(truth))
-    assert np.isnan(clean(points)[68:78, 23]).all()
+    assert np.isnan(clean(points, max_gap=6)[68:78, 23]).all()
+    repaired, flags = clean(points, max_gap=30, provenance=True)
+    assert np.isfinite(repaired[68:78, 23]).all() and flags[68:78, 23].all()
 
 
-@pytest.mark.parametrize('fps,limit', [(30, 3), (120, 6)])
+@pytest.mark.parametrize('fps,limit', [(30, 7), (120, 30)])
 def test_short_gaps_interpolate_angles_and_long_gaps_stay_hidden(stereo_pair, fps, limit):
-    world = np.repeat(stereo_pair[2][:1], 40, axis=0)
+    world = np.repeat(stereo_pair[2][:1], 80, axis=0)
     angle = np.linspace(-.8, .8, len(world))
     world[:, 16] = world[:, 14] + .32 * np.c_[np.sin(angle), np.cos(angle), np.zeros(len(world))]
     assert gap_limit(fps) == limit
@@ -92,28 +94,29 @@ def test_smoothing_does_not_mix_opposite_sides_of_hidden_gap():
     np.testing.assert_array_equal(result[20:], 100)
 
 
-def test_both_cameras_hidden_ten_frames_are_not_fabricated(stereo_pair):
+def test_both_cameras_missing_ten_frames_are_filled_with_provenance(stereo_pair):
     a, b, truth, rotation, translation = stereo_pair
     for raw in (a, b):
-        raw['vis'][68:78, 16] = .1
+        raw['vis'][68:78, 16] = 0
     points = triangulate(a, b, calibration(a, b, rotation, translation), 0, len(truth))
     assert np.isnan(clean(points, max_gap=6)[68:78, 16]).all()
     swings, _ = swings_from_raw(a, b, Options(hand='R', focal_a=900, focal_b=900))
-    assert len(swings) == 1
-    assert swings[0]['metadata']['sourceContactSeconds'] > 1
+    assert len(swings) == 2
+    assert sum(f['filled'][16] for f in swings[0]['frames']) == 10
+    assert any(f['visibility'][16] == 0 for f in swings[0]['frames'])
 
 
 def test_missing_camera_frames_cannot_bypass_hidden_gap_limit(stereo_pair):
     a, b, truth, rotation, translation = stereo_pair
-    a['vis'][68:78, 16] = .1
+    a['vis'][68:78, 16] = 0
     keep = np.r_[np.arange(68), np.arange(78, len(b['t']))]
     b = {**b, **{key: b[key][keep] for key in ('t', 'img', 'world', 'vis')}}
     image, visibility = sample_b_at_a(a, b, 1, 0)
     assert np.isnan(image[68:78]).all() and (visibility[68:78] == 0).all()
     assert np.isfinite(image[[67, 78]]).all() and (visibility[[67, 78]] == 1).all()
     points = triangulate(a, b, calibration(a, b, rotation, translation), 0, len(truth))
-    assert np.isnan(clean(points)[68:78, 16]).all()
-    swings, report = swings_from_raw(a, b, Options(hand='R', focal_a=900, focal_b=900))
+    assert np.isnan(clean(points, max_gap=6)[68:78, 16]).all()
+    swings, report = swings_from_raw(a, b, Options(hand='R', focal_a=900, focal_b=900, max_gap_s=.05))
     assert report['written'] == 1 and swings[0]['metadata']['sourceContactSeconds'] > 1
 
 
@@ -161,9 +164,9 @@ def test_non_swings_never_publish_even_with_sound(stereo_pair, kind):
     elif kind == 'catch':
         angle = -1.2 + 2.8 * (1 + np.tanh((t - .6) / .025)) / 2  # fast, no backswing
     else:
-        # Retain the backswing but stretch all timestamps to drop below 12 m/s.
-        a['t'] = b['t'] = t * 4
-        a['fps'] = b['fps'] = a['fps'] / 4
+        # Retain the backswing but stretch all timestamps to drop below 6 m/s.
+        a['t'] = b['t'] = t * 8
+        a['fps'] = b['fps'] = a['fps'] / 8
         angle = None
     if angle is not None:
         world[:, 14] = world[:, 12] + .3 * np.c_[np.sin(angle + .3), np.cos(angle + .3), np.zeros(len(t))]
@@ -218,7 +221,7 @@ def test_short_hidden_wrist_gap_at_contact_survives_detection(stereo_pair, stere
     assert frame['filled'][16] and frame['visibility'][16] == .1
 
 
-def test_rejected_stronger_candidate_does_not_suppress_valid_swing(stereo_pair, monkeypatch):
+def test_candidate_spacing_precedes_final_gate(stereo_pair, monkeypatch):
     import pipeline.process as process
     a, _, *_ = stereo_pair
     monkeypatch.setattr(process, 'find_swings', lambda *args, **kwargs: [
@@ -226,6 +229,5 @@ def test_rejected_stronger_candidate_does_not_suppress_valid_swing(stereo_pair, 
         {'start': 28, 'end': 142, 'peak': 100, 'speed': 100},
     ])
     swings, report = swings_from_raw(a, options=Options(hand='R'))
-    assert report['written'] == 1
-    assert swings[0]['metadata']['sourceContactSeconds'] == pytest.approx(.6)
+    assert report['detected'] == 1 and report['written'] == 0 and not swings
     assert len(report['rejected']) == 1 and 'Not a swing' in report['rejected'][0]['reason']

@@ -36,7 +36,7 @@ def _wrist_track(raw: dict, wrist: int, slowdown: float, win: int | None = None)
     img = raw["img"]
     if 'vis' in raw:
         img = img.copy()
-        img[~(np.asarray(raw['vis']) >= .5)] = np.nan
+        img[~(np.asarray(raw['vis']) > .1)] = np.nan
     hip = (img[:, L_HIP, :2] + img[:, R_HIP, :2]) / 2
     return smooth(img[:, wrist, :2] - hip, win) / torso_px(img)
 
@@ -59,14 +59,14 @@ def swing_evidence(world: np.ndarray, times: np.ndarray, wrist: int, peak: int,
     fps = 1 / float(np.median(np.diff(times)))
     track = world[:, wrist] - (world[:, 23] + world[:, 24]) / 2
     speed = np.linalg.norm(np.gradient(track, times, axis=0), axis=1)
-    peaks, _ = find_peaks(speed, height=12., prominence=6.,
+    peaks, _ = find_peaks(speed, height=6., prominence=3.,
                           width=(max(1., .008 * fps), max(1., .18 * fps)))
     for candidate in sorted(peaks, key=lambda index: abs(index - peak)):
         if abs(candidate - peak) > .12 * fps:
             continue
         if _swing_pattern(track / torso_m, int(candidate), fps):
             return {'peakWristSpeedMs': float(speed[candidate]), 'backswingVerified': True}
-    raise ValueError('Not a swing: needs a sharp wrist-speed peak above 12 m/s and a preceding backswing')
+    raise ValueError('Not a swing: needs a sharp wrist-speed peak of at least 6 m/s and a preceding backswing')
 
 
 def _swing_pattern(track: np.ndarray, peak: int, fps_real: float) -> bool:

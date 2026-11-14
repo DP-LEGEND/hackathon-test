@@ -91,7 +91,7 @@ def calibrate(A: dict, B: dict, scale: float, offset: float, f_a=1400.0, f_b=140
             "inliers": float(good.mean()), "n": int(len(pa)), "reprojectionErrorPx": reprojection}
 
 
-def triangulate(A: dict, B: dict, cal: dict, f0: int, f1: int, min_vis=0.5,
+def triangulate(A: dict, B: dict, cal: dict, f0: int, f1: int, min_vis=0.,
                 *, provenance: bool = False):
     """Weighted stereo, or a confident ray constrained by an observed bone.
 
@@ -104,8 +104,9 @@ def triangulate(A: dict, B: dict, cal: dict, f0: int, f1: int, min_vis=0.5,
     images = [A['img'][f0:f1, :, :2], imgB[f0:f1, :, :2]]
     confidence = [np.clip(np.nan_to_num(v[f0:f1], nan=0., posinf=0., neginf=0.), 0, 1)
                   for v in (A['vis'], visB)]
-    visible = [np.isfinite(p).all(axis=-1) & (v >= max(.5, min_vis))
+    visible = [np.isfinite(p).all(axis=-1) & (v > min_vis)
                for p, v in zip(images, confidence)]
+    confident = [seen & (v >= .5) for seen, v in zip(visible, confidence)]
     confidence = [np.where(np.isfinite(p).all(axis=-1), v, 0.) for p, v in zip(images, confidence)]
     matrices = [cal['Ka'] @ np.hstack([np.eye(3), np.zeros((3, 1))]),
                 cal['Kb'] @ np.hstack([cal['R'], cal['t']])]
@@ -132,7 +133,10 @@ def triangulate(A: dict, B: dict, cal: dict, f0: int, f1: int, min_vis=0.5,
             valid &= (projected[:, 2] > 0) & (error <= 12)
         out[frame[valid], joint[valid]] = xyz[valid]
     stereo = out.copy()
-    filled = ~np.isfinite(out).all(axis=2)
+    # Low visibility is weighted evidence, not an absent landmark. Retain it
+    # while marking the result as guessed so downstream metrics can skip it.
+    filled = ~np.isfinite(out).all(axis=2) | ~(confident[0] & confident[1])
+    stereo[~(confident[0] & confident[1])] = np.nan
     times = np.asarray(A['t'][f0:f1])
     centers = [np.zeros(3), -cal['R'].T @ cal['t'].reshape(3)]
     inverse = [np.linalg.inv(cal['Ka']), cal['R'].T @ np.linalg.inv(cal['Kb'])]
@@ -145,14 +149,15 @@ def triangulate(A: dict, B: dict, cal: dict, f0: int, f1: int, min_vis=0.5,
         if not len(reference):
             continue
         length = float(np.median(lengths[reference]))
-        candidates = np.flatnonzero((visible[0][:, child] ^ visible[1][:, child])
+        candidates = np.flatnonzero(((visible[0][:, child] ^ visible[1][:, child])
+                                     | (confident[0][:, child] ^ confident[1][:, child]))
                                     & np.isfinite(out[:, parent]).all(axis=1)
                                     & ~np.isfinite(out[:, child]).all(axis=1))
         for frame in candidates:
             nearest = reference[np.argmin(abs(times[reference] - times[frame]))]
             if abs(times[nearest] - times[frame]) > .25:
                 continue  # ambiguous depth with no recent reliable direction
-            camera = 0 if visible[0][frame, child] else 1
+            camera = int(confidence[1][frame, child] > confidence[0][frame, child])
             center = centers[camera]
             ray = inverse[camera] @ np.r_[images[camera][frame, child], 1.]
             ray /= np.linalg.norm(ray)
@@ -207,7 +212,7 @@ def normalise(X: np.ndarray, torso_m: float = 0.5) -> np.ndarray:
     return (X - centre) @ Rm.T
 
 
-def clean(X: np.ndarray, win: int = 5, max_gap: int = 6, *, filled=None, provenance=False):
+def clean(X: np.ndarray, win: int = 5, max_gap: int = 12, *, filled=None, provenance=False):
     """Repair only short bounded bone-angle gaps, preserving lengths."""
     from pipeline.kinematics import repair_pose
     return repair_pose(X, max_gap=max_gap, win=win, filled=filled, provenance=provenance)

@@ -329,7 +329,7 @@ def test_failed_stereo_normalisation_recovers_using_complete_mono_swing(stereo_p
                                [f['joints'] for f in mono[0]['frames']])
 
 
-@pytest.mark.parametrize('visibility', [.5, .75, 1.])
+@pytest.mark.parametrize('visibility', [.2, .3, .499, .5, .75, 1.])
 def test_mono_joints_above_minimum_visibility_report_confidence(stereo_pair, visibility):
     from pipeline.process import CORE_JOINTS
     a, b, *_ = stereo_pair
@@ -345,12 +345,12 @@ def test_mono_joints_above_minimum_visibility_report_confidence(stereo_pair, vis
 
 def test_permanently_hidden_joint_without_learned_bone_cannot_be_recovered(stereo_pair):
     a, b, *_ = stereo_pair
-    a['vis'][:, 13] = .2  # no jointly observed frames to learn this bone's length
+    a['vis'][:, 13] = 0  # no jointly observed frames to learn this bone's length
     swings, report = swings_from_raw(a, b, Options(focal_a=900, focal_b=900))
     assert report['written'] == 0 and swings == []
 
 
-@pytest.mark.parametrize('visibility', [0., .1, .499, float('nan')])
+@pytest.mark.parametrize('visibility', [0., .1, float('nan')])
 def test_missing_or_below_minimum_visibility_rejects_mono(stereo_pair, visibility):
     a, b, *_ = stereo_pair
     a['vis'][:] = visibility
@@ -360,8 +360,8 @@ def test_missing_or_below_minimum_visibility_rejects_mono(stereo_pair, visibilit
 
 
 @pytest.mark.parametrize('slowdown', [1, 4])
-@pytest.mark.parametrize('missing_frames,written', [(6, 2), (7, 1), (10, 1)])
-def test_six_frame_gap_limit_uses_real_fps(stereo_pair, slowdown, missing_frames, written):
+@pytest.mark.parametrize('missing_frames,written', [(12, 2), (30, 2), (31, 1)])
+def test_quarter_second_gap_limit_uses_real_fps(stereo_pair, slowdown, missing_frames, written):
     a, b, *_ = stereo_pair
     a['t'] *= slowdown
     a['fps'] /= slowdown
@@ -372,7 +372,7 @@ def test_six_frame_gap_limit_uses_real_fps(stereo_pair, slowdown, missing_frames
     swings, report = swings_from_raw(a, b, options)
     assert options.max_gap_s == .25 and options.min_speed == 8
     assert report['detected'] == 2 and len(swings) == report['written'] == written
-    if missing_frames == 6:
+    if missing_frames == 12:
         _, strict = swings_from_raw(a, b, Options(slowdown_a=slowdown, max_gap_s=.02,
                                                  focal_a=900, focal_b=900))
         assert strict['written'] == 1

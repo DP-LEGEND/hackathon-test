@@ -10,9 +10,9 @@ PARENTS = {24: 23, 11: 23, 12: 24, 13: 11, 14: 12, 15: 13, 16: 14,
            25: 23, 26: 24, 27: 25, 28: 26, 29: 27, 31: 27, 30: 28, 32: 28}
 
 
-def gap_limit(fps_real: float) -> int:
-    """At most 6 frames at 120 Hz, 3 at 30 Hz; use the real capture clock."""
-    return max(1, int(round(3 + (min(120., max(30., fps_real)) - 30) / 30)))
+def gap_limit(fps_real: float, seconds: float = .25) -> int:
+    """Match the session's gap tolerance on its real capture clock."""
+    return max(0, int(seconds * fps_real))
 
 
 def runs(mask: np.ndarray):
@@ -35,12 +35,12 @@ def slerp(a: np.ndarray, b: np.ndarray, weight: float) -> np.ndarray:
     return (np.sin((1 - weight) * angle) * a + np.sin(weight * angle) * b) / np.sin(angle)
 
 
-def repair_pose(points: np.ndarray, max_gap: int = 6, win: int = 5,
+def repair_pose(points: np.ndarray, max_gap: int = 12, win: int = 5,
                 *, filled: np.ndarray | None = None, provenance: bool = False):
     """Fill bounded bone angles, then smooth each observed run independently.
 
-    Never extrapolate a gap, interpolate a hidden root's position, or smooth
-    across an unfilled gap. Fixed lengths are learned only from observed bones.
+    Never extrapolate a gap or smooth across an unfilled gap. The translating
+    root uses bounded position interpolation; limbs interpolate bone directions.
     """
     from pipeline.pose import smooth
 
@@ -49,7 +49,13 @@ def repair_pose(points: np.ndarray, max_gap: int = 6, win: int = 5,
     repaired = ~np.isfinite(original).all(axis=2)
     if filled is not None:
         repaired |= filled
-    result[:, 23] = smooth(original[:, 23], win)
+    for start, end in runs(~np.isfinite(original[:, 23]).all(axis=1)):
+        if start == 0 or end == len(result) or end - start > max_gap:
+            continue
+        weight = np.arange(1, end - start + 1)[:, None] / (end - start + 1)
+        result[start:end, 23] = ((1 - weight) * original[start - 1, 23]
+                                  + weight * original[end, 23])
+    result[:, 23] = smooth(result[:, 23], win)
     for child, parent in PARENTS.items():
         vectors = original[:, child] - original[:, parent]
         lengths = np.linalg.norm(vectors, axis=1)

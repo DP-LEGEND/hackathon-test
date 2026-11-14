@@ -30,7 +30,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--focal-a", type=float, help="camera A focal length in source pixels")
     ap.add_argument("--focal-b", type=float, help="camera B focal length in source pixels")
     ap.add_argument("--min-speed", type=float, default=Options.min_speed, help="minimum wrist speed in torso lengths / real second (default: 8)")
-    ap.add_argument("--max-gap-s", type=float, default=Options.max_gap_s, help="optional tighter gap limit in real seconds; hard cap 6 frames at 120fps, 3 at 30fps")
+    ap.add_argument("--max-gap-s", type=float, default=Options.max_gap_s, help="maximum bounded pose gap in real seconds (default: 0.25)")
     ap.add_argument("--model-path", default=Options.model_path)
     ap.add_argument("--no-cache", action="store_true", help="re-extract both poses and refresh raw_cache.npz")
     ap.add_argument("--cache-dir", help="reuse raw_cache.npz across fresh output directories (default: out_dir)")
