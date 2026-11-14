@@ -1,7 +1,7 @@
 """A live clip to saved swings, deterministic coaching and PREDICTED ghost paths."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 from pathlib import Path
 import tempfile
@@ -12,6 +12,7 @@ import numpy as np
 
 from coach.agent import coach_swing
 from physics.compare import compare
+from physics.ghost import FIXES
 from pipeline.pose import DEFAULT_MODEL, extract_raw
 from pipeline.process import Options, swings_from_raw
 from pipeline.video import normalize_video, probe_video, timing_at, tool, run_tool, VideoInfo
@@ -66,6 +67,28 @@ def process_live_clip(clip: Path, output: Path, options: LiveOptions = LiveOptio
             wav.unlink(missing_ok=True)
         swings, report = swings_from_raw(raw, None, Options(
             hand=options.hand or 'auto', side=options.stroke or 'auto', min_speed=options.min_speed))
+        retry_speed = None
+        if not swings and options.slowdown is None and info.slowdown == 1:
+            candidates = []
+            for factor in (2, 4, 8):
+                candidate_raw = {**raw}
+                if 'audio_hits' in raw:
+                    candidate_raw['audio_hits'] = raw['audio_hits'] / factor
+                candidate_swings, candidate_report = swings_from_raw(candidate_raw, None, Options(
+                    slowdown_a=factor, hand=options.hand or 'auto',
+                    side=options.stroke or 'auto', min_speed=options.min_speed))
+                # Choose from measured wrist speed in metres/real second, never
+                # torso-length or racket-speed estimates.
+                speeds = [peak_wrist_speed(swing) for swing in candidate_swings]
+                plausible = [speed for speed in speeds if 12 <= speed <= 35]
+                if plausible:
+                    speed = min(plausible, key=lambda value: abs(value - 23.5))
+                    candidates.append((abs(speed - 23.5), factor, speed, candidate_swings, candidate_report))
+            if candidates:
+                _, factor, retry_speed, swings, report = min(candidates, key=lambda row: (row[0], row[1]))
+                info = replace(info, capture_fps=info.fps * factor, slowdown=float(factor),
+                               source='speed-retry',
+                               warning='Slowdown inferred from a 12-35 m/s wrist-speed heuristic; verify against capture metadata.')
         if not swings:
             raise ValueError('No fully tracked swing found; keep the whole body in frame and film one clear swing')
         session = uuid.uuid4().hex[:12]
@@ -77,7 +100,9 @@ def process_live_clip(clip: Path, output: Path, options: LiveOptions = LiveOptio
             playback_seconds, factor = timing_at(info, seconds)
             metadata.update({
                 'slowdown': options.slowdown if options.slowdown is not None else factor,
-                'slowdownSource': 'manual' if options.slowdown is not None else 'auto',
+                'slowdownSource': ('manual' if options.slowdown is not None else
+                                   info.source if info.source in ('playback-intent', 'speed-retry') else 'auto'),
+                'retryPeakWristSpeedMs': peak_wrist_speed(swing) if retry_speed is not None else None,
                 'timingBasis': info.source, 'timingWarning': info.warning,
                 'captureFps': info.capture_fps, 'avgFrameRate': info.playback_fps or info.fps, 'rFrameRate': info.base_fps,
                 'sourceContactPlaybackSeconds': playback_seconds,
@@ -89,12 +114,22 @@ def process_live_clip(clip: Path, output: Path, options: LiveOptions = LiveOptio
                 'stroke': options.stroke or swing['side'], 'depth': 'estimated',
                 'reconstruction': 'mono',
             })
+            stroke = metadata['stroke']
+            if stroke not in ('forehand', 'backhand'):
+                stroke = None
+                swing.pop('stroke', None)
+                metadata.pop('stroke', None)
+                metadata['strokeSource'] = 'coach-inferred'
+            else:
+                swing['stroke'] = stroke
+            coached = coach_swing(swing, stroke=stroke, fps_real=swing['fpsReal'])
+            metadata['stroke'] = stroke or coached['stroke']
             swing['stroke'] = metadata['stroke']
-            coached = coach_swing(swing, stroke=swing['stroke'], fps_real=swing['fpsReal'])
-            ready = bool(coached['ghost_ready'] and coached['fix'])
+            chosen_fix, chosen_amount = ghost_choice(coached)
+            ready = chosen_fix is not None
             # No-fault swings get an unchanged comparison, explicitly marked as such.
-            fix = coached['fix'] if ready else 'straighten_elbow'
-            amount = coached['fix_amount'] if ready else 0.0
+            fix = chosen_fix if ready else 'straighten_elbow'
+            amount = chosen_amount if ready else 0.0
             comparison = compare(swing, fix, amount, fps_real=swing['fpsReal'], hand=metadata['hand'])
             comparison['noCorrection'] = not ready
             name = f"{swing['id']}.json"
@@ -120,7 +155,7 @@ def process_live_clip(clip: Path, output: Path, options: LiveOptions = LiveOptio
 
 def playback_hits_to_real(info: VideoInfo, hits: np.ndarray) -> np.ndarray:
     factor = info.capture_fps / info.fps
-    if info.source != 'quicktime-edit-list':
+    if not info.edits:
         return hits / factor
     out, elapsed = [], 0.0
     for edit in info.edits:
@@ -128,3 +163,24 @@ def playback_hits_to_real(info: VideoInfo, hits: np.ndarray) -> np.ndarray:
         out.extend(elapsed + (selected - edit['playbackStart']) * edit['rate'] / factor)
         elapsed += (edit['playbackEnd'] - edit['playbackStart']) * edit['rate'] / factor
     return np.asarray(out, dtype=float)
+
+
+def peak_wrist_speed(swing: dict) -> float:
+    points = np.asarray([frame['joints'] for frame in swing['frames']], dtype=float)
+    wrist = 15 if swing['metadata']['hand'] == 'L' else 16
+    relative = points[:, wrist] - (points[:, 23] + points[:, 24]) / 2
+    speed = np.linalg.norm(np.gradient(relative, axis=0), axis=1) * swing['fpsReal']
+    finite = speed[np.isfinite(speed)]
+    return float(finite.max()) if len(finite) else float('nan')
+
+
+def ghost_choice(coached: dict) -> tuple[str | None, float | None]:
+    candidates = []
+    if coached.get('ghost_ready'):
+        candidates.append((coached.get('fix'), coached.get('fix_amount')))
+    candidates.append((coached.get('ghost_fix'), coached.get('ghost_fix_amount')))
+    for fix, amount in candidates:
+        if (fix in FIXES and isinstance(amount, (int, float)) and not isinstance(amount, bool)
+                and np.isfinite(amount)):
+            return fix, float(amount)
+    return None, None

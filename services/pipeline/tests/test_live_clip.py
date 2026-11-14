@@ -9,9 +9,6 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from coach.measure_extra import stance_open_deg, stroke_side
-from physics.skeleton import swing_hand
-from physics.tests.swing_factory import make_swing
 from pipeline.live import LiveOptions, process_live_clip, playback_hits_to_real
 from pipeline.process import Options, classify_side, swings_from_raw
 from pipeline.server import app
@@ -124,19 +121,6 @@ def test_manual_hand_stroke_and_sound_free_contact(stereo_pair):
         assert meta['stroke'] == 'backhand' and meta['strokeSource'] == 'manual'
         assert meta['contactMethod'] == 'wrist-speed-peak-estimate'
         assert swing['contactFrame'] >= 0
-
-
-def test_coach_measure_extra_obeys_recorded_hand(monkeypatch):
-    import coach.measure_extra as extra
-    swing = make_swing()
-    swing['metadata'] = {'hand': 'L'}
-    def recorded(swing, pose):
-        assert swing['metadata']['hand'] == 'L'
-        return 'L'
-    monkeypatch.setattr(extra, 'swing_hand', recorded)
-    assert swing_hand(swing) == 'L'
-    assert stroke_side(swing) == stroke_side(swing, hand='L')
-    assert stance_open_deg(swing) == pytest.approx(stance_open_deg(swing, hand='L'))
 
 
 def test_process_upload_overrides_and_error_states(tmp_path, monkeypatch):
@@ -260,16 +244,8 @@ def test_audio_contact_outside_peak_window_is_retained(stereo_pair, monkeypatch)
     assert a['t'][swings[0]['metadata']['sourceContactFrame']] == pytest.approx(1.05)
 
 
-def test_recorded_hand_cannot_be_overridden_by_a_new_guess():
-    from coach.measure_extra import recorded_hand
-    swing = make_swing()
-    swing['metadata'] = {'hand': 'L'}
-    assert recorded_hand(swing, np.zeros((2, 33, 3)), legacy_hand='R') == 'L'
-    swing['metadata']['hand'] = 'auto'
-    with pytest.raises(ValueError, match='metadata.hand'):
-        recorded_hand(swing, np.zeros((2, 33, 3)))
-
-def test_real_decoder_undoes_piecewise_quicktime_edits(tmp_path):
+@pytest.mark.parametrize('manual', [None, 4])
+def test_real_decoder_undoes_piecewise_quicktime_edits(tmp_path, manual):
     """Generate a MOV, replace its edit list, and exercise actual ffprobe/ffmpeg."""
     import io
     from pipeline.video import _boxes, normalize_video, run_tool, tool
@@ -295,27 +271,44 @@ def test_real_decoder_undoes_piecewise_quicktime_edits(tmp_path):
     mdia = next(payload for kind, payload in children(trak) if kind == b'mdia')
     mdhd = next(payload for kind, payload in children(mdia) if kind == b'mdhd')
     media_scale = struct.unpack_from('>I', mdhd, 12)[0]
+    selected_edits = ((.5, 0, 1), (4, .5, .25), (.5, 1.5, 1)) if manual is None else ((1, .5, 1),)
+    movie_duration = sum(edit[0] for edit in selected_edits)
     def transform(kind, payload):
         if kind in (b'moov', b'trak', b'edts'):
             payload = b''.join(transform(k, p) for k, p in children(payload))
         elif kind in (b'mvhd', b'tkhd'):
             mutable = bytearray(payload)
-            struct.pack_into('>I', mutable, 16 if kind == b'mvhd' else 20, 5 * movie_scale)
+            struct.pack_into('>I', mutable, 16 if kind == b'mvhd' else 20, round(movie_duration * movie_scale))
             payload = bytes(mutable)
         elif kind == b'elst':
-            payload = b'\0' * 4 + struct.pack('>I', 3)
-            for duration, start, speed in ((.5, 0, 1), (4, .5, .25), (.5, 1.5, 1)):
+            payload = b'\0' * 4 + struct.pack('>I', len(selected_edits))
+            for duration, start, speed in selected_edits:
                 payload += struct.pack('>Iii', round(duration * movie_scale), round(start * media_scale), round(speed * 65536))
         return atom(kind, payload)
     movie.write_bytes(b''.join(transform(kind, payload) for kind, payload in top))
-    info = probe_video(movie)
-    assert info.source == 'quicktime-edit-list' and info.slowdown == 4
-    assert timing_at(info, 1) == (2.5, 4)
+    info = probe_video(movie, slowdown=manual)
+    assert info.slowdown == 4
+    if manual is None:
+        assert info.source == 'quicktime-edit-list'
+        assert timing_at(info, 1) == (2.5, 4)
+    else:
+        assert info.source == 'manual' and info.ignore_edits and len(info.edits) == 1
+        assert timing_at(info, .125) == (.5, 4)
     normalized = tmp_path / 'real.avi'
     normalize_video(movie, normalized, info)
     capture = cv2.VideoCapture(str(normalized))
     try:
-        assert capture.get(cv2.CAP_PROP_FPS) == pytest.approx(60)
-        assert capture.get(cv2.CAP_PROP_FRAME_COUNT) == pytest.approx(120, abs=2)
+        assert capture.get(cv2.CAP_PROP_FPS) == pytest.approx(60 if manual is None else 120)
+        assert capture.get(cv2.CAP_PROP_FRAME_COUNT) == pytest.approx(120 if manual is None else 30, abs=2)
+        if manual is not None:
+            means = []
+            while True:
+                ok, frame = capture.read()
+                if not ok:
+                    break
+                means.append(float(frame.mean()))
+            # Input brightness encodes source frame index. Only the .5-1.5 s
+            # source interval (roughly 60-180) may survive the manual slowdown.
+            assert min(means) >= 50 and max(means) <= 190
     finally:
         capture.release()

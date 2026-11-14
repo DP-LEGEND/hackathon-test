@@ -10,19 +10,56 @@ import json
 import os
 import tempfile
 import uuid
+import threading
 from pathlib import Path
 from typing import Annotated, Literal
 
 from fastapi import FastAPI, HTTPException, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
+from starlette.responses import JSONResponse
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from coach.agent import coach_swing
 from physics.compare import compare
 from physics.ghost import FIXES
-from pipeline.live import LiveOptions, process_live_clip
+from pipeline.live import LiveOptions, process_live_clip, ghost_choice
+
+MAX_UPLOAD_BYTES = 250 * 1024 * 1024
+PROCESS_SEMAPHORE = threading.Semaphore(1)
+
+
+class ProcessUploadGuard:
+    """Reject before FastAPI parses multipart data; hold the slot through response."""
+    def __init__(self, app: ASGIApp):
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if (scope['type'] != 'http' or scope.get('method') != 'POST'
+                or scope.get('path', '').rstrip('/') != '/process'):
+            await self.app(scope, receive, send)
+            return
+        try:
+            lengths = [int(value) for key, value in scope.get('headers', []) if key.lower() == b'content-length']
+            if any(length < 0 for length in lengths):
+                raise ValueError('Negative length')
+        except ValueError:
+            await JSONResponse({'detail': 'Invalid Content-Length'}, status_code=400)(scope, receive, send)
+            return
+        if any(length > MAX_UPLOAD_BYTES for length in lengths):
+            await JSONResponse({'detail': 'Video exceeds the 250 MB upload limit'}, status_code=413)(scope, receive, send)
+            return
+        if not PROCESS_SEMAPHORE.acquire(blocking=False):
+            await JSONResponse({'detail': 'A clip is already processing'}, status_code=429)(scope, receive, send)
+            return
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            PROCESS_SEMAPHORE.release()
+
 
 app = FastAPI(title="Ghost local service")
+app.add_middleware(ProcessUploadGuard)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=list({"http://localhost:3000", os.environ.get("GHOST_WEB_ORIGIN", "http://localhost:3000")}),
@@ -168,10 +205,9 @@ def coach(identifier: str) -> dict:
     except (ValueError, KeyError, IndexError, TypeError):
         raise HTTPException(422, "Swing cannot be measured for coaching") from None
     # Unsupported edits must not be presented as actionable ghost fixes.
-    ready = result["ghost_ready"] and result["fix"] in FIXES
-    return {**result, "fix": result["fix"] if ready else None,
-            "amount": result["fix_amount"] if ready else None,
-            "ghost_ready": ready, "contactFrame": swing["contactFrame"],
+    fix, amount = ghost_choice(result)
+    return {**result, "fix": fix, "amount": amount,
+            "ghost_ready": fix is not None, "contactFrame": swing["contactFrame"],
             "contactMethod": swing.get("metadata", {}).get("contactMethod", "provided-contact-estimate")}
 
 
@@ -199,7 +235,7 @@ def process_video(
             with upload.open('wb') as stream:
                 while chunk := file.file.read(1024 * 1024):
                     size += len(chunk)
-                    if size > 250 * 1024 * 1024:
+                    if size > MAX_UPLOAD_BYTES:
                         raise HTTPException(413, 'Video exceeds the 250 MB upload limit')
                     stream.write(chunk)
             if not size:

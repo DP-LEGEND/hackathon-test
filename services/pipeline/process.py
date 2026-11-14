@@ -311,7 +311,8 @@ def process_clips(clip_a: str, clip_b: str | None, out_dir: str,
         from pipeline.live import process_live_clip, LiveOptions
         return process_live_clip(Path(clip_a), Path(out_dir), LiveOptions(
             slowdown=None if options.slowdown_a == 1 else options.slowdown_a, hand=None if options.hand == "auto" else options.hand,
-            stroke=None if options.side == "auto" else options.side, model_path=options.model_path))
+            stroke=None if options.side == "auto" else options.side, model_path=options.model_path,
+            min_speed=options.min_speed))
     for clip in (clip_a, clip_b):
         if not Path(clip).is_file():
             raise ValueError(f"Clip does not exist: {clip}")

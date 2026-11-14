@@ -172,7 +172,7 @@ def probe_video(path: Path, slowdown: float | None = None) -> VideoInfo:
     nonunit = any(abs(entry['rate'] - 1) > 1e-6 for entry in edits)
     native_fps = fps
     native_duration = duration
-    if nonunit:
+    if edits:
         native_payload = json.loads(run_tool([tool('ffprobe'), '-v', 'error', '-protocol_whitelist', 'file,pipe',
             '-format_whitelist', 'mov,avi', '-ignore_editlist', '1',
             '-select_streams', 'v:0', '-show_entries', 'stream=avg_frame_rate,r_frame_rate,duration',
@@ -188,7 +188,7 @@ def probe_video(path: Path, slowdown: float | None = None) -> VideoInfo:
         if not 0 < slowdown <= 16:
             raise VideoError('slowdown must be positive and at most 16')
         return VideoInfo(native_fps, base, native_duration, native_fps * slowdown, slowdown,
-                         'manual', [], ignore_edits=nonunit, playback_fps=fps)
+                         'manual', edits, ignore_edits=bool(edits), playback_fps=fps)
     tags = {**payload.get('format', {}).get('tags', {}), **video.get('tags', {})}
     # Numeric capture-rate extensions are read only when actually present. The
     # Apple full-frame-rate-playback-intent tag is a hint, not a capture cadence.
@@ -204,16 +204,22 @@ def probe_video(path: Path, slowdown: float | None = None) -> VideoInfo:
         factor = 1 / min(entry['rate'] for entry in edits)
         return VideoInfo(native_fps, base, duration, capture or native_fps, factor,
                          'quicktime-edit-list', edits, ignore_edits=True, playback_fps=fps)
-    if capture and capture >= fps:
-        return VideoInfo(fps, base, duration, capture, capture / fps, 'capture-rate-tag', [])
-    return VideoInfo(fps, base, duration, fps, 1.0, 'encoded-cadence', [],
-        'No capture time mapping; using encoded real-time cadence. Override slowdown for a burned-in slow render.')
+    if 'com.apple.quicktime.full-frame-rate-playback-intent' in tags:
+        return VideoInfo(native_fps, base, duration, native_fps * 4, 4.0,
+                         'playback-intent', edits, ignore_edits=bool(edits), playback_fps=fps,
+                         warning='AirDrop playback-intent heuristic: assuming burned-in 4x slow motion.')
+    if capture and capture >= native_fps:
+        return VideoInfo(native_fps, base, duration, capture, capture / native_fps,
+                         'capture-rate-tag', edits, ignore_edits=bool(edits), playback_fps=fps)
+    return VideoInfo(native_fps, base, duration, native_fps, 1.0, 'encoded-cadence', edits,
+        'No capture time mapping; using encoded real-time cadence. Override slowdown for a burned-in slow render.',
+        ignore_edits=bool(edits), playback_fps=fps)
 
 
 def timing_at(info: VideoInfo, real_seconds: float) -> tuple[float, float]:
     """Return (source playback seconds, local slowdown) on the normalized clock."""
     factor = info.capture_fps / info.fps
-    if info.source != 'quicktime-edit-list':
+    if not info.edits:
         return real_seconds * factor, factor
     elapsed = 0.0
     for edit in info.edits:
@@ -227,7 +233,7 @@ def timing_at(info: VideoInfo, real_seconds: float) -> tuple[float, float]:
 
 def normalize_video(source: Path, destination: Path, info: VideoInfo) -> None:
     """Decode source media to CFR real seconds, applying trims but undoing slow edits."""
-    native = info.source == 'quicktime-edit-list'
+    native = bool(info.edits)
     factor = info.capture_fps / info.fps
     duration = (sum((e['playbackEnd'] - e['playbackStart']) * e['rate'] for e in info.edits)
                 if native else info.duration) / factor
@@ -252,5 +258,5 @@ def normalize_video(source: Path, destination: Path, info: VideoInfo) -> None:
         arguments += ['-filter_complex', ';'.join(filters), '-map', '[out]']
     else:
         arguments += ['-map', '0:v:0', '-vf', f'setpts=(PTS-STARTPTS)/{factor},{scale}']
-    arguments += ['-an', '-r', str(fps), '-t', '30', '-c:v', 'mjpeg', '-q:v', '3', str(destination)]
+    arguments += ['-an', '-r', str(fps), '-t', str(min(30., duration)), '-c:v', 'mjpeg', '-q:v', '3', str(destination)]
     run_tool(arguments, timeout=120)

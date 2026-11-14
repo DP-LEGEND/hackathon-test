@@ -22,7 +22,7 @@ from physics.metrics import (
     RELEASE_WINDOW_MS, WRIST_SMOOTH_MS, _smooth, contact_frame, shoulder_coil, shoulder_yaw, wrist_angle,
 )
 from physics.skeleton import (
-    ARM, L_ANKLE, L_KNEE, L_SH, R_ANKLE, R_KNEE, R_SH, RACKET_TIP, swing_hand, to_array, up_vector,
+    ARM, L_ANKLE, L_KNEE, L_SH, R_ANKLE, R_KNEE, R_SH, RACKET_TIP, hitting_hand, to_array, up_vector,
 )
 
 STROKES = ("forehand", "backhand")
@@ -147,20 +147,10 @@ def wrist_side_offset(P: np.ndarray, hand: str, contact: int, up: np.ndarray) ->
     return float(np.median(offsets)) if offsets else float("nan")
 
 
-def recorded_hand(swing: dict, P: np.ndarray, legacy_hand: str | None = None) -> str:
-    """The pipeline's resolved hand is authoritative; only old files need fallback."""
-    metadata = swing.get("metadata")
-    if isinstance(metadata, dict) and "hand" in metadata:
-        if metadata["hand"] not in ("L", "R"):
-            raise ValueError("metadata.hand must be L or R")
-        return metadata["hand"]
-    return legacy_hand or swing_hand(swing, P)
-
-
 def stroke_side(swing: dict, hand: str | None = None) -> tuple[str, float]:
     """("forehand" | "backhand", wrist side offset). Defaults to forehand if unmeasurable."""
     P = to_array(swing)
-    hand = recorded_hand(swing, P, hand)
+    hand = hand or hitting_hand(P)
     c = contact_frame(swing, P, hand)
     offset = wrist_side_offset(P, hand, c, up_vector(P))
     stroke = "backhand" if np.isfinite(offset) and offset < 0 else "forehand"
@@ -174,7 +164,7 @@ def stance_open_deg(swing: dict, hand: str | None = None) -> float:
     else the hitting wrist's velocity, both flattened onto the floor.
     """
     P = to_array(swing)
-    hand = recorded_hand(swing, P, hand)
+    hand = hand or hitting_hand(P)
     c = contact_frame(swing, P, hand)
     up = up_vector(P)
     tip = P[:, RACKET_TIP]

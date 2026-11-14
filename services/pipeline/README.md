@@ -31,10 +31,11 @@ python -m pipeline /path/to/new-clip.mov --slowdown 4 --hand L --stroke backhand
 
 `--slowdown` is a uniform factor relative to the encoded/native cadence; 1 forces
 real time. `--hand R|L` and `--stroke forehand|backhand` override inference. The
-saved `metadata.slowdownSource`, `handSource`, and `strokeSource` are `auto` or
-`manual`; `metadata.hand` and `metadata.stroke` carry the resolved values. The
-coach's extra measurements trust a recorded hand, including when the free arm
-moves faster. Legacy files without a recorded hand retain their old fallback.
+saved provenance is `auto` or `manual` for explicit/ordinary detection;
+slowdown heuristics use `playback-intent` or `speed-retry`, and ambiguous strokes
+resolved by the coach use `coach-inferred`; `metadata.hand` and `metadata.stroke` carry the resolved values. The
+pipeline passes the resolved hand onward; the coach's standalone metadata-hand
+handling remains owned by PR #38, with measure_extra.py kept equal to main.
 The old three-positional stereo command remains supported below, including its
 explicit sync and rate-switch controls. `--slowdown`/`--stroke` also override the
 primary camera's legacy stereo settings.
@@ -52,19 +53,32 @@ describe that actual processing cadence, and `captureFps` records capture eviden
 Explicit numeric QuickTime extensions `com.apple.quicktime.capture.fps`,
 `com.apple.quicktime.capture-frame-rate`, and `com.apple.quicktime.video-frame-rate`
 are used **only if present**. They are not assumed to exist on every iPhone file.
-`com.apple.quicktime.full-frame-rate-playback-intent` alone does not encode a
-capture FPS or a speed-ramp map. The guessed timestamp base `r_frame_rate` is
-not treated as a capture FPS: normal 60 fps and VFR 60 fps inputs stay factor 1.
+When `com.apple.quicktime.full-frame-rate-playback-intent` is present without
+non-unit edits, the AirDrop heuristic assumes factor 4 and records
+`slowdownSource: "playback-intent"`. This is a heuristic, not a numeric capture
+FPS in that tag; `--slowdown 1` overrides it for real-time footage with that tag.
+The guessed timestamp base `r_frame_rate` is not treated as capture FPS: normal
+60 fps and VFR 60 fps inputs without the playback-intent hint stay factor 1.
 When capture/mapping metadata has been stripped (e.g. a burned-in slow render),
 physical timing cannot be recovered from frame rates alone. Auto uses encoded
 real-time cadence, records `timingBasis`/`timingWarning`, and allows `--slowdown`
-to supply the missing information. It never silently assumes every high-FPS clip
-is slow motion. Freeze/reverse edits and malformed timing are rejected clearly.
+to supply the missing information. If auto factor 1 produces no accepted swing,
+the existing pose arrays are retried at factors 2, 4 and 8. A candidate is accepted
+only if its hip-relative peak wrist speed is 12-35 m/s; among plausible candidates
+the nearest to the interval midpoint wins. The selected factor is recorded as
+`speed-retry` with a warning and the measured retry wrist speed. Manual slowdown
+values are never retried. This is a demo recovery heuristic, not capture-rate
+calibration. Manual timing retains edit-list trims and contact playback mapping;
+it changes the source timing factor without restoring trimmed-away frames.
+It never silently assumes every high-FPS clip is slow motion. Freeze/reverse edits and malformed timing are rejected clearly.
 
 Optional audio transients provide a contact frame when one is nearby. Silence,
 missing audio, or no matching transient always falls back to the hitting wrist's
 speed peak; audio is never a required filter. Ball paths remain PREDICTED and
-shot assumptions remain visible in the comparison result.
+shot assumptions remain visible in the comparison result. An ambiguous geometric
+stroke is handed to the coach with no forced stroke; its inference is stored
+under `metadata.stroke` with `strokeSource: "coach-inferred"`. A valid later
+swing in the upload is not lost just because an earlier stroke was ambiguous.
 
 Metadata references: [FFmpeg frame-rate fields](https://www.ffmpeg.org/doxygen/9.0/structAVStream.html),
 [QuickTime edit list](https://developer.apple.com/documentation/quicktime-file-format/edit_list_atom/edit_list_table),
@@ -98,6 +112,10 @@ hand/stroke. The current `/ghost` page can list API swings after refreshing its
 API list; its existing picker selects them. This PR does not add an upload UI,
 query-string auto-selection, or live coach captions to frontend-owned files.
 The response carries the completed coaching/comparison for a future upload UI.
+When the top fault cannot be animated, `/coach/{id}` returns the coach's supported
+`ghost_fix`/`ghost_fix_amount` as actionable `fix`/`amount`; top fault/cue stay intact.
+Only fixes in the physics library are returned, and `ghost_ready` reflects whether
+an actionable fix is returned. Upload comparisons use the same selection.
 Call FastAPI directly for processing: the existing Next.js catch-all proxy has a
 30-second timeout, while CPU pose extraction may take longer.
 
@@ -107,6 +125,12 @@ media tools. Temporary uploads and decoded frames are removed after processing;
 only JSON outputs remain. Failed processing publishes no manifest. Invalid
 inputs/no tracked swing return 422, oversized uploads 413, and missing model/tools
 or unavailable output storage 503. Existing outputs are never overwritten.
+POST /process admits one job at a time using a non-blocking process-local
+semaphore; concurrent uploads get 429 "A clip is already processing" before form
+parsing. Oversized Content-Length gets 413 before the body is read. The slot is
+released on success, validation errors and failures. Use the default single-worker
+API command when one job total is required; multiple server workers have separate
+semaphores.
 
 ## Live validation
 
