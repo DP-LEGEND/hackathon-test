@@ -31,15 +31,19 @@ Auto side can be `unknown` if the wrist is within 5 cm of the torso centreline.
 ## Output
 
 A new/empty output directory receives one `<session>-swing-NNNN.json` per
-accepted swing, plus **`manifest.json`** listing files and rejected windows.
+accepted swing, **`manifest.json`** listing files and rejected windows, and a
+local **`raw_cache.npz`** pose cache (see below).
 Load an individual swing file into the web replay, not the manifest or a wrapper.
-Required fields match `lib/ghost/types.ts`; `side` and `metadata` are additive.
+Required fields match `lib/ghost/types.ts`; `source`, `fpsReal`, `side` and
+`metadata` are additive.
 Shared TypeScript contracts and the frontend are unchanged.
 
 ```json
 {
   "id": "<session>-swing-0001",
   "fps": 120,
+  "fpsReal": 120,
+  "source": "mono",
   "contactFrame": 54,
   "side": "forehand",
   "frames": [
@@ -65,21 +69,58 @@ source start and contact frame indices for comparison with the source video.
 - Essential-matrix self-calibration uses visible shared 2D joints, then
   triangulates. It rejects insufficient correspondences, poor cheirality and
   excessive median reprojection error. Each joint must be in front of both
-  cameras and reproject within 12 pixels in each image.
+  cameras and reproject within 12 pixels in each image to count as stereo.
+- Selection is **per swing**, not a per-joint blend. Use `source: "stereo"`
+  when both views yield the eight required joints for its whole window. Otherwise
+  use the iPhone's MediaPipe world skeleton and label it `source: "mono"`.
+  Missing iPad joints, failed calibration or unavailable overlapping coverage
+  do not reject an otherwise usable iPhone swing. Mono depth is inferred by
+  MediaPipe, not measured by stereo; do not present it as stereo accuracy.
+  `metadata.fallbackReason` records why stereo was unavailable.
 - Focal lengths default to `1400 * source_width / 1920` pixels: an approximation,
   without lens-distortion calibration. Pass measured `--focal-a` and `--focal-b`
   where available. Metres are scaled using an assumed .5 m shoulder-mid to
   hip-mid torso; pass `--torso-m` for the player's measured length. This is an
   estimated-scale reconstruction, not a calibrated motion-capture measurement.
-- Only short **bounded** missing runs are interpolated (default .1 real seconds,
-  `--max-gap-s`). Longer gaps and missing endpoints stay invalid. A swing with
-  any remaining missing joint is rejected, with its reason in the manifest;
-  no NaN, Infinity or fabricated zero pose is serialized. Bone lengths are
+- The iPhone must retain **shoulders (11/12), elbows (13/14), wrists (15/16)
+  and hips (23/24)**. A joint needs finite image/world coordinates and visibility
+  above .3. Only short **bounded** missing runs are interpolated (default .1 real
+  seconds, `--max-gap-s`); longer gaps/endpoints in these joints reject that swing.
+  Knees, ankles, face, hand and foot landmarks are optional. Missing optional
+  coordinates repeat their parent **after** orientation/scaling; their indices
+  are disclosed in `metadata.approximatedJoints`. These are replay placeholders,
+  not measurements to use for those joints' metrics. No NaN/Infinity is serialized.
+  Torso direction supplies up when ankles are unavailable. Bone lengths are
   constrained to observed median lengths along the existing body chains.
-- Exit 0: all detected swings written. Exit 2: some/all detected swings rejected
-  (inspect manifest). Exit 1: invalid input, no swings, calibration/model failure,
-  or output I/O failure. Existing nonempty output is never overwritten.
-- No single-camera or mock-data fallback is presented as a stereo result.
+- Exit 0: all detected swings written. Exit 2: some written, some rejected.
+  Exit 1: none usable (`manifest.status: "failed"`), invalid input, no detections,
+  model failure or output I/O failure. Existing accepted swing output is preserved.
+- `fpsReal` equals `fps`; `contactFrame` remains the window-relative peak index
+  returned by `find_swings`, including when a swing uses mono fallback.
+
+## Pose cache and safe reruns
+
+Raw arrays for both cameras are saved **before reconstruction**. Rerun into an
+output folder containing only `raw_cache.npz` and/or a zero-written failed
+manifest to retry without the expensive pose step. `--no-cache` forces fresh
+extraction and atomically refreshes the cache. Corrupt/stale caches are recomputed.
+Cache identity includes both videos' contents in camera order, model contents,
+extraction version and resize setting. Reconstruction/sync/threshold changes
+reuse the same raw arrays. Cache reads use `allow_pickle=False`; weights and
+videos must still be present to validate identity. Hashing still reads the files,
+so a warm run is not zero I/O. Keep caches, recordings and generated output out of git.
+
+For tuning **after successful output**, use a shared cache and a fresh output
+directory rather than replacing accepted swings:
+
+```bash
+python -m pipeline iphone.mov ipad.mov out/run-01 --cache-dir out/fh-pose-cache --slowdown-a 4 --offset-b -57.95 --side forehand
+python -m pipeline iphone.mov ipad.mov out/run-02 --cache-dir out/fh-pose-cache --slowdown-a 4 --offset-b -57.95 --side forehand --min-speed 8
+```
+
+Use the same commands with the active Python environment on Windows. If the first
+run used the default cache, pass `--cache-dir out/run-01` on a fresh-output rerun.
+Do not run two pipeline writers against the same output/cache directory at once.
 
 ## Testing
 
@@ -89,6 +130,7 @@ python -m pytest
 
 Tests exercise sync interpolation, stereo reconstruction against known projected
 3D points, clip-rate conversion, segmentation/side/contact indices, missing data,
-strict JSON output, output preservation and CLI error handling. Synthetic inputs
+strict JSON output, per-swing mono fallback, required/optional joints, cache reuse
+and invalidation, output preservation and CLI error handling. Synthetic inputs
 are clearly confined to tests. Real clips and model weights must not be committed.
 The legacy `python -m pipeline.run <clip>` single-camera tool remains available.

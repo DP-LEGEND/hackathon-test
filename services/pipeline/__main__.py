@@ -25,6 +25,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--min-speed", type=float, default=6, help="minimum wrist speed in torso lengths / real second")
     ap.add_argument("--max-gap-s", type=float, default=.1, help="maximum interpolated pose gap in real seconds")
     ap.add_argument("--model-path", default=Options.model_path)
+    ap.add_argument("--no-cache", action="store_true", help="re-extract both poses and refresh raw_cache.npz")
+    ap.add_argument("--cache-dir", help="reuse raw_cache.npz across fresh output directories (default: out_dir)")
     args = vars(ap.parse_args(argv))
     clip_a, clip_b, out_dir = (args.pop(key) for key in ("clip_a", "clip_b", "out_dir"))
     try:
@@ -33,6 +35,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"pipeline: {exc}", file=sys.stderr)
         return 1
     print(f"Wrote {report['written']}/{report['detected']} swings to {out_dir}")
+    if report["written"] == 0:
+        print("No usable swings; see failed manifest.json", file=sys.stderr)
+        return 1
     if report["rejected"]:
         print("Some swings failed pose quality checks; see manifest.json", file=sys.stderr)
         return 2

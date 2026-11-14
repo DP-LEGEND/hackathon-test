@@ -123,9 +123,18 @@ def normalise(X: np.ndarray, torso_m: float = 0.5) -> np.ndarray:
         raise ValueError("Cannot set metric scale: no valid stereo torso")
     s = torso_m / np.median(lengths)
     X = X * s
-    up = np.nanmean((sh - an) * s, axis=0)
-    if not np.isfinite(up).all() or np.linalg.norm(up) < 1e-6:
-        raise ValueError("Cannot level skeleton: no valid shoulder-to-ankle direction")
+    directions = sh - an
+    valid = np.isfinite(directions).all(axis=1)
+    up = np.mean(directions[valid], axis=0) if valid.any() else np.zeros(3)
+    if np.linalg.norm(up) < 1e-6:
+        # Feet can leave the frame: use the required torso, not invented ankles.
+        directions = sh - hp
+        valid = np.isfinite(directions).all(axis=1)
+        if not valid.any():
+            raise ValueError("Cannot level skeleton: no valid torso direction")
+        up = np.mean(directions[valid], axis=0)
+    if np.linalg.norm(up) < 1e-6:
+        raise ValueError("Cannot level skeleton: degenerate torso direction")
     up /= np.linalg.norm(up)
     fwd = np.array([0, 0, 1.0]) - up * up[2]
     if np.linalg.norm(fwd) < 1e-6:
