@@ -67,3 +67,14 @@ def test_ends_more_than_120_degrees_apart_keep_the_fill_shape():
     S = smooth_guessed_arms(P, filled)
     L = np.linalg.norm(S[20:45, 16] - S[20:45, 14], axis=1)
     assert (L > 0.2).all()  # never collapses
+
+
+def test_middle_ground_calms_measured_frames_but_not_contact():
+    P, filled = _swing()
+    rng = np.random.default_rng(1)
+    P[:, 14] += rng.normal(0, 0.01, P[:, 14].shape)  # measured but noisy elbow
+    S = smooth_guessed_arms(P, filled, protect=(60, 80), smooth_measured=True)
+    assert np.allclose(S[60:81], P[60:81])
+    assert np.median(_accel(S[:50, 14])) < 0.5 * np.median(_accel(P[:50, 14]))
+    torso = [j for j in range(33) if j not in LIMB_JOINTS]
+    assert np.allclose(S[:, torso], P[:, torso])
