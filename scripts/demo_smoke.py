@@ -15,8 +15,11 @@ It prints one PASS (green) or FAIL (red) line per check and exits 1 if any check
                says over_rotation; the compare file for the coach's fix is in court coordinates,
                with the PREDICTED front wall at 1.92 m (within 0.05) at the ASSUMED 12 deg.
   3. backhand  The saved backhand: front wall at 0.78 m (within 0.05) at 3 deg, from anchor x = 2.0.
+  Both read the fix /ghost starts on: the coach's ghost_fix (else its first fault's fix). If that
+  fix has no usable compare file, the check fails rather than trying another fix. If the coach names
+  none, the first fix in catalogue order with a file is checked, and the PASS line says so.
   4. pages     /ghost and /upload answer 200.
-  5. process   POST /process with no file gets a clean 4xx from the service, not a 500.
+  5. process   POST /process with no file answers exactly 422 (anything else fails, with the status).
 
 A FAIL line says what was wrong, for example "connection refused" when a server isn't running.
 """
@@ -82,15 +85,42 @@ class Smoke:
         return self.saved_files[name]
 
 
-def _compare_for(smoke: Smoke, entry: dict, coach: dict) -> tuple[str, dict]:
-    """(fix, compare file) for the coach's fix; else the first fix with a file. Every file of a swing
-    has the same "you" ball, which is what the checks read."""
+def _coach_fix(coach: dict) -> str | None:
+    """The fix the coach names, the way /ghost reads it: ghost_fix, else the first fault's fix
+    (app/ghost/sources.ts coachPickFix). None when the coach names no fix ("Nothing to fix")."""
+    if isinstance(coach.get("ghost_fix"), str) and coach["ghost_fix"]:
+        return coach["ghost_fix"]
+    for fault in coach.get("faults") or []:
+        if isinstance(fault, dict) and isinstance(fault.get("fix"), str) and fault["fix"]:
+            return fault["fix"]
+    return None
+
+
+def _compare_for(smoke: Smoke, entry: dict, coach: dict) -> tuple[str, dict, str]:
+    """(fix, compare file, why this fix). When the coach names a fix, its compare file must exist: a
+    missing or unavailable one fails here, and no other fix is checked instead. When the coach names
+    none, /ghost opens on the first fix in catalogue order that has a file, so that is checked.
+    Every compare file of a swing has the same "you" ball, which is what the checks read."""
     fixes = entry.get("fixes") or {}
-    order = [coach.get("fix")] + [fix for fix in fixes if fix != coach.get("fix")]
-    for fix in order:
-        if fix and (fixes.get(fix) or {}).get("file"):
-            return fix, smoke.saved(fixes[fix]["file"])
-    raise CheckFailed(f"{entry.get('id')} has no compare file in catalogue.json")
+    named = _coach_fix(coach)
+    if named is not None:
+        option = fixes.get(named)
+        if option is None:
+            raise CheckFailed(f"{entry.get('id')}: the coach names {named!r}, which catalogue.json doesn't list")
+        if option.get("error") or not option.get("file"):
+            why = option.get("error") or "catalogue.json has no compare file for it"
+            raise CheckFailed(f"{entry.get('id')}: the coach names {named!r}, but it has no usable compare file: {why}")
+        try:
+            return named, smoke.saved(option["file"]), f"the coach's fix {named}"
+        except CheckFailed as e:
+            raise CheckFailed(f"{entry.get('id')}: the coach names {named!r}, but its compare file "
+                              f"is unavailable: {e}") from None
+    for fix in smoke.saved("catalogue.json").get("fixes") or list(fixes):
+        option = fixes.get(fix) or {}
+        if not option.get("error") and option.get("file"):
+            return fix, smoke.saved(option["file"]), (
+                f"the coach names no fix, so /ghost opens on the first fix in catalogue order: {fix}")
+    raise CheckFailed(f"{entry.get('id')}: no fix has a compare file in catalogue.json")
 
 
 def _court_problems(compare: dict, wall: float, elevation: float, anchor_x: float | None = None) -> list[str]:
@@ -128,15 +158,15 @@ def check_hero(smoke: Smoke) -> str:
     if entry is None:
         raise CheckFailed(f"catalogue.json's defaultSwing {hero!r} isn't in its swings")
     coach = smoke.saved(entry["coach"])
-    fix, compare = _compare_for(smoke, entry, coach)
+    fix, compare, why = _compare_for(smoke, entry, coach)
     problems = _court_problems(compare, wall=1.92, elevation=12.0)
     fault = (coach.get("fault") or {}).get("id")
     if fault != "over_rotation":
         problems.insert(0, f"coach fault {fault!r}, want 'over_rotation'")
     if problems:
         raise CheckFailed(f"{hero}: " + "; ".join(problems))
-    return (f"{hero}: over_rotation, {fix} in court coordinates, "
-            f"front wall {compare['you']['ball']['frontWallHeightM']} m at 12°")
+    return (f"{hero}: over_rotation, court coordinates, front wall "
+            f"{compare['you']['ball']['frontWallHeightM']} m at 12°; {why}")
 
 
 def check_backhand(smoke: Smoke) -> str:
@@ -146,11 +176,12 @@ def check_backhand(smoke: Smoke) -> str:
             break
     else:
         raise CheckFailed("no saved backhand in catalogue.json (no coach file says stroke 'backhand')")
-    fix, compare = _compare_for(smoke, entry, coach)
+    fix, compare, why = _compare_for(smoke, entry, coach)
     problems = _court_problems(compare, wall=0.78, elevation=3.0, anchor_x=2.0)
     if problems:
         raise CheckFailed(f"{entry['id']}: " + "; ".join(problems))
-    return f"{entry['id']}: front wall {compare['you']['ball']['frontWallHeightM']} m at 3° from x = 2.0"
+    return (f"{entry['id']}: front wall {compare['you']['ball']['frontWallHeightM']} m at 3° "
+            f"from x = 2.0; {why}")
 
 
 def check_pages(smoke: Smoke) -> str:
@@ -168,11 +199,13 @@ def check_pages(smoke: Smoke) -> str:
 
 
 def check_process(smoke: Smoke) -> str:
+    """An upload with no file is FastAPI's missing-field validation error, exactly 422. A 404 or 405
+    (a removed or renamed route) or a 500 fails, so the check can't pass on the wrong endpoint."""
     status, body = smoke.request(f"{smoke.service}/process", method="POST")
-    detail = body[:100].decode(errors="replace")
-    if not 400 <= status < 500:
-        raise CheckFailed(f"POST /process with no file answered {status}, want a 4xx: {detail}")
-    return f"POST /process with no file answered {status}"
+    if status != 422:
+        detail = body[:100].decode(errors="replace")
+        raise CheckFailed(f"POST /process with no file answered {status}, want exactly 422: {detail}")
+    return "POST /process with no file answered 422 (the missing file is rejected)"
 
 
 CHECKS = [("health", check_health), ("hero", check_hero), ("backhand", check_backhand),
