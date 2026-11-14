@@ -10,6 +10,9 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 # Team starter instructions
 
+## Ghost: read CLAUDE.md first
+The product is decided: **Ghost**, a squash swing coach. `CLAUDE.md` holds the product rules, folder ownership and run commands for Mac and Windows. They apply to Codex as well as Claude Code, and they override "product undecided" below. `TEAM.md` has the roles and starter prompts.
+
 ## Project context
 - This is a reusable starter for a four-person AI hackathon team.
 - Optimise for development speed, reliability, and a polished, working demo.
