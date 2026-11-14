@@ -59,6 +59,8 @@ def test_ambiguous_stroke_does_not_discard_other_swings(live_run, monkeypatch):
     swings, report = swings_from_raw(raw, options=Options(hand='R', side='forehand'))
     swings[0]['side'] = swings[0]['metadata']['stroke'] = 'unknown'
     monkeypatch.setattr(live, 'swings_from_raw', lambda *args: (swings, report))
+    # The skeleton can't tell either, so the coach infers (else physics decides before coaching).
+    monkeypatch.setattr(live, 'decide_stroke', lambda swing, hand: ('forehand', 'assumed'))
     original = live.coach_swing
     called = []
     def coach(swing, stroke, **kwargs):
@@ -74,6 +76,37 @@ def test_ambiguous_stroke_does_not_discard_other_swings(live_run, monkeypatch):
     assert saved[0]['metadata']['strokeSource'] == 'coach-inferred'
     assert saved[0]['stroke'] == saved[0]['metadata']['stroke'] in ('forehand', 'backhand')
     assert saved[1]['metadata']['stroke'] == 'forehand'
+
+
+@pytest.mark.parametrize('label, decided_by', [('unknown', 'measured'),
+                                               ('forehand', 'measured (auto label overridden)')])
+def test_live_coaches_the_stroke_the_skeleton_decides(live_run, monkeypatch, label, decided_by):
+    # IMG_2116 is a backhand that the coach, left to guess, calls a forehand. The stroke is decided
+    # from the skeleton before coaching, so the advice, ghost fix and ball path are all backhand.
+    import pipeline.live as live
+    from pathlib import Path
+    from coach.agent import coach_swing
+    from coach.faults import THRESHOLDS
+    clip, output, model, raw = live_run
+    swings, report = swings_from_raw(raw, options=Options(hand='R', side='forehand'))
+    sample = json.loads((Path(__file__).resolve().parents[3] / 'data/samples/swing_sample.json').read_text())
+    swing = {**swings[0], 'frames': sample['frames'], 'contactFrame': sample['contactFrame'],
+             'fps': sample['fps'], 'fpsReal': sample['fps'], 'side': label}
+    guess = coach_swing({k: v for k, v in swing.items() if k != 'stroke'}, fps_real=120.0)
+    assert (guess['stroke'], guess['stroke_source']) == ('forehand', 'detected')  # the coach's own guess
+    monkeypatch.setattr(live, 'swings_from_raw', lambda *args: ([swing], report))
+    result = process_live_clip(clip, output, LiveOptions(hand='R', model_path=model))
+    coached = result['coach']
+    assert (coached['stroke'], coached['stroke_source']) == ('backhand', 'given')
+    fault = coached['fault']
+    assert fault['stroke'] == 'backhand' and fault['threshold'] == THRESHOLDS['backhand'][fault['id']]['threshold']
+    assert set(coached['other_faults']) <= set(THRESHOLDS['backhand'])
+    saved = json.loads((output / f"{result['swingId']}.json").read_text())
+    assert saved['stroke'] == saved['metadata']['stroke'] == 'backhand'
+    assert saved['metadata']['strokeSource'] == decided_by
+    stroke = result['compare']['assumptions']['stroke']
+    assert stroke == {'value': 'backhand', 'source': decided_by, 'label': 'ESTIMATE'}
+    assert result['compare']['assumptions']['anchor']['x'] == 2.0
 
 
 def test_process_clips_forwards_live_min_speed(tmp_path, monkeypatch):

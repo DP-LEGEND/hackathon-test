@@ -160,16 +160,28 @@ export type Selection = {
 };
 
 /**
- * Which swing is on screen. The demo swing only while nothing has been picked; after that, only
- * the swing that was picked. Never a silent switch: if it drops out of the list, `entry` is null
- * and `gone` says so. While its list is still loading (catalogue, or the live list being
- * re-checked), it isn't called gone yet.
+ * Which swing is on screen. Before anything is picked: the swing a link asked for
+ * (/ghost?swing=<id>, how /upload opens a new swing), else the demo swing. After a pick, only
+ * the swing that was picked. Never a silent switch: if it drops out of (or never shows up in)
+ * its list, `entry` is null and `gone` says so. While its list is still loading (catalogue, or
+ * the live list being re-checked), it isn't called gone yet.
  */
 export function resolveSelection(
   entries: SwingEntry[],
   selectedKey: string | null,
   loaded: { samples: boolean; live: boolean },
+  requestedId: string | null = null,
 ): Selection {
+  if (selectedKey === null && requestedId !== null) {
+    // An id alone doesn't say which list it's in. Wait for both, then prefer the live swing
+    // (uploads are live), so the swing shown never changes once it's on screen.
+    if (!loaded.samples || !loaded.live) return { entry: null, gone: false };
+    const entry =
+      entries.find((e) => e.origin === "api" && e.id === requestedId) ??
+      entries.find((e) => e.id === requestedId) ??
+      null;
+    return { entry, gone: entry === null };
+  }
   if (selectedKey === null) return { entry: entries.find((e) => e.isDefault) ?? null, gone: false };
   const entry = entries.find((e) => e.key === selectedKey) ?? null;
   // Live entries are built from the catalogue too, so a live list needs both loaded.
