@@ -1,5 +1,7 @@
 # Team playbook
 
+**Start with [WORKFLOW.md](WORKFLOW.md)**: the exact steps for starting a task, testing, opening a PR, merging and what to run after a merge.
+
 Roles, the git loop, and prompts you can paste straight into Claude Code. Claude Code reads `CLAUDE.md` automatically, so it already knows the project and who owns which folder.
 
 ## Roles
@@ -52,9 +54,62 @@ Or tell Claude Code: "Commit and push my work and give me the pull request link.
 
 **4. Open a pull request:** open the link Claude gives you (or the yellow "Compare & pull request" button on GitHub), then post the link in the team chat.
 
-**5. Dev merges.** Then go back to step 1 for your next task.
+**5. Merge.** Once CI is green, a teammate approves and you merge PRs that only touch your own folders; Dev merges anything touching shared files (see [WORKFLOW.md](WORKFLOW.md#5-merging-fast-lane)). Then go back to step 1 for your next task.
 
 **Every hour**, pull other people's merged work into your branch: `git pull origin main`. If it says "conflict", stop and ask Claude Code: "Explain this merge conflict. Don't fix it yet." Never let it delete someone else's side.
+
+## How to test (pull, run, check)
+
+**1. Get everyone's merged work.** Do this whenever a teammate's PR is merged (GitHub emails you):
+
+```
+git checkout main
+```
+```
+git pull
+```
+
+Then go back to your branch and bring main into it: `git checkout <your-branch>` and `git merge main`. If `package.json` changed, run `npm ci` (Windows: `npm.cmd ci`) again.
+
+**2. Check everything with one command.** It runs lint, the production build, the Python tests, checks the sample Swing JSON against the contract and checks the Python server can load. Stop `npm run dev` first, because the build and the dev server share a folder. Activate the Python environment first if you have one.
+
+Mac:
+```
+bash scripts/check.sh
+```
+Windows PowerShell:
+```
+powershell -ExecutionPolicy Bypass -File scripts\check.ps1
+```
+
+Add `--quick` (Mac) or `-Quick` (Windows) to skip the slow build. The last lines say PASS or FAIL for each check. If something fails, paste the whole output into Claude Code and ask it to explain.
+
+**3. See the web app.**
+
+```
+npm run dev
+```
+
+(Windows: `npm.cmd run dev`.) Then open http://localhost:3000/ghost. Leave it running: the page reloads by itself when you save a file.
+
+**4. Run the Python service.** In a second terminal, from inside `services/` with the environment activated:
+
+```
+python -m uvicorn pipeline.server:app --reload --port 8000
+```
+
+Then open http://localhost:8000/health, which should show `{"ok":true}`.
+
+**5. Turn a clip into a swing.** Put the clip in `data/raw/` (never commit it), then from inside `services/`:
+
+```
+python -m pipeline.run ../data/raw/<clip>.mov > ../data/swing_out.json
+```
+```
+python ../scripts/check_swing.py ../data/swing_out.json
+```
+
+The second command says OK or lists what doesn't match `lib/ghost/types.ts`. Any Swing JSON can be checked the same way. `data/samples/swing_sample.json` is a real backhand (two-camera, 120fps) that everyone can build against.
 
 ## How to prompt Claude Code
 
@@ -122,7 +177,7 @@ Good prompts say four things: **who you are, the goal, what done looks like, and
 | **14:00** | **Kill gate:** a real clip in, a rotating 3D skeleton out. If not, switch to Kin |
 | 18:00 | Ugly end-to-end: swing, metrics, one fix, ghost and two ball paths |
 | Sun 01:00 | Core complete |
-| 10:00 | Feature freeze, backup video recorded |
+| 09:00 | Feature freeze, backup video recorded (see WORKFLOW.md for all key times) |
 | 18:00 | End |
 
 ## Never
