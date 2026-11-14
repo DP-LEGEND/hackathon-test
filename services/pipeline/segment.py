@@ -57,15 +57,18 @@ def find_swings(
     min_gap_real_s: float = 0.5,
     hits: np.ndarray | None = None,
     confirm_s: float = 0.6,
+    wrist: int = R_WRIST,
 ) -> list[dict]:
     """Return [{"peak": frame, "start": frame, "end": frame, "speed": .., "hit": t|None}]."""
-    sp = wrist_speed(raw, slowdown=slowdown)
+    if len(raw["t"]) < 2:
+        return []
+    sp = wrist_speed(raw, wrist=wrist, slowdown=slowdown)
     fps = float(raw["fps"])
-    gap = int(min_gap_real_s * fps * slowdown)
+    gap = max(1, int(min_gap_real_s * fps * slowdown))
     pk, _ = find_peaks(np.nan_to_num(sp), height=min_speed, distance=gap)
     t = raw["t"]
     out = []
-    pre, post = int(0.45 * fps * slowdown), int(0.35 * fps * slowdown)
+    pre, post = max(1, int(0.45 * fps * slowdown)), max(1, int(0.35 * fps * slowdown))
     for p in pk:
         hit = None
         if hits is not None and len(hits):
