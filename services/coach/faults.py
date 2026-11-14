@@ -40,7 +40,8 @@ from physics.skeleton import L_SH, R_SH, to_array
 from pipeline.features import swing_features
 
 from coach.measure_extra import (
-    STROKES, guessed_measurements, recorded_hand, stance_joints_filled, stroke_side, wrist_index_filled,
+    STROKES, guessed_measurements, recorded_hand, stance_ankles_guessed, stance_joints_filled,
+    stance_open_front_wall_deg, stroke_side, wrist_index_filled,
     wrist_uncock,
 )
 from coach.wrist_sensor import sensor_metrics
@@ -225,6 +226,8 @@ def ghost_ready(fix: str, amount: Optional[float], unit: str, metrics: dict[str,
     edit = FIXES[fix][0]
     if EDITS[edit]["unit"] != unit:
         return False  # e.g. a ratio can't drive a degree edit
+    if fix == "close_stance" and metrics.get("stance_direction") == "front_wall_axis":
+        return False  # the edit changes the hitting-direction angle, which was guessed here
     if edit == "shoulder_turn":
         turn = metrics.get("shoulder_turn_deg")
         if not _finite(turn) or turn < MIN_SHOULDER_TURN_FOR_EDIT:
@@ -293,9 +296,29 @@ def measure_swing(swing: dict, stroke: Optional[Stroke] = None, fps_real: Option
     # approximated, marked filled on a frame it uses (#39 flags), or saw at visibility
     # below 0.5 at contact is unmeasured, so its fault is skipped (see unmeasured_faults).
     m["guessed_joints"] = guessed_measurements(swing, m["hand"], m["contact_frame"], m["fps_real"])
+    m["stance_direction"] = "hitting_direction" if _finite(m.get("stance_open_deg")) else None
+    # Stance is a feet measurement. When only the shot direction (the hitting wrist around
+    # contact) is guessed and the ankles were seen, judge the feet against the front-wall
+    # axis instead of dropping the stance check. Only where stance_open_deg is the rule's
+    # own measurement (backhand): on the forehand it only sizes the close_stance ghost,
+    # which edits the hitting-direction angle, so there it stays unmeasured.
+    stance_rule = THRESHOLDS.get(m["stroke"], {}).get("stance_too_open", {})
+    if ("stance_open_deg" in m["guessed_joints"] and not m["stance_skipped"]
+            and stance_rule.get("measurement") == "stance_open_deg"
+            and stance_ankles_guessed(swing, m["contact_frame"]) is None):
+        front = stance_open_front_wall_deg(swing, m["contact_frame"])
+        if _finite(front):
+            m["guessed_joints"].pop("stance_open_deg")
+            m["stance_open_deg"] = front
+            m["stance_direction"] = "front_wall_axis"
+            m["stance_note"] = FRONT_WALL_STANCE_NOTE
     for key in m["guessed_joints"]:
         m[key] = None
     return m
+
+
+FRONT_WALL_STANCE_NOTE = ("Stance measured from the feet against the camera's forward direction "
+                          "(assumes the phone filmed from behind); not used as a fault.")
 
 
 def detect_faults(swing: dict, stroke: Optional[Stroke] = None, fps_real: Optional[float] = None,
@@ -309,6 +332,9 @@ def detect_faults(swing: dict, stroke: Optional[Stroke] = None, fps_real: Option
     for fault_id, rule in THRESHOLDS[m["stroke"]].items():
         if rule.get("disabled"):
             continue  # switched off: its measurement can't tell good from faulty swings
+        if (rule["measurement"] == "stance_open_deg"
+                and m.get("stance_direction") == "front_wall_axis"):
+            continue  # feet vs the camera's forward axis: reported, never a fault
         spec = FAULTS[fault_id]
         meas = MEASUREMENTS[rule["measurement"]]
         value = m.get(rule["measurement"])
