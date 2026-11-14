@@ -411,3 +411,28 @@ export function parseCoach(value: unknown): CoachCaption {
     ghostNote: typeof c.ghost_note === "string" && c.ghost_note !== "" ? c.ghost_note : null,
   };
 }
+
+/**
+ * The coach's cue as speech (`GET /coach/{id}/voice`, PR #60). `cue` replaces the caption's cue;
+ * `audioUrl` is a recording of exactly that cue, or null.
+ */
+export type CoachVoice = {
+  cue: string;
+  audioUrl: string | null;
+  /** `source === "claude"`: Claude worded the cue, and the page says so. Else it's the plain caption. */
+  wordedByClaude: boolean;
+};
+
+/** Only audio the service made itself plays: an inline data: clip or a same-origin path. */
+function playableAudio(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  if (/^data:audio\/[\w.+-]+;base64,/i.test(value)) return value;
+  return value.startsWith("/") && !value.startsWith("//") ? value : null;
+}
+
+/** Checks an untrusted voice answer. Throws CompareDataError unless it has a usable cue. */
+export function parseVoice(value: unknown): CoachVoice {
+  const v = record(value, "voice");
+  if (typeof v.cue !== "string" || v.cue.trim() === "") throw new CompareDataError("cue must be a non-empty string");
+  return { cue: v.cue.trim(), audioUrl: playableAudio(v.audioUrl), wordedByClaude: v.source === "claude" };
+}

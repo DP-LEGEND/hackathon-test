@@ -8,8 +8,10 @@ import {
   parseCatalogue,
   parseCoach,
   parseCompare,
+  parseVoice,
   type Catalogue,
   type CoachCaption,
+  type CoachVoice,
   type CompareResult,
 } from "./compare";
 import { loadSwing, type LoadedSwing } from "./swing";
@@ -18,6 +20,7 @@ const API = "/api"; // the proxy answers 502 when the Python service isn't runni
 const SAMPLES_DIR = "/swings";
 const API_LIST_TIMEOUT_MS = 4000;
 const API_TIMEOUT_MS = 30000; // coach and compare run physics on the server
+const VOICE_TIMEOUT_MS = 60000; // a first voice call waits on Claude, then ElevenLabs
 
 /** One fix the picker offers for a swing. */
 export type FixOption = {
@@ -281,6 +284,19 @@ export function loadCoachFor(entry: SwingEntry, attempt: number): Promise<CoachC
       ? getJson(`${SAMPLES_DIR}/${entry.coachFile}`, parseCoach)
       : postJson(`${API}/coach/${encodeURIComponent(entry.id)}`, {}, parseCoach),
   );
+}
+
+/**
+ * The coach's cue as speech (`GET /api/coach/{id}/voice`, Henoch's #60), or null. Never rejects:
+ * a 404 (no voice route yet, or a swing the service doesn't know), any error, a timeout or a bad
+ * answer all mean "keep the plain caption", without a message.
+ */
+export function loadVoiceFor(entry: SwingEntry): Promise<CoachVoice | null> {
+  return cached(`voice:${entry.key}`, () =>
+    getJson(`${API}/coach/${encodeURIComponent(entry.id)}/voice`, parseVoice, {
+      signal: AbortSignal.timeout(VOICE_TIMEOUT_MS),
+    }),
+  ).catch(() => null);
 }
 
 export function loadCompareFor(entry: SwingEntry, fix: FixOption, attempt: number): Promise<CompareResult> {

@@ -35,6 +35,7 @@ import {
   resolveSelection,
   loadCatalogue,
   loadCoachFor,
+  loadVoiceFor,
   loadCompareFor,
   loadSwingFor,
   type ApiState,
@@ -209,9 +210,16 @@ export function GhostDemo({ requestedSwing }: { requestedSwing: string | null })
       : { you: ballView(compare.you.ball, "you"), ghost: ballView(compare.ghost.ball, "ghost") };
   }, [onCourt, compare, samePath]);
 
+  // The coach's cue as speech (#60): asked for once the coach has answered, unless the live service
+  // is known to be offline. It can take seconds; the plain caption shows meanwhile, and stays if
+  // there's no voice (null).
+  const voiceWanted = coach.status === "ready" && api.status !== "offline";
+  const voicePromise = useMemo(() => (entry && voiceWanted ? loadVoiceFor(entry) : null), [entry, voiceWanted]);
+  const voice = useAsync(voicePromise);
+
   const caption: CaptionState =
     coach.status === "ready"
-      ? { kind: "ready", caption: coach.value }
+      ? { kind: "ready", caption: coach.value, voice: voice.status === "ready" ? voice.value : null }
       : coach.status === "error"
         ? { kind: "error", message: coach.message, onRetry: () => setCoachAttempt((n) => n + 1) }
         : { kind: "loading" };
