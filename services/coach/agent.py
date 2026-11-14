@@ -20,6 +20,8 @@ from typing import Any, Optional
 from coach.faults import Fault, Stroke, detect_faults, measure_swing, unmeasured_faults
 
 NO_FAULT_CUE = "Nothing to fix on this swing. Hit the next one the same way."
+GHOST_SHOWS_NEXT = "The ghost shows the next fix, because the top one isn't animated yet."
+GHOST_SHOWS_NONE = "The ghost can't animate this fix yet."
 
 
 def _json_safe(metrics: dict[str, Any]) -> dict[str, Any]:
@@ -40,11 +42,20 @@ def coach_swing(swing: dict, stroke: Optional[Stroke] = None, fps_real: Optional
     (low confidence; see measure_extra.py). fps_real: real capture rate if slow-mo.
 
     Result keys: stroke, stroke_source, metrics, fault (Fault or None), fix, fix_amount,
-    ghost_ready, cue, other_faults (ids, worst first), not_measured (fault ids).
+    ghost_ready, cue, other_faults (ids, worst first), not_measured (fault ids), and
+    for the ghost: ghost_fault (worst fault the ghost can animate, or None),
+    ghost_fix, ghost_fix_amount, ghost_note (None when the ghost shows the top fix).
+
+    `fault` stays the overall worst one for the caption; the ghost animates `ghost_fault`.
     """
     metrics = measure_swing(swing, stroke, fps_real)
     faults: list[Fault] = detect_faults(swing, metrics=metrics)
     top = faults[0] if faults else None
+    ghost = next((f for f in faults if f["ghost_ready"]), None)
+    if top is None or top["ghost_ready"]:
+        note = None
+    else:
+        note = GHOST_SHOWS_NEXT if ghost else GHOST_SHOWS_NONE
     return {
         "stroke": metrics["stroke"],
         "stroke_source": metrics["stroke_source"],
@@ -56,6 +67,10 @@ def coach_swing(swing: dict, stroke: Optional[Stroke] = None, fps_real: Optional
         "cue": top["cue"] if top else NO_FAULT_CUE,
         "other_faults": [f["id"] for f in faults[1:]],
         "not_measured": unmeasured_faults(metrics),
+        "ghost_fault": ghost,
+        "ghost_fix": ghost["fix"] if ghost else None,
+        "ghost_fix_amount": ghost["fix_amount"] if ghost else None,
+        "ghost_note": note,
     }
 
 

@@ -1,20 +1,25 @@
 """Fault library for the squash forehand and backhand. Owners: aryan and Dev.
 
 Code measures, Claude explains: every fault is a fixed rule on a number the code
-measured. Nothing here guesses.
+measured (physics.metrics, pipeline.features, or measure_extra). Nothing here guesses.
 
-To tune: change THRESHOLDS only. Each entry has
-- threshold: the fault fires once the measurement is past this value
-- severe_at: severity reaches 1.0 here (severity rises linearly from 0 at threshold)
-- target:    where the ghost aims; fix_amount = |measured - target|
+To tune: change THRESHOLDS only. Each rule has
+- measurement: which measured number the rule reads (see MEASUREMENTS)
+- threshold:   the fault fires once the measurement is past this value
+- severe_at:   severity reaches 1.0 here (rises linearly from 0 at threshold)
+- target:      where the ghost aims; fix_amount = |measured - target|
+- source:      "labelled clips" (from real data) or "guess" (coaching rule of thumb)
+- amount_from: optional {measurement, target} when the ghost edit needs a different
+               unit than the detection measurement (e.g. degrees detected, ms edited)
 The direction (too high or too low) follows from severe_at vs threshold.
 
-STARTING GUESSES from coaching rules of thumb, not fitted to data yet. Tune them with
-the labelled clips in data/labels/ before trusting severities.
+Rules from labelled clips use: target = the good swings' value, severe_at = the
+faulty swings' value, threshold = halfway between.
 
-Fix names: a fault's `fix` is the name the ghost uses in physics/ghost.py apply_fix.
-Some fixes aren't built there yet; `ghost_ready` says which. Missing ones, for the
-physics owner: turn_shoulders_less, bend_elbow, close_stance, firm_wrist.
+Fix names match physics/ghost.py apply_fix. A fault is ghost_ready only if its fix
+exists in physics.ghost.FIXES today, the amount is in that edit's unit, and the
+swing allows the edit. aryan is adding close_stance, bend_elbow, turn_shoulders_less;
+they become ready automatically once FIXES has them. firm_wrist isn't planned yet.
 """
 
 from __future__ import annotations
@@ -22,90 +27,101 @@ from __future__ import annotations
 import math
 from typing import Any, Literal, Optional, TypedDict
 
+import numpy as np
+
 from physics.ghost import EDITS, FIXES
-from physics.metrics import measure
+from physics.metrics import measure, real_fps
+from physics.skeleton import L_SH, R_SH, to_array
+from pipeline.features import swing_features
 
 from coach.measure_extra import STROKES, stance_open_deg, stroke_side
 
 Stroke = Literal["forehand", "backhand"]
 Confidence = Literal["high", "medium", "low"]
 
+LABELLED = "labelled clips"
+GUESS = "guess"
+
 # ---- Tune here ---------------------------------------------------------------------
-THRESHOLDS: dict[str, dict[str, dict[str, float]]] = {
+THRESHOLDS: dict[str, dict[str, dict[str, Any]]] = {
     "forehand": {
-        "early_wrist_snap": {"threshold": 40.0, "severe_at": 100.0, "target": 10.0},  # ms before contact
-        "over_rotation": {"threshold": 100.0, "severe_at": 130.0, "target": 85.0},  # deg
-        "under_rotation": {"threshold": 60.0, "severe_at": 30.0, "target": 80.0},  # deg
-        "straight_arm": {"threshold": 160.0, "severe_at": 175.0, "target": 140.0},  # elbow deg
-        "stance_too_open": {"threshold": 50.0, "severe_at": 80.0, "target": 25.0},  # deg
-        "rolling_wrist": {"threshold": 30.0, "severe_at": 60.0, "target": 0.0},  # deg, not measured yet
+        # Labelled clips: wrist angle change before contact, good 30 deg -> early snap 61 deg.
+        "early_wrist_snap": {"measurement": "wrist_angle_change_pre_deg", "threshold": 45.5,
+                             "severe_at": 61.0, "target": 30.0, "source": LABELLED,
+                             "amount_from": {"measurement": "wrist_release_ms", "target": 10.0}},
+        # Labelled clips: hip turn range, good 65 deg -> over-rotated 110 deg.
+        "over_rotation": {"measurement": "hip_turn_range_deg", "threshold": 87.5,
+                          "severe_at": 110.0, "target": 65.0, "source": LABELLED},
+        "under_rotation": {"measurement": "shoulder_turn_deg", "threshold": 60.0,
+                           "severe_at": 30.0, "target": 80.0, "source": GUESS},
+        "straight_arm": {"measurement": "elbow_at_contact_deg", "threshold": 160.0,
+                         "severe_at": 175.0, "target": 140.0, "source": GUESS},
+        # Labelled clips: feet spacing roughly halves with an open stance. Width is in
+        # shoulder widths; the normal 1.7 comes from the one real clip (sample backhand).
+        "stance_too_open": {"measurement": "stance_width_ratio", "threshold": 1.275,
+                            "severe_at": 0.85, "target": 1.7, "source": LABELLED},
+        "rolling_wrist": {"measurement": "forearm_roll_deg", "threshold": 30.0,
+                          "severe_at": 60.0, "target": 0.0, "source": GUESS},
     },
     "backhand": {
-        "early_wrist_snap": {"threshold": 40.0, "severe_at": 100.0, "target": 10.0},
-        "over_rotation": {"threshold": 115.0, "severe_at": 140.0, "target": 100.0},
-        "under_rotation": {"threshold": 70.0, "severe_at": 40.0, "target": 90.0},
-        "straight_arm": {"threshold": 168.0, "severe_at": 178.0, "target": 150.0},
-        "stance_too_open": {"threshold": 40.0, "severe_at": 70.0, "target": 15.0},
-        "rolling_wrist": {"threshold": 30.0, "severe_at": 60.0, "target": 0.0},
+        "early_wrist_snap": {"measurement": "wrist_release_ms", "threshold": 40.0,
+                             "severe_at": 100.0, "target": 10.0, "source": GUESS},
+        "over_rotation": {"measurement": "shoulder_turn_deg", "threshold": 115.0,
+                          "severe_at": 140.0, "target": 100.0, "source": GUESS},
+        "under_rotation": {"measurement": "shoulder_turn_deg", "threshold": 70.0,
+                           "severe_at": 40.0, "target": 90.0, "source": GUESS},
+        # Labelled clips: smallest elbow angle before contact, good 77 deg -> straight arm 109 deg.
+        "straight_arm": {"measurement": "elbow_min_before_deg", "threshold": 93.0,
+                         "severe_at": 109.0, "target": 77.0, "source": LABELLED},
+        "stance_too_open": {"measurement": "stance_open_deg", "threshold": 40.0,
+                            "severe_at": 70.0, "target": 15.0, "source": GUESS},
+        "rolling_wrist": {"measurement": "forearm_roll_deg", "threshold": 30.0,
+                          "severe_at": 60.0, "target": 0.0, "source": GUESS},
     },
 }
 # ------------------------------------------------------------------------------------
 
-# What each measurement is and how far we trust it.
+# Every number a rule may read: its unit, how far we trust it, and how a label says it.
 MEASUREMENTS: dict[str, dict[str, Any]] = {
-    "wrist_release_ms": {"unit": "ms", "confidence": "low"},  # MediaPipe hands are noisy (metrics.py)
-    "shoulder_turn_deg": {"unit": "deg", "confidence": "medium"},
-    "elbow_at_contact_deg": {"unit": "deg", "confidence": "medium"},
-    "stance_open_deg": {"unit": "deg", "confidence": "low"},  # contact frame is approximate
-    "forearm_roll_deg": {"unit": "deg", "confidence": "low"},  # not measured yet: always None
+    "wrist_release_ms": {"unit": "ms", "confidence": "low",  # MediaPipe hands are noisy
+                         "phrase": "wrist releases {v:.0f} ms before contact"},
+    "wrist_angle_change_pre_deg": {"unit": "deg", "confidence": "low",
+                                   "phrase": "wrist angle changes {v:.0f} deg before contact"},
+    "shoulder_turn_deg": {"unit": "deg", "confidence": "medium",
+                          "phrase": "shoulders turn {v:.0f} deg"},
+    "hip_turn_range_deg": {"unit": "deg", "confidence": "medium",
+                           "phrase": "hips turn {v:.0f} deg"},
+    "elbow_at_contact_deg": {"unit": "deg", "confidence": "medium",
+                             "phrase": "elbow at {v:.0f} deg at contact"},
+    "elbow_min_before_deg": {"unit": "deg", "confidence": "medium",
+                             "phrase": "elbow never bends past {v:.0f} deg before contact"},
+    "stance_open_deg": {"unit": "deg", "confidence": "low",  # contact frame is approximate
+                        "phrase": "stance {v:.0f} deg open to the shot"},
+    "stance_width_ratio": {"unit": "shoulder widths", "confidence": "medium",
+                           "phrase": "feet {v:.1f} shoulder widths apart"},
+    "forearm_roll_deg": {"unit": "deg", "confidence": "low",  # not measured yet: always None
+                         "phrase": "forearm rolls {v:.0f} deg through contact"},
 }
 
 # The library. `priority` breaks severity ties: stance first, then preparation,
 # rotation, wrist (the coaching order in agent.py).
 FAULTS: dict[str, dict[str, Any]] = {
-    "stance_too_open": {
-        "measurement": "stance_open_deg",
-        "label": "Stance {value:.0f} deg open to the shot",
-        "fix": "close_stance",
-        "cue": "Step across so you stand side-on to the front wall.",
-        "priority": 0,
-    },
-    "straight_arm": {
-        "measurement": "elbow_at_contact_deg",
-        "label": "Elbow {value:.0f} deg at contact, no elbow lead",
-        "fix": "bend_elbow",
-        "cue": "Lead with a bent elbow, then extend through the ball.",
-        "priority": 1,
-    },
-    "under_rotation": {
-        "measurement": "shoulder_turn_deg",
-        "label": "Shoulders turn only {value:.0f} deg",
-        "fix": "turn_shoulders_more",
-        "cue": "Turn your shoulders further before you swing.",
-        "priority": 2,
-    },
-    "over_rotation": {
-        "measurement": "shoulder_turn_deg",
-        "label": "Shoulders turn {value:.0f} deg, past the ball",
-        "fix": "turn_shoulders_less",
-        "cue": "Turn a little less and stay balanced through the ball.",
-        "priority": 3,
-    },
-    "early_wrist_snap": {
-        "measurement": "wrist_release_ms",
-        "label": "Wrist releases {value:.0f} ms before contact",
-        "fix": "hold_wrist_cock",
-        "cue": "Keep your wrist cocked until the racket meets the ball.",
-        "priority": 4,
-    },
-    "rolling_wrist": {
-        "measurement": "forearm_roll_deg",
-        "label": "Forearm rolls {value:.0f} deg through contact",
-        "fix": "firm_wrist",
-        "cue": "Keep your wrist firm and the racket face steady.",
-        "priority": 5,
-    },
+    "stance_too_open": {"title": "Stance too open", "fix": "close_stance", "priority": 0,
+                        "cue": "Step across so you stand side-on to the front wall."},
+    "straight_arm": {"title": "Straight arm, no elbow lead", "fix": "bend_elbow", "priority": 1,
+                     "cue": "Lead with a bent elbow, then extend through the ball."},
+    "under_rotation": {"title": "Under-rotation", "fix": "turn_shoulders_more", "priority": 2,
+                       "cue": "Turn your shoulders further before you swing."},
+    "over_rotation": {"title": "Over-rotation", "fix": "turn_shoulders_less", "priority": 3,
+                      "cue": "Turn a little less and stay balanced through the ball."},
+    "early_wrist_snap": {"title": "Early wrist snap", "fix": "hold_wrist_cock", "priority": 4,
+                         "cue": "Keep your wrist cocked until the racket meets the ball."},
+    "rolling_wrist": {"title": "Rolling wrist", "fix": "firm_wrist", "priority": 5,
+                      "cue": "Keep your wrist firm and the racket face steady."},
 }
+
+# Smallest shoulder turn the shoulder edits in physics/ghost.py can work from.
+MIN_SHOULDER_TURN_FOR_EDIT = 1.0
 
 
 class Fault(TypedDict):
@@ -118,17 +134,19 @@ class Fault(TypedDict):
     threshold: float
     severity: float
     confidence: Confidence
+    source: str
     fix: str
-    fix_amount: float
+    fix_amount: Optional[float]
+    fix_unit: str
     ghost_ready: bool
     cue: str
 
 
 def _finite(x: Any) -> bool:
-    return isinstance(x, (int, float)) and math.isfinite(x)
+    return isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x)
 
 
-def severity(value: float, rule: dict[str, float]) -> float:
+def severity(value: float, rule: dict[str, Any]) -> float:
     """0 at or inside the threshold, rising linearly to 1 at severe_at (capped)."""
     thr, severe = rule["threshold"], rule["severe_at"]
     span = severe - thr
@@ -137,12 +155,39 @@ def severity(value: float, rule: dict[str, float]) -> float:
     return max(0.0, min(1.0, (value - thr) / span))
 
 
-def fix_amount(fix: str, value: float, rule: dict[str, float]) -> float:
-    """How far the ghost should move this measurement, capped at what apply_fix allows."""
-    amount = abs(value - rule["target"])
+def fix_amount(fix: str, value: float, rule: dict[str, Any], metrics: dict[str, Any]) -> tuple[Optional[float], str]:
+    """(amount, unit) the ghost should move, capped at what apply_fix allows. None if unmeasured."""
+    src = rule.get("amount_from") or {"measurement": rule["measurement"], "target": rule["target"]}
+    measured = value if src["measurement"] == rule["measurement"] else metrics.get(src["measurement"])
+    unit = MEASUREMENTS[src["measurement"]]["unit"]
+    if not _finite(measured):
+        return None, unit
+    amount = abs(measured - src["target"])
     if fix in FIXES:
         amount = min(amount, EDITS[FIXES[fix][0]]["max_abs"])
-    return round(amount, 1)
+    return round(amount, 2 if unit == "shoulder widths" else 1), unit
+
+
+def ghost_ready(fix: str, amount: Optional[float], unit: str, metrics: dict[str, Any]) -> bool:
+    """True only if apply_fix(swing, fix, amount) would run on this swing."""
+    if fix not in FIXES or amount is None or amount <= 0:
+        return False
+    edit = FIXES[fix][0]
+    if EDITS[edit]["unit"] != unit:
+        return False  # e.g. a ratio can't drive a degree edit
+    if edit == "shoulder_turn":
+        turn = metrics.get("shoulder_turn_deg")
+        if not _finite(turn) or turn < MIN_SHOULDER_TURN_FOR_EDIT:
+            return False  # ghost.py refuses: the shoulders don't turn
+        if FIXES[fix][1] < 0 and amount >= turn:
+            return False  # can't take away more turn than there is
+    return True
+
+
+def _shoulder_width_m(P: np.ndarray, contact: int) -> float:
+    """Median shoulder width up to contact, metres. Divides feet spacing so it's size-independent."""
+    widths = np.linalg.norm(P[: contact + 1, R_SH] - P[: contact + 1, L_SH], axis=1)
+    return float(np.nanmedian(widths)) if np.isfinite(widths).any() else float("nan")
 
 
 def measure_swing(swing: dict, stroke: Optional[Stroke] = None, fps_real: Optional[float] = None) -> dict[str, Any]:
@@ -156,6 +201,17 @@ def measure_swing(swing: dict, stroke: Optional[Stroke] = None, fps_real: Option
     m["stroke_source"] = "given" if given else "detected"  # detected = low confidence
     m["wrist_side_offset"] = side_offset
     m["stance_open_deg"] = stance_open_deg(swing, m["hand"])
+
+    P = to_array(swing)
+    feats = swing_features(P[:, :33], m["contact_frame"], real_fps(swing, fps_real), m["hand"])
+    m["wrist_angle_change_pre_deg"] = feats["wrist_angle_change_pre"]
+    m["hip_turn_range_deg"] = feats["hip_turn_range"]
+    m["elbow_min_before_deg"] = feats["elbow_min_before"]
+    shoulder_width = _shoulder_width_m(P, m["contact_frame"])
+    m["stance_width_ratio"] = (
+        feats["stance_width_m"] / shoulder_width
+        if _finite(shoulder_width) and shoulder_width > 1e-6 else float("nan")
+    )
     m["forearm_roll_deg"] = None  # not measured yet
     return m
 
@@ -167,30 +223,32 @@ def detect_faults(swing: dict, stroke: Optional[Stroke] = None, fps_real: Option
     Pass `metrics` (from measure_swing) to skip re-measuring.
     """
     m = metrics if metrics is not None else measure_swing(swing, stroke, fps_real)
-    rules = THRESHOLDS[m["stroke"]]
     found: list[Fault] = []
-    for fault_id, spec in FAULTS.items():
-        value = m.get(spec["measurement"])
+    for fault_id, rule in THRESHOLDS[m["stroke"]].items():
+        spec = FAULTS[fault_id]
+        meas = MEASUREMENTS[rule["measurement"]]
+        value = m.get(rule["measurement"])
         if not _finite(value):
             continue  # not measured: never guess
-        rule = rules[fault_id]
         sev = severity(value, rule)
         if sev <= 0:
             continue
-        meas = MEASUREMENTS[spec["measurement"]]
+        amount, amount_unit = fix_amount(spec["fix"], value, rule, m)
         found.append(Fault(
             id=fault_id,
-            label=spec["label"].format(value=value),
+            label=f"{spec['title']}: {meas['phrase'].format(v=value)}",
             stroke=m["stroke"],
-            measurement=spec["measurement"],
-            value=round(float(value), 1),
+            measurement=rule["measurement"],
+            value=round(float(value), 2 if meas["unit"] == "shoulder widths" else 1),
             unit=meas["unit"],
             threshold=rule["threshold"],
             severity=round(sev, 2),
             confidence=meas["confidence"],
+            source=rule["source"],
             fix=spec["fix"],
-            fix_amount=fix_amount(spec["fix"], value, rule),
-            ghost_ready=spec["fix"] in FIXES,
+            fix_amount=amount,
+            fix_unit=amount_unit,
+            ghost_ready=ghost_ready(spec["fix"], amount, amount_unit, m),
             cue=spec["cue"],
         ))
     found.sort(key=lambda f: (-f["severity"], FAULTS[f["id"]]["priority"]))
@@ -198,5 +256,6 @@ def detect_faults(swing: dict, stroke: Optional[Stroke] = None, fps_real: Option
 
 
 def unmeasured_faults(metrics: dict[str, Any]) -> list[str]:
-    """Fault ids we couldn't check because their measurement is missing."""
-    return [fid for fid, spec in FAULTS.items() if not _finite(metrics.get(spec["measurement"]))]
+    """Fault ids we couldn't check on this stroke because their measurement is missing."""
+    rules = THRESHOLDS[metrics["stroke"]]
+    return [fid for fid, rule in rules.items() if not _finite(metrics.get(rule["measurement"]))]

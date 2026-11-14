@@ -33,9 +33,25 @@ class SwingMetrics(BaseModel):
     elbow_bend_deg: float = Field(description="Hitting-arm elbow angle; 180 = straight arm")
     shoulder_turn_deg: float = Field(description="Shoulder line rotation away from the front wall")
     wrist_angle_deg: float = Field(description="Forearm-to-racket angle; 180 = racket in line")
-    contact_point_cm: float = Field(
-        description="Ball contact distance in front of the front foot; negative = behind it"
+    # Optional: the pipeline doesn't measure contact point yet. When it's None it is left
+    # out of the prompt entirely, so Claude can neither pick it nor quote it.
+    contact_point_cm: Optional[float] = Field(
+        default=None,
+        description="Ball contact distance in front of the front foot; negative = behind it",
     )
+
+    def measured(self) -> dict[str, float]:
+        """Only the metrics that were actually measured (None left out)."""
+        return self.model_dump(exclude_none=True)
+
+
+# Which SwingMetrics field each choosable metric reads.
+METRIC_FIELDS: dict[str, str] = {
+    "elbow_bend": "elbow_bend_deg",
+    "shoulder_turn": "shoulder_turn_deg",
+    "wrist_angle": "wrist_angle_deg",
+    "contact_point": "contact_point_cm",
+}
 
 
 class CoachCue(BaseModel):
@@ -54,6 +70,7 @@ Pick exactly ONE fix, the one that matters most. Coaching priority, highest firs
 3. elbow_bend
 4. wrist_angle
 Only skip a higher-priority metric if its measured value already looks sound.
+Some metrics may be missing because they weren't measured. Only pick a metric that appears in the measurements.
 
 Rules:
 - Never invent or calculate a number. You may only quote numbers exactly as they appear in the metrics.
@@ -85,10 +102,16 @@ def _is_measured(token: str, measured: list[float]) -> bool:
 
 def check_only_measured_numbers(result: CoachCue, metrics: SwingMetrics) -> None:
     """Enforce 'code measures, Claude explains': reject any number we did not measure."""
-    measured = list(metrics.model_dump().values())
+    measured = list(metrics.measured().values())
     invented = [n for n in _numbers_in(result.fix + " " + result.cue) if not _is_measured(n, measured)]
     if invented:
         raise CoachError(f"Coach used numbers that were not measured: {invented}")
+
+
+def check_metric_was_measured(result: CoachCue, metrics: SwingMetrics) -> None:
+    """Claude may only pick a metric we actually measured."""
+    if METRIC_FIELDS[result.metric] not in metrics.measured():
+        raise CoachError(f"Coach picked {result.metric!r}, which wasn't measured for this swing.")
 
 
 def check_cue_is_speakable(result: CoachCue) -> None:
@@ -118,7 +141,7 @@ def get_cue(metrics: SwingMetrics, client: Optional[anthropic.Anthropic] = None)
                 {
                     "role": "user",
                     "content": "Measured metrics for this swing:\n"
-                    + json.dumps(metrics.model_dump(), indent=2),
+                    + json.dumps(metrics.measured(), indent=2),
                 }
             ],
             output_format=CoachCue,
@@ -142,6 +165,7 @@ def get_cue(metrics: SwingMetrics, client: Optional[anthropic.Anthropic] = None)
         raise CoachError(f"Claude returned no usable JSON (stop_reason={response.stop_reason}).")
 
     result = response.parsed_output
+    check_metric_was_measured(result, metrics)
     check_cue_is_speakable(result)
     check_only_measured_numbers(result, metrics)
     return result

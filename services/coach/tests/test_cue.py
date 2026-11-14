@@ -91,3 +91,39 @@ def test_refusal_raises_clear_error() -> None:
 def test_metric_must_be_one_of_the_four() -> None:
     with pytest.raises(ValueError):
         CoachCue(metric="hip_turn", fix="x", cue="y")  # type: ignore[arg-type]
+
+
+# ---- Contact point is optional (the pipeline doesn't measure it yet) ------------------
+
+NO_CONTACT = MOCK_METRICS.model_copy(update={"contact_point_cm": None})
+
+
+def test_metrics_work_without_contact_point() -> None:
+    from coach.cue import SwingMetrics
+
+    m = SwingMetrics(elbow_bend_deg=148, shoulder_turn_deg=62, wrist_angle_deg=131)
+    assert m.contact_point_cm is None
+    assert "contact_point_cm" not in m.measured()
+
+
+def test_missing_contact_point_is_left_out_of_the_prompt() -> None:
+    answer = CoachCue(metric="shoulder_turn", fix="Your shoulders turned 62 degrees.",
+                      cue="Turn your shoulders further before you swing.")
+    client = FakeClient(answer)
+    assert get_cue(NO_CONTACT, client=client) == answer  # type: ignore[arg-type]
+    sent = client.calls[0]["messages"][0]["content"]
+    assert "contact_point" not in sent and "62" in sent
+
+
+def test_rejects_picking_an_unmeasured_metric() -> None:
+    answer = CoachCue(metric="contact_point", fix="Meet the ball in front.",
+                      cue="Hit the ball in front of you.")
+    with pytest.raises(CoachError, match="wasn't measured"):
+        get_cue(NO_CONTACT, client=FakeClient(answer))  # type: ignore[arg-type]
+
+
+def test_missing_contact_point_number_cannot_be_quoted() -> None:
+    answer = CoachCue(metric="elbow_bend", fix="Contact was -18 cm and your elbow 148.",
+                      cue="Bend your elbow a little more.")
+    with pytest.raises(CoachError, match="not measured"):
+        get_cue(NO_CONTACT, client=FakeClient(answer))  # type: ignore[arg-type]
