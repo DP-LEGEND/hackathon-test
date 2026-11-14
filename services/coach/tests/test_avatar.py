@@ -128,14 +128,14 @@ def test_too_long_lines_are_rejected() -> None:
 # ---- Review fix on #38: a fallback ghost is never passed off as the spoken fix -----
 
 def test_fallback_ghost_is_named_not_claimed() -> None:
-    # Codex P2: top fault not animatable (rolling wrist) + an animatable stance ghost.
+    # Codex P2: top fault not animatable (rolled wrist) + an animatable stance ghost.
     result = _fault_result(
-        "forehand", "rolling_wrist",
+        "forehand", "rolled_wrist",
         ghost_fault={"id": "stance_too_open", "fix": "close_stance"},
         ghost_fixes=[{"fix": "close_stance", "amount": 45}],
         ghost_note="The ghost shows the next fix, because the top one isn't animated yet.")
     lines = script_from_result(result)["lines"]
-    assert lines[1] == FAULTS["rolling_wrist"]["cue"]
+    assert lines[1] == FAULTS["rolled_wrist"]["cue"]
     assert lines[2] == "Your ghost can't show that fix yet, so it shows another one: closing the stance."
     assert GHOST_LINE not in lines and GHOST_PAIR_LINE not in lines
     assert "makes that change" not in " ".join(lines)
@@ -143,7 +143,7 @@ def test_fallback_ghost_is_named_not_claimed() -> None:
 
 def test_fallback_pair_is_named_by_its_primary_fix_not_the_pair_line() -> None:
     result = _fault_result(
-        "forehand", "rolling_wrist", ghost_fault={"id": "over_rotation", "fix": "turn_shoulders_less"},
+        "forehand", "rolled_wrist", ghost_fault={"id": "over_rotation", "fix": "turn_shoulders_less"},
         ghost_fixes=[{"fix": "turn_shoulders_less", "amount": 15}, {"fix": "close_stance", "amount": 45}])
     line = script_from_result(result)["lines"][2]
     assert line.endswith("turning the shoulders a little less.") and line != GHOST_PAIR_LINE
@@ -152,9 +152,9 @@ def test_fallback_pair_is_named_by_its_primary_fix_not_the_pair_line() -> None:
 def test_unknown_fallback_fix_uses_ghost_note_or_drops_the_line() -> None:
     note = "The ghost shows the next fix, because the top one isn't animated yet."
     unknown = {"id": "stance_too_open", "fix": "some_new_fix"}
-    with_note = script_from_result(_fault_result("forehand", "rolling_wrist", ghost_fault=unknown, ghost_note=note))
+    with_note = script_from_result(_fault_result("forehand", "rolled_wrist", ghost_fault=unknown, ghost_note=note))
     assert with_note["lines"][2] == note
-    without = script_from_result(_fault_result("forehand", "rolling_wrist", ghost_fault=unknown))
+    without = script_from_result(_fault_result("forehand", "rolled_wrist", ghost_fault=unknown))
     assert len(without["lines"]) == 2
 
 

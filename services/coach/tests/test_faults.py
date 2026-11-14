@@ -14,8 +14,8 @@ import pytest
 
 from coach.agent import GHOST_SHOWS_NEXT, GHOST_SHOWS_NONE, NO_FAULT_CUE, coach_swing
 from coach.faults import (
-    FAULTS, GUESS, LABELLED, MEASUREMENTS, THRESHOLDS, detect_faults, measure_swing, severity,
-    unmeasured_faults,
+    FAULTS, GUESS, LABELLED, MEASUREMENTS, THRESHOLDS, WRIST_MOCK, WRIST_SENSOR, detect_faults,
+    measure_swing, severity, unmeasured_faults,
 )
 from physics.ghost import EDITS, FIXES, apply_fix
 from physics.metrics import measure
@@ -23,7 +23,7 @@ from physics.tests.swing_factory import make_swing
 
 SAMPLE = Path(__file__).resolve().parents[3] / "data" / "samples" / "swing_sample.json"
 STROKES = ("forehand", "backhand")
-SIX = {"early_wrist_snap", "over_rotation", "under_rotation", "straight_arm", "stance_too_open", "rolling_wrist"}
+SIX = {"early_wrist_snap", "over_rotation", "under_rotation", "straight_arm", "stance_too_open", "rolled_wrist"}
 
 
 @pytest.fixture(scope="module")
@@ -64,7 +64,7 @@ def test_library_covers_the_six_faults(stroke: str) -> None:
     assert set(THRESHOLDS[stroke]) == SIX
     for rule in THRESHOLDS[stroke].values():
         assert rule["measurement"] in MEASUREMENTS
-        assert rule["source"] in (LABELLED, GUESS)
+        assert rule["source"] in (LABELLED, GUESS, WRIST_SENSOR, WRIST_MOCK)
         assert rule["severe_at"] != rule["threshold"]
         assert severity(rule["target"], rule) == 0, "target must be inside the threshold"
         if "amount_from" in rule:
@@ -305,7 +305,7 @@ def test_coach_swing_on_sample(sample: dict) -> None:
     json.dumps(result, allow_nan=False)  # valid JSON for the API, no NaN
 
     assert result["stroke"] == "backhand" and result["stroke_source"] == "given"
-    assert result["not_measured"] == ["rolling_wrist"]
+    assert result["not_measured"] == ["rolled_wrist"]  # no wrist sensor on the sample
     top = result["fault"]
     assert top is not None, "this sample has faults at the current thresholds"
     assert result["fix"] == top["fix"] and result["cue"] == top["cue"]
