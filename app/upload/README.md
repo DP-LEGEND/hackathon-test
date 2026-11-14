@@ -16,6 +16,8 @@ Multipart `POST /api/process` with `file`, plus `hand` (`R`/`L`), `stroke` (`for
 
 Upload progress is real (XMLHttpRequest). The service doesn't report its steps, so "Finding your swing… Measuring… Building your ghost…" move on a timer after the upload, and the panel says they're a rough guide.
 
+Choosing or dropping a file the page can't use clears the clip chosen before it, so **Build my ghost** can't send the old clip; it stays disabled until a valid one is chosen. Leaving the page cancels an upload in progress. Next keeps the page alive in the background, so each visit mounts a new form: coming back always starts fresh, never on an old progress or "done" state.
+
 | Answer | The page shows |
 |---|---|
 | 201 | Opens the swing in `/ghost` |

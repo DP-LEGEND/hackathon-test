@@ -40,7 +40,18 @@ const TIPS = [
   "Slow motion? Set Slowdown below",
 ];
 
+/**
+ * Every visit to /upload gets a new form. Next keeps a page alive but hidden after you leave it
+ * (Activity, Cache Components), so leaving bumps the key: the old form unmounts, its cleanup
+ * aborts any upload, and coming back mounts a fresh form, never an old progress or "done" state.
+ */
 export function UploadForm() {
+  const [visit, setVisit] = useState(0);
+  useLayoutEffect(() => () => setVisit((n) => n + 1), []);
+  return <UploadFlow key={visit} />;
+}
+
+function UploadFlow() {
   const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
   const [clipError, setClipError] = useState<string | null>(null);
@@ -49,27 +60,23 @@ export function UploadForm() {
   const [dragging, setDragging] = useState(false);
 
   const job = useRef<ProcessJob | null>(null);
-  const visible = useRef(false);
-  const resetOnHide = useRef(false);
   const focusTarget = useRef<"progress" | "submit" | null>(null);
   const progressRef = useRef<HTMLHeadingElement>(null);
   const submitRef = useRef<HTMLButtonElement>(null);
 
   const busy = phase.kind === "working" || phase.kind === "done";
 
-  // Next keeps this page alive but hidden after it opens /ghost (Activity, Cache Components).
-  // Track whether it's on screen, so a late answer never navigates from a hidden page, and
-  // clear the finished clip so coming back starts fresh. Settings are kept for the next clip.
-  useLayoutEffect(() => {
-    visible.current = true;
-    return () => {
-      visible.current = false;
-      if (!resetOnHide.current) return;
-      resetOnHide.current = false;
-      setFile(null);
-      setPhase(IDLE);
-    };
-  }, []);
+  // Leaving the page (hidden or unmounted) abandons an upload in progress: abort the request and
+  // ignore its answer (send() checks the job is still current). The progress panel's timer
+  // stops with it, as that panel unmounts too.
+  useLayoutEffect(
+    () => () => {
+      const abandoned = job.current;
+      job.current = null;
+      abandoned?.cancel();
+    },
+    [],
+  );
 
   useEffect(() => {
     const target = focusTarget.current;
@@ -78,12 +85,13 @@ export function UploadForm() {
     if (target === "submit") submitRef.current?.focus();
   }, [phase.kind]);
 
+  // A rejected file also clears the clip chosen before it, so Build can never send a file the
+  // user just tried to replace. Build stays disabled until a valid clip is chosen.
   function pick(next: File) {
     if (busy) return;
     const problem = checkClip(next);
     setClipError(problem);
-    if (problem) return;
-    setFile(next);
+    setFile(problem ? null : next);
     setPhase(IDLE);
   }
 
@@ -154,13 +162,13 @@ export function UploadForm() {
     });
     job.current = current;
     const outcome = await current.result;
+    if (job.current !== current) return; // the page was left: this upload was abandoned
     job.current = null;
 
     if (outcome.ok) {
       const href = `/ghost?swing=${encodeURIComponent(outcome.swingId)}`;
-      resetOnHide.current = true;
       setPhase({ kind: "done", href });
-      if (visible.current) router.push(href);
+      router.push(href);
       return;
     }
     focusTarget.current = "submit";
