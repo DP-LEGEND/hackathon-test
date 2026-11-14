@@ -3,9 +3,6 @@ TODO (9 AM freeze): written against main at 34b9298 (wrist sensor #44 merged).
 Beat 3 uses the /upload page (#48, merged in cca6a0d; flow checked in app/upload/ on main).
 If #53 (ghost honesty: measured vs guessed joints) merges, re-check beat 2 and the
 "What each screen should show" table.
-Beat 2 already assumes #54 (honest backhand sample): the backhand coach call is "No fault found"
-(stance 27°, judged from the feet). #54 is NOT on main yet. If it hasn't merged by the demo,
-use "Beat 2 without #54" below.
 -->
 
 # Ghost live demo runbook
@@ -144,8 +141,6 @@ The page has four steps: **Pick a swing → Coach's call → The ghost → On co
 
 ### Beat 2: backhand, nothing to fix (1:10–1:30)
 
-**This beat needs #54 on main.** If the backhand's coach's call still says *"Stance too open: stance 80° open to the shot"*, #54 hasn't landed. Use *Beat 2 without #54* below instead.
-
 | Click | Screen shows | PRESENTER says |
 |---|---|---|
 | **Try another swing**, then **"Backhand · two-camera stereo · 120 fps"** | **The coach's call:** *"No fault found"*, cue *"Nothing to fix on this swing. Hit the next one the same way."* | A backhand, filmed on two cameras at once. Nothing to fix in what the camera could see, and it couldn't see the wrist. That's exactly why we strapped a sensor to the arm. |
@@ -153,22 +148,13 @@ The page has four steps: **Pick a swing → Coach's call → The ghost → On co
 
 Don't click **Show the ghost** here. With nothing flagged, the page would show an uncoached example edit.
 
-#### Beat 2 without #54 (main today, 1:10–1:30)
-
-Use this if the backhand's coach's call says *"Stance too open: stance 80° open to the shot"*.
-
-| Click | Screen shows | PRESENTER says |
-|---|---|---|
-| **Try another swing**, then **"Backhand · two-camera stereo · 120 fps"** | **The coach's call:** *"Stance too open: stance 80° open to the shot"*, cue *"Step across so you stand side-on to the front wall."* | A backhand, filmed on two cameras at once. Stance 80 degrees open. |
-| **Show the ghost**, then **Show the court** | Fix *Close stance*, *Coach's pick*. Then **one** path, with the note *"This fix changes your body position, not the ball: both PREDICTED paths are the same."* Front wall height 0.78 m, no change | The ghost closes the stance. The ball doesn't change, and we say so. We don't invent a difference. |
-
 ### Beat 3: the coach's call on a fresh 60 fps clip (1:30–2:45)
 
 The clip was sent at 0:00 from browser tab 2 (`/upload`: **Choose a video**, settings on **Auto**, **Build my ghost**).
 
 | Click | Screen shows | PRESENTER says |
 |---|---|---|
-| Switch to browser tab 2 | It has opened `/ghost?swing=<id>` at **the coach's call** for the fresh swing: *"Reading the coach's call…"*, then the call, or *"No fault found"* (see below). If it still shows the progress panel, see *Upload still processing* in the fallback table | One phone, 60 fps. Speed, hitting hand and forehand/backhand are detected automatically. Depth is estimated from one camera. Then read the caption as shown: its numbers depend on the swing. |
+| Switch to browser tab 2 | It has opened `/ghost?swing=<id>` at **the coach's call** for the fresh swing: *"Reading the coach's call…"*, then the call, or *"No fault found"* (see below). If it still shows the progress panel, see *Upload still processing* in the fallback table | One phone. Speed, hitting hand and forehand/backhand are detected automatically. Depth is estimated from one camera. Then read the caption as shown: its numbers depend on the swing. |
 | Only if the coach named a fault: **Show the ghost**, then **Show the court** | *"Making the … ghost…"*, then the ghost (badge *Coach's pick*) and both PREDICTED paths | Same as before, computed just now. |
 
 If browser tab 2 says *"Your ghost is ready."* but hasn't moved on, click **Open it in Ghost**.
