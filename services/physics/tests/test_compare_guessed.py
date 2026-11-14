@@ -61,3 +61,16 @@ def test_shoulder_fixes_are_refused_when_shoulders_are_guessed():
         f["filled"][12] = True
     with pytest.raises(GuessedFixError, match="couldn't see the right shoulder"):
         compare(s, "turn_shoulders_more", 15, fps_real=120, hand="R", side="backhand")
+
+
+def test_racket_and_ball_speed_flagged_when_wrist_guessed_at_contact():
+    r = compare(_wrist_guessed(), "turn_shoulders_more", 15, fps_real=120, hand="R", side="backhand")
+    for k in ("racket_speed", "ball_speed"):
+        assert "joint 16" in r["notMeasured"][k]
+    assert r["you"]["ball"]["speedKmh"] > 0  # still predicted and shown, just flagged
+
+
+def test_unflagged_swing_has_no_speed_flags():
+    r = compare(_unflagged("swing_fh_over_rotation.json"), "turn_shoulders_less", 20, fps_real=120, hand="R",
+                side="forehand")
+    assert "racket_speed" not in r["notMeasured"]

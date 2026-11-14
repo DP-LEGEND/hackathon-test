@@ -23,11 +23,14 @@ def _wrist_guessed() -> dict:
     return s
 
 
-def test_guessed_fix_is_a_422_with_the_reason(monkeypatch):
+def test_guessed_fix_returns_the_unchanged_comparison(monkeypatch):
     monkeypatch.setattr(server, "load_swing", lambda identifier: _wrist_guessed())
     client = TestClient(server.app)
     r = client.post("/compare/x", json={"fix": "straighten_elbow", "amount": 10})
-    assert r.status_code == 422
-    assert "couldn't see the right elbow around contact" in r.json()["detail"]
+    assert r.status_code == 200
+    body = r.json()
+    assert body["noCorrection"] is True and body["fix"]["id"] == "straighten_elbow" and body["fix"]["amount"] == 0.0
+    assert "couldn't see the right elbow around contact" in body["ghostNote"]
+    assert client.post("/compare/x", json={"fix": "no_such_fix", "amount": 1}).status_code == 422
     ok = client.post("/compare/x", json={"fix": "turn_shoulders_more", "amount": 15})
     assert ok.status_code == 200 and list(ok.json()["delta"]["metrics"]) == ["shoulder_turn_deg"]
