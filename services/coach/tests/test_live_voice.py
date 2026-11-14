@@ -351,3 +351,67 @@ def test_the_live_voice_uses_the_caption_after_a_sign_or_unit_change(env, result
     env.keys("ANTHROPIC_API_KEY")
     env.claude.cue = cue
     assert voice_for_swing("sample", result) == {"cue": result["cue"], "audioUrl": None, "source": "caption"}
+
+
+# ---- Review fix on #60: Claude may reword the coach's fix but never reverse it ---------
+
+OVER_FACTS = {"measured": "Over-rotation: shoulders turn 120 degrees", "coach_cue": "Turn your shoulders less"}
+
+
+def test_a_reversed_direction_is_rejected() -> None:
+    with pytest.raises(CoachError, match="reverses the coach's fix"):
+        check_worded_cue("Turn your shoulders more next swing", OVER_FACTS)
+
+
+def test_the_same_direction_reworded_passes() -> None:
+    assert check_worded_cue("Turn your shoulders a little less", OVER_FACTS) == "Turn your shoulders a little less"
+
+
+def test_open_stance_fix_cannot_become_open_it_further(result: dict) -> None:
+    facts = coach_facts(result)  # the real stance cue says both "open" (the fault) and "Close" (the fix)
+    assert "open" in facts["coach_cue"] and "Close" in facts["coach_cue"]
+    with pytest.raises(CoachError, match="reverses"):
+        check_worded_cue("Open your stance further so your hips can turn.", facts)
+    # Restating the fault while giving the fix is fine (the real cue Claude gave live).
+    live = "Close your stance on this backhand, it's 80 degrees open, so your hips hold the turn longer."
+    assert check_worded_cue(live, facts) == live
+
+
+def test_a_reversed_cue_falls_back_to_the_caption_and_is_not_cached(env, result: dict) -> None:
+    env.keys("ANTHROPIC_API_KEY")
+    env.claude.cue = "Open your stance further so your hips can turn."
+    assert voice_for_swing("sample", result) == {"cue": result["cue"], "audioUrl": None, "source": "caption"}
+    assert not list(env.cache.glob("cue-*.json"))  # a rejected cue is never written to the cache
+
+
+# ---- Review fix on #60: a bad cue cache file is a miss, never a 500 ---------------------
+
+def _cue_file(env, result: dict) -> Path:
+    return env.cache / f"cue-{live_voice._digest('sample', coach_facts(result))}.json"
+
+
+@pytest.mark.parametrize("garbage", [b"\xff\xfe\x00not json at all", b"[1, 2, 3]", b'{"swing_id": "sample"}',
+                                     b'{"cue": ""}', b'{"cue": 42}'])
+def test_a_garbage_cue_cache_file_returns_the_caption_without_raising(env, result: dict, garbage: bytes) -> None:
+    path = _cue_file(env, result)
+    path.parent.mkdir(parents=True)
+    path.write_bytes(garbage)
+    assert voice_for_swing("sample", result) == {"cue": result["cue"], "audioUrl": None, "source": "caption"}
+    assert not path.exists()  # the bad file is deleted, not served again
+
+
+def test_a_garbage_cue_cache_file_is_rewritten_when_claude_is_available(env, result: dict) -> None:
+    path = _cue_file(env, result)
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"\x00\x01truncated")
+    env.keys("ANTHROPIC_API_KEY")
+    out = voice_for_swing("sample", result)
+    assert out["source"] == "claude" and len(env.claude.calls) == 1
+    assert json.loads(path.read_bytes())["cue"] == out["cue"]
+
+
+def test_a_garbage_entry_already_in_memory_is_dropped(env, result: dict) -> None:
+    name = _cue_file(env, result).name
+    live_voice._memory[name] = b"not json"
+    assert voice_for_swing("sample", result)["source"] == "caption"
+    assert name not in live_voice._memory

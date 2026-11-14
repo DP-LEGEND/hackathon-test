@@ -133,12 +133,64 @@ def quoted_numbers(text: str) -> list[tuple[str, str, Optional[str]]]:
     return out
 
 
+# Opposite fix directions, each as the word forms a cue may use. Claude may reword the
+# coach's fix but never reverse it ("turn less" must not become "turn more").
+OPPOSITES: list[tuple[frozenset[str], frozenset[str]]] = [
+    (frozenset({"more", "further", "farther"}), frozenset({"less", "fewer"})),
+    (frozenset({"open", "opens", "opened", "opening", "opener"}),
+     frozenset({"close", "closes", "closed", "closing", "closer"})),
+    (frozenset({"bend", "bends", "bent", "bending"}),
+     frozenset({"straighten", "straightens", "straightened", "straightening", "straight"})),
+    (frozenset({"earlier", "sooner"}), frozenset({"later"})),
+    (frozenset({"wider", "widen", "widens", "widening"}), frozenset({"narrower", "narrow", "narrows", "narrowing"})),
+    (frozenset({"higher", "raise", "raises", "raised", "raising"}), frozenset({"lower", "lowers", "lowered", "lowering"})),
+    (frozenset({"faster", "quicker"}), frozenset({"slower"})),
+    (frozenset({"forward", "forwards"}), frozenset({"back", "backward", "backwards"})),
+]
+
+
+def _words(text: str) -> set[str]:
+    return set(re.findall(r"[a-z]+", text.lower()))
+
+
+def check_direction(cue: str, facts: dict[str, str]) -> None:
+    """Raise CoachError if the cue reverses the coach's fix direction.
+
+    For each opposite pair the coach cue uses, the fix side is the one it says ("less"
+    in "Turn a little less"). When it says both, as the stance cue does ("Your open stance
+    ... Close it"), the measured label names the fault ("Stance too open"), so the other
+    side is the fix; if the label can't tell, any word of that pair is rejected.
+    A cue may use the opposite side only to restate the fault: the word is in the measured
+    label and the cue also says the fix ("80 degrees open, so close it"). So "Open your
+    stance further" for an open stance is rejected.
+    """
+    coach, fault, said = _words(facts.get("coach_cue", "")), _words(facts.get("measured", "")), _words(cue)
+    for a, b in OPPOSITES:
+        in_a, in_b = bool(coach & a), bool(coach & b)
+        if not (in_a or in_b):
+            continue
+        if in_a and in_b:
+            if bool(fault & a) == bool(fault & b):
+                if said & (a | b):
+                    raise CoachError(f"Can't tell the coach's fix direction, so the cue may not say "
+                                     f"{sorted(said & (a | b))}")
+                continue
+            fix, opposite = (b, a) if fault & a else (a, b)
+        else:
+            fix, opposite = (a, b) if in_a else (b, a)
+        used = said & opposite
+        if used and not (fault & opposite and said & fix):
+            raise CoachError(f"Cue reverses the coach's fix: coach says {sorted(coach & fix)}, "
+                             f"cue says {sorted(used)}")
+
+
 def check_worded_cue(cue: str, facts: dict[str, str]) -> str:
     """The cleaned cue if it's one short sentence quoting only numbers in the facts.
 
     Every number must match one in the coach facts EXACTLY: same sign, same digits as
     written and same unit (80 degrees is fine; -80 degrees, 80.0 degrees, 80 percent or
-    a bare 80 aren't). Raises CoachError otherwise (the caller then uses the plain caption).
+    a bare 80 aren't). It must also keep the coach's fix direction (check_direction).
+    Raises CoachError otherwise (the caller then uses the plain caption).
     """
     cue = " ".join(cue.split())
     if not cue:
@@ -155,6 +207,7 @@ def check_worded_cue(cue: str, facts: dict[str, str]) -> str:
     spelled = _SPELLED.search(cue)
     if spelled:
         raise CoachError(f"Cue spelled out a measured number: {spelled.group(0)!r}")
+    check_direction(cue, facts)
     return cue
 
 
@@ -253,6 +306,26 @@ def _reset_memory() -> None:
 
 # ---- The live entry point ---------------------------------------------------------------
 
+def _cached_cue(data: bytes) -> Optional[str]:
+    """The cue in a cue cache entry, or None if the entry is unreadable or the wrong shape."""
+    try:
+        entry = json.loads(data)
+    except ValueError:  # also covers bad UTF-8 (UnicodeDecodeError)
+        return None
+    cue = entry.get("cue") if isinstance(entry, dict) else None
+    return cue if isinstance(cue, str) and cue.strip() else None
+
+
+def _discard(name: str, swing_id: str) -> None:
+    """Forget a bad cache entry in memory and on disk, so it's regenerated or skipped."""
+    _memory.pop(name, None)
+    try:
+        (_cache_dir() / name).unlink(missing_ok=True)
+    except OSError:
+        pass
+    log.warning("Ignored a corrupt voice cache entry for %s.", swing_id)
+
+
 def _cue_for(swing_id: str, facts: Optional[dict[str, str]], caption: str,
              client: Optional[anthropic.Anthropic]) -> tuple[str, Source]:
     if facts is None:
@@ -261,8 +334,10 @@ def _cue_for(swing_id: str, facts: Optional[dict[str, str]], caption: str,
     with _lock(name):
         cached = _read(name)
         if cached is not None:
-            entry = json.loads(cached)
-            return entry["cue"], "claude"
+            cue = _cached_cue(cached)
+            if cue is not None:
+                return cue, "claude"
+            _discard(name, swing_id)  # corrupt or old-format entry: treat as a miss
         if name in _failed or not has_key("ANTHROPIC_API_KEY"):
             return caption, "caption"  # no entry written: adding a key later still works
         try:
