@@ -18,11 +18,13 @@ and launch rule apply to both swings, so only the fix changes the ball.
 Where the ball model's inputs come from (physics/ball.py):
 - Contact: the swing's contactFrame. It is the hit sound when the pipeline's contactMethod is
   "audio-transient", else the pipeline's wrist-speed estimate; `contactMethod` says which.
+- Stroke (forehand or backhand) picks the anchor and the default elevation: given, else the
+  pipeline's label, else measured from the skeleton (ESTIMATE), else forehand labelled ASSUMED.
 - Launch point: each swing's racket head at contact, height above the lowest foot MEASURED.
-  Yours sits over the ASSUMED anchor: ball.py's forehand drive spot for a right-hander,
-  mirrored across the court for a backhand or a left hand. The ghost's is wherever its racket
-  head ends up with your placement. The racket head itself is an ESTIMATE until racket
-  tracking exists (skeleton.racket_head: wrist + 0.45 m along the forearm).
+  Yours sits over the ASSUMED anchor, the drive spot for the stroke (DRIVE_SPOT_RIGHT_HANDED,
+  mirrored for a left-hander). The ghost's is wherever its racket head ends up with your
+  placement. The racket head itself is an ESTIMATE until racket tracking exists
+  (skeleton.racket_head: wrist + 0.45 m along the forearm).
 - Racket speed is an ESTIMATE until racket tracking exists. The forearm and racket are
   treated as one straight lever turning about the elbow, so the racket's sweet spot
   moves (forearm + racket) / forearm times faster than the wrist:
@@ -32,9 +34,9 @@ Where the ball model's inputs come from (physics/ball.py):
   wrist's velocity at contact, in court axes, clamped to +-AZIMUTH_LIMIT_DEG. Only within
   AZIMUTH_TRUST_DEG of straight, as on a drive; further off (a backhand's wrist moves
   sideways) the aim is ASSUMED straight.
-- Elevation (launch angle) is ASSUMED: DEFAULT_ELEVATION_DEG unless you pass one for the
-  swing. A swing's path at contact is too noisy to give the launch angle, and the face angle
-  needs racket tracking.
+- Elevation (launch angle) is ASSUMED: DEFAULT_ELEVATION_DEG for the stroke (12 forehand,
+  3 backhand) unless you pass one for the swing. A swing's path at contact is too noisy to
+  give the launch angle, and the face angle needs racket tracking.
 
 Try it (from inside services/):
 
@@ -70,10 +72,21 @@ SPEED_WINDOW_MS = 25.0         # median wrist speed over this window around cont
 RACKET_SPEED_RANGE_MS = (1.0, 80.0)  # what ball.py accepts; anything outside is clamped and flagged
 
 # ---- Shot direction ----
-# ASSUMED launch angle. Calibrated on IMG_2115 (public/swings/swing_fh_over_rotation.json):
-# its PREDICTED ball hits the front wall near the 1.8 m seen in the video. One angle can't
-# fit every swing (the low IMG_2116 backhand needs about 0-3 deg), so pass elevation_deg per swing.
-DEFAULT_ELEVATION_DEG = 12.0
+# ASSUMED launch angle by stroke; pass elevation_deg to set it for one swing. Calibrated on
+# video: the IMG_2115 forehand (public/swings/swing_fh_over_rotation.json) hits the front wall
+# near 1.8 m with 12 deg; the low IMG_2116 backhand (swing_2116_bh_stereo.json) hits it at
+# 0.5-0.8 m, which 3 deg gives.
+DEFAULT_ELEVATION_DEG = {"forehand": 12.0, "backhand": 3.0}
+# ASSUMED drive spots (the anchor) for a right-hander, court (x, z) metres; mirrored across the
+# court for a left-hander. Forehand: ball.py's DEFAULT_CONTACT, 1 m off the right wall.
+# Backhand: 2 m off the left wall, where the IMG_2116 video shows the ball reaching the front
+# wall (1.5-2.5 m from the left wall).
+DRIVE_SPOT_RIGHT_HANDED = {
+    "forehand": (DEFAULT_CONTACT[0], DEFAULT_CONTACT[2]),
+    "backhand": (2.0, DEFAULT_CONTACT[2]),
+}
+# To measure the stroke, the racket head must be at least this far to one side of the hips at contact.
+SIDE_DEAD_ZONE_M = 0.10
 # Aim (azimuth): the wrist's direction at contact is trusted only within AZIMUTH_TRUST_DEG of
 # straight, as on a drive. Further off it is moving sideways (a backhand: 53 deg on IMG_2116),
 # so the aim is ASSUMED straight instead. A trusted aim is clamped to +-AZIMUTH_LIMIT_DEG.
@@ -153,14 +166,18 @@ def ball_contact(swing: dict, P: np.ndarray, hand: str) -> tuple[int, str]:
     return int(np.nanargmax(v)), "wrist-speed-peak-estimate"
 
 
-def anchor_side(swing: dict, P: np.ndarray, hand: str, contact: int, side: str | None = None) -> tuple[str, str]:
-    """("forehand" | "backhand", where that came from), to choose the anchor.
+STROKE_LABELS = {"given": "RECORDED", "recorded": "RECORDED", "measured": "ESTIMATE", "assumed": "ASSUMED"}
 
-    `side` when given; else the side the pipeline recorded (swing["stroke"] or swing["side"]);
-    else measured: the hitting-hand side of the body at contact is a forehand. That is which
-    side of the hips the racket head is on, across the court. (pipeline/process.py
-    classify_side measures along the shoulder line instead, which turns side-on at contact:
-    it calls the labelled 2116 backhand a forehand.)
+
+def swing_stroke(swing: dict, P: np.ndarray, hand: str, contact: int, side: str | None = None) -> tuple[str, str]:
+    """("forehand" | "backhand", where it came from). It picks the anchor and the default elevation.
+
+    "given": `side`, e.g. the stroke the coach was told. "recorded": the pipeline's label
+    (swing["stroke"] or swing["side"]). "measured": the hitting-hand side of the body at contact
+    is a forehand, i.e. which side of the hips the racket head is on, across the court. (The
+    coach's and the pipeline's detectors measure along the shoulder line, which turns side-on at
+    contact: both call the labelled IMG_2116 backhand a forehand.) "assumed": none of those
+    works, so it is a forehand, labelled ASSUMED. Never a silent default.
     """
     if side is not None:
         if side not in SIDES:
@@ -169,10 +186,13 @@ def anchor_side(swing: dict, P: np.ndarray, hand: str, contact: int, side: str |
     for key in ("stroke", "side"):
         if swing.get(key) in SIDES:
             return swing[key], "recorded"
-    Pc = court_axes(P)
+    try:
+        Pc = court_axes(P)
+    except ValueError:  # can't tell up from down, so can't tell left from right either
+        return "forehand", "assumed"
     across = racket_head(Pc, hand)[contact, 0] - mid(Pc, L_HIP, R_HIP)[contact, 0]  # + = player's right
-    if not np.isfinite(across):
-        return "forehand", "default"
+    if not np.isfinite(across) or abs(across) < SIDE_DEAD_ZONE_M:
+        return "forehand", "assumed"
     on_right = across > 0
     return ("forehand" if on_right == (hand == "R") else "backhand"), "measured"
 
@@ -180,13 +200,11 @@ def anchor_side(swing: dict, P: np.ndarray, hand: str, contact: int, side: str |
 def drive_spot(hand: str, side: str) -> tuple[float, float]:
     """ASSUMED anchor (x, z): where the racket meets the ball on the court floor.
 
-    ball.py's forehand drive spot for a right-hander (1 m off the right wall, behind the short
-    line), mirrored across the court for a backhand or a left hand. A left-hander's backhand
-    is mirrored twice, so it is back on the right.
+    DRIVE_SPOT_RIGHT_HANDED for the stroke, mirrored across the court for a left-hander:
+    right-handed forehand (5.4, 7.0), backhand (2.0, 7.0); left-handed (1.0, 7.0) and (4.4, 7.0).
     """
-    x, _, z = DEFAULT_CONTACT
-    mirrored = (hand == "L") != (side == "backhand")
-    return (round(COURT_WIDTH_M - x, 3) if mirrored else x, z)
+    x, z = DRIVE_SPOT_RIGHT_HANDED[side]
+    return (x if hand == "R" else round(COURT_WIDTH_M - x, 3), z)
 
 
 def estimate_azimuth(Pc: np.ndarray, hand: str, contact: int) -> dict:
@@ -298,17 +316,17 @@ def _delta(you: dict, ghost: dict) -> dict:
 
 
 def compare(swing: dict, fix_name: str, amount: float, fps_real: float | None = None,
-            hand: str | None = None, elevation_deg: float = DEFAULT_ELEVATION_DEG, *,
+            hand: str | None = None, elevation_deg: float | None = None, *,
             side: str | None = None) -> dict:
     """The swing as played next to its ghost (one fix applied), in court coordinates. Never mutates `swing`.
 
     fix_name: one of physics.ghost.FIXES, e.g. compare(swing, "straighten_elbow", 12).
     fps_real: real capture rate (120 for a 4x slow-mo clip stored at 30 fps). Default: swing["fps"].
     hand: "R" or "L". Default: the hand the pipeline recorded, else whichever wrist moves fastest.
-    elevation_deg: the ASSUMED launch angle for this swing's two PREDICTED ball paths. One angle
-        can't fit every swing: IMG_2115's forehand needs about 12, the low IMG_2116 backhand 0-3.
-    side: "forehand" or "backhand", for the anchor, e.g. the coach's stroke. Default: the side
-        the pipeline recorded, else measured from which side of the body the contact is on.
+    elevation_deg: the ASSUMED launch angle for this swing's two PREDICTED ball paths.
+        Default: DEFAULT_ELEVATION_DEG for the stroke (12 forehand, 3 backhand).
+    side: "forehand" or "backhand", e.g. the stroke the coach was told. Default: the pipeline's
+        label, else measured from the skeleton, else forehand labelled ASSUMED (swing_stroke).
     swing: a pipeline swing (hip-centred, facing +z), not a compare() output.
     """
     if fix_name not in FIXES:
@@ -324,14 +342,16 @@ def compare(swing: dict, fix_name: str, amount: float, fps_real: float | None = 
     P = to_array(swing)
     hand = hand or swing_hand(swing, P)
     contact, contact_method = ball_contact(swing, P, hand)
-    side, side_source = anchor_side(swing, P, hand, contact, side)
-    anchor = drive_spot(hand, side)
+    stroke, stroke_source = swing_stroke(swing, P, hand, contact, side)
+    anchor = drive_spot(hand, stroke)
+    given_elevation = elevation_deg is not None
+    elevation = float(elevation_deg) if given_elevation else DEFAULT_ELEVATION_DEG[stroke]
     shift = court_shift(P, hand, contact, anchor)  # from YOUR racket head; the ghost reuses it
     played = {**swing, "contactFrame": contact}
     ghost_swing = apply_fix(played, fix_name, amount, fps_real, hand)
 
-    you, you_launch = _on_court(played, fps_real, hand, contact, shift, elevation_deg)
-    ghost, ghost_launch = _on_court(ghost_swing, fps_real, hand, contact, shift, elevation_deg)
+    you, you_launch = _on_court(played, fps_real, hand, contact, shift, elevation)
+    ghost, ghost_launch = _on_court(ghost_swing, fps_real, hand, contact, shift, elevation)
     edit, _ = FIXES[fix_name]
     return {
         "fix": {"id": fix_name, "amount": float(amount), "unit": EDITS[edit]["unit"]},
@@ -344,21 +364,24 @@ def compare(swing: dict, fix_name: str, amount: float, fps_real: float | None = 
         "ghost": ghost,
         "delta": _delta(you, ghost),
         "assumptions": {
+            "stroke": {"value": stroke, "source": stroke_source, "label": STROKE_LABELS[stroke_source]},
             "anchor": {
-                "x": anchor[0], "z": anchor[1], "side": side, "sideSource": side_source,
-                "assumed": True, "label": "ASSUMED",
-                "method": "drive spot for the stroke: ball.py's forehand spot for a right-hander, mirrored "
-                          "across the court for a backhand or a left hand. Your racket head at contact "
-                          "sits here; the ghost is moved by exactly the same amount, so the bodies overlap.",
+                "x": anchor[0], "z": anchor[1], "assumed": True, "label": "ASSUMED",
+                "method": f"{stroke} drive spot for a {'right' if hand == 'R' else 'left'}-hander. Your racket "
+                          "head at contact sits here; the ghost is moved by exactly the same amount, so the "
+                          "bodies overlap.",
             },
             "launch": {
                 "racketHead": f"ESTIMATE: hitting wrist + {RACKET_HEAD_M:g} m along elbow -> wrist, "
                               "at its measured height (no racket tracking yet)",
-                "elevation": {"value": float(elevation_deg), "unit": "deg", "assumed": True, "label": "ASSUMED"},
+                "elevation": {
+                    "value": elevation, "unit": "deg", "assumed": True, "label": "ASSUMED",
+                    "method": "given for this swing" if given_elevation else f"default for a {stroke}",
+                },
                 "you": you_launch,
                 "ghost": ghost_launch,
             },
-            "launchElevationDeg": float(elevation_deg),
+            "launchElevationDeg": elevation,
             "contactSpot": you_launch["point"],  # kept for app/ghost/compare.ts: your launch point
             "note": "Ball paths are PREDICTED. The launch angle and the spot on court are assumed; racket "
                     "speed, racket head and aim are estimated from the wrist and forearm until racket "
@@ -376,10 +399,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--fps-real", type=float, default=None,
                         help="real capture rate, e.g. 120 for 4x slow-mo stored at 30 fps (default: the swing's fps)")
     parser.add_argument("--hand", choices=["R", "L"], default=None, help="hitting hand (default: detected)")
-    parser.add_argument("--elevation", type=float, default=DEFAULT_ELEVATION_DEG,
-                        help=f"assumed launch angle for this swing, degrees up (default {DEFAULT_ELEVATION_DEG:g})")
+    fh, bh = DEFAULT_ELEVATION_DEG["forehand"], DEFAULT_ELEVATION_DEG["backhand"]
+    parser.add_argument("--elevation", type=float, default=None,
+                        help=f"assumed launch angle for this swing, degrees up "
+                             f"(default: {fh:g} forehand, {bh:g} backhand)")
     parser.add_argument("--side", choices=SIDES, default=None,
-                        help="stroke, for the spot on court (default: recorded by the pipeline, else measured)")
+                        help="stroke (default: the pipeline's label, else measured, else forehand labelled ASSUMED)")
     parser.add_argument("--no-swings", action="store_true",
                         help="leave out the two swings' frames so the numbers are easy to read")
     args = parser.parse_args(argv)

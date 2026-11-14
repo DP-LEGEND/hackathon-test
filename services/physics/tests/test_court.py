@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 from physics.ball import COURT_WIDTH_M, DEFAULT_CONTACT
-from physics.compare import AZIMUTH_LIMIT_DEG, compare, drive_spot, estimate_azimuth, main
+from physics.compare import AZIMUTH_LIMIT_DEG, compare, drive_spot, estimate_azimuth, main, swing_stroke
 from physics.ghost import apply_fix
 from physics.skeleton import (
     ARM, FEET, L_HIP, L_SH, N_POINTS, NOSE, R_SH, bone_lengths, court_axes, court_shift, mid, racket_head,
@@ -58,6 +58,11 @@ def _handedness(P: np.ndarray) -> np.ndarray:
 
 def _head(result: dict, side: str) -> list[float]:
     return racket_head(to_array(result[side]["swing"]), result["hand"])[result["contactFrame"]].tolist()
+
+
+def _front_wall_x(ball: dict) -> float:
+    """Where the PREDICTED ball first hits the front wall, metres from the left wall."""
+    return next(e["point"][0] for e in ball["events"] if e["type"] == "front_wall")
 
 
 # ---- to_court ----
@@ -145,18 +150,18 @@ def test_real_forehand_hits_the_front_wall_where_the_video_shows(forehand):
     assert az["label"] == "ESTIMATE" and not az["clamped"] and abs(az["value"]) <= AZIMUTH_LIMIT_DEG
     assert az["value"] == pytest.approx(-13.5, abs=0.5)  # wrist (1.9, 0.9, 7.8) m/s: towards the left wall
     assert 1.4 <= ball["frontWallHeightM"] <= 2.2  # video: about 1.8 m
-    wall_x = next(e["point"][0] for e in ball["events"] if e["type"] == "front_wall")
-    assert 2.0 <= COURT_WIDTH_M - wall_x <= 3.2  # video: about 2.6 m from the right wall
+    assert 3.4 <= _front_wall_x(ball) <= 4.2  # metres from the left wall (video: ~2.6 m from the right)
+    assert 125 <= ball["speedKmh"] <= 150  # video: 125-150 km/h
+    assert r["assumptions"]["stroke"] == {"value": "forehand", "source": "recorded", "label": "RECORDED"}
     assert r["assumptions"]["launch"]["elevation"] == {"value": 12.0, "unit": "deg", "assumed": True,
-                                                       "label": "ASSUMED"}
+                                                       "label": "ASSUMED", "method": "default for a forehand"}
 
 
 def test_you_and_the_ghost_share_the_court_translation(forehand, fh_elbow):
     c = fh_elbow["contactFrame"]
     a = fh_elbow["assumptions"]["anchor"]
     anchor = (a["x"], a["z"])
-    assert anchor == (DEFAULT_CONTACT[0], DEFAULT_CONTACT[2])
-    assert (a["side"], a["sideSource"], a["label"]) == ("forehand", "recorded", "ASSUMED")
+    assert anchor == (DEFAULT_CONTACT[0], DEFAULT_CONTACT[2]) and a["label"] == "ASSUMED"
 
     # Court minus the turned pipeline swing is one rigid slide, and it is the same slide for
     # both: the one that puts YOUR racket head on the anchor.
@@ -185,11 +190,17 @@ def test_you_and_the_ghost_share_the_court_translation(forehand, fh_elbow):
     assert fh_elbow["ghost"]["ball"]["frontWallHeightM"] < fh_elbow["you"]["ball"]["frontWallHeightM"]
 
 
-def test_backhand_sample_launches_from_the_left_with_an_assumed_straight_aim(backhand):
-    r = compare(backhand, "straighten_elbow", 12)  # no side recorded: measured from the contact
+def test_backhand_sample_matches_the_video(backhand):
+    r = compare(backhand, "straighten_elbow", 12)  # no stroke recorded: measured from the contact
     a = r["assumptions"]
-    assert (a["anchor"]["side"], a["anchor"]["sideSource"]) == ("backhand", "measured")
-    assert a["anchor"]["x"] == pytest.approx(COURT_WIDTH_M - DEFAULT_CONTACT[0])  # 1.0 m off the left wall
+    assert a["stroke"] == {"value": "backhand", "source": "measured", "label": "ESTIMATE"}
+    assert (a["anchor"]["x"], a["anchor"]["z"]) == (2.0, 7.0)  # right-handed backhand spot
+    assert a["launch"]["elevation"] == {"value": 3.0, "unit": "deg", "assumed": True, "label": "ASSUMED",
+                                        "method": "default for a backhand"}
+    assert r["contactFrame"] == 59  # the stored contact stays
+    ball = r["you"]["ball"]
+    assert 0.4 <= ball["frontWallHeightM"] <= 0.9  # video: 0.5-0.8 m
+    assert 1.5 <= _front_wall_x(ball) <= 2.5  # video: 1.5-2.5 m from the left wall
     for side in ("you", "ghost"):
         start = r[side]["ball"]["points"][0]
         assert start[0] < 3.2  # left half
@@ -200,12 +211,13 @@ def test_backhand_sample_launches_from_the_left_with_an_assumed_straight_aim(bac
         assert _facing_z(to_array(r[side]["swing"]), r["contactFrame"]) < 0
 
 
-def test_elevation_is_per_swing_and_fits_the_low_backhand(backhand):
+def test_elevation_can_be_set_for_one_swing(backhand):
     r = compare(backhand, "close_stance", 15, elevation_deg=2)
     assert r["assumptions"]["launch"]["elevation"] == {"value": 2.0, "unit": "deg", "assumed": True,
-                                                       "label": "ASSUMED"}
+                                                       "label": "ASSUMED", "method": "given for this swing"}
     assert r["assumptions"]["launchElevationDeg"] == 2.0
-    assert 0.5 <= r["you"]["ball"]["frontWallHeightM"] <= 0.8  # a low backhand drive
+    low = r["you"]["ball"]["frontWallHeightM"]
+    assert low < compare(backhand, "close_stance", 15)["you"]["ball"]["frontWallHeightM"]  # 2 < 3 deg default
 
 
 def test_audio_contact_in_the_metadata_is_the_contact(backhand):
@@ -250,20 +262,36 @@ def test_unmeasurable_aim_is_assumed_straight():
     assert (az["value"], az["label"], az["rawValue"]) == (0.0, "ASSUMED", None)
 
 
-@pytest.mark.parametrize("hand,side,x", [("R", "forehand", 5.4), ("R", "backhand", 1.0),
-                                         ("L", "forehand", 1.0), ("L", "backhand", 5.4)])
-def test_drive_spot_mirrors_for_a_backhand_and_for_a_left_hand(hand, side, x):
+@pytest.mark.parametrize("hand,side,x", [("R", "forehand", 5.4), ("R", "backhand", 2.0),
+                                         ("L", "forehand", 1.0), ("L", "backhand", 4.4)])
+def test_drive_spot_per_stroke_mirrored_for_a_left_hand(hand, side, x):
     assert drive_spot(hand, side) == (pytest.approx(x), DEFAULT_CONTACT[2])
 
 
-def test_side_given_beats_recorded_beats_measured(backhand):
+def test_stroke_given_beats_recorded_beats_measured(backhand):
     recorded = {**backhand, "side": "forehand"}
-    a = compare(recorded, "close_stance", 15)["assumptions"]["anchor"]
-    assert (a["side"], a["sideSource"], a["x"]) == ("forehand", "recorded", DEFAULT_CONTACT[0])
-    a = compare(recorded, "close_stance", 15, side="backhand")["assumptions"]["anchor"]
-    assert (a["side"], a["sideSource"]) == ("backhand", "given") and a["x"] == pytest.approx(1.0)
+    a = compare(recorded, "close_stance", 15)["assumptions"]
+    assert a["stroke"] == {"value": "forehand", "source": "recorded", "label": "RECORDED"}
+    assert a["anchor"]["x"] == DEFAULT_CONTACT[0] and a["launchElevationDeg"] == 12.0
+    a = compare(recorded, "close_stance", 15, side="backhand")["assumptions"]
+    assert a["stroke"] == {"value": "backhand", "source": "given", "label": "RECORDED"}
+    assert a["anchor"]["x"] == 2.0 and a["launchElevationDeg"] == 3.0
+    a = compare({**backhand, "stroke": "backhand", "side": "forehand"}, "close_stance", 15)["assumptions"]
+    assert a["stroke"]["value"] == "backhand"  # "stroke" is read before "side", as pipeline/server.py does
     with pytest.raises(ValueError, match="side"):
         compare(backhand, "close_stance", 15, side="lob")
+
+
+@pytest.mark.filterwarnings("ignore:Mean of empty slice")  # the all-NaN skeleton below
+def test_unknown_stroke_is_a_forehand_labelled_assumed(backhand):
+    # At frame 62 (IMG_2116's hit sound) the racket head is only 4 cm to one side of the hips:
+    # too close to call, and nothing records the stroke, so it is ASSUMED, never silently.
+    timed = {**copy.deepcopy(backhand), "contactFrame": 62, "metadata": {"contactMethod": "audio-transient"}}
+    a = compare(timed, "close_stance", 15)["assumptions"]
+    assert a["stroke"] == {"value": "forehand", "source": "assumed", "label": "ASSUMED"}
+    assert (a["anchor"]["x"], a["launchElevationDeg"]) == (DEFAULT_CONTACT[0], 12.0)
+    P = np.full((3, N_POINTS, 3), np.nan)  # nothing visible at all
+    assert swing_stroke({}, P, "R", 1) == ("forehand", "assumed")
 
 
 def test_a_court_frame_swing_is_refused(fh_elbow):
@@ -277,5 +305,28 @@ def test_cli_takes_side_and_elevation(backhand, tmp_path, capsys):
     main([str(path), "close_stance", "15", "--side", "backhand", "--elevation", "2", "--no-swings"])
     out = json.loads(capsys.readouterr().out)
     assert out["coordinateSystem"] == "court" and "swing" not in out["you"]
-    assert out["assumptions"]["anchor"]["sideSource"] == "given"
+    assert out["assumptions"]["stroke"]["source"] == "given"
     assert out["assumptions"]["launchElevationDeg"] == 2.0
+
+
+# ---- Real backhands from the pipeline (only on machines that have data/processed) ----
+
+PROCESSED = ROOT / "data/processed"
+REAL_BACKHANDS = ("0054", "0045", "0052", "0050", "0046", "0041")
+
+
+def _real_backhands() -> list[Path]:
+    return sorted(p for n in REAL_BACKHANDS for p in PROCESSED.glob(f"bh-*/*-swing-{n}.json"))
+
+
+@pytest.mark.skipif(not _real_backhands(), reason="no real backhand runs (data/processed/bh-*) on this machine")
+@pytest.mark.xfail(strict=False, raises=AssertionError,
+                   reason="open on PR #42: the wrist-speed racket estimate gives 32-203 km/h on these mono "
+                          "swings, and the peak-speed rule makes it worse (178-378)")
+def test_real_backhands_are_plausible_drives():
+    for path in _real_backhands():
+        r = compare(json.loads(path.read_text()), "straighten_elbow", 5)
+        ball = r["you"]["ball"]
+        assert r["assumptions"]["stroke"]["value"] == "backhand", path.name
+        assert ball["points"][0] == pytest.approx(_head(r, "you"), abs=5e-4), path.name
+        assert 90 <= ball["speedKmh"] <= 170 and ball["outcome"] == "in", (path.name, ball["speedKmh"], ball["outcome"])
