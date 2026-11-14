@@ -25,9 +25,10 @@ goes through a Python copy of the parser the browser uses for it, in app/ghost/c
 used by loadSwingFor). JSON with NaN or Infinity is refused, as the browser's response.json() does.
 A compare file must also be for the fix it was opened for, as loadCompareFor requires.
 
-They read the fix /ghost starts on: the coach's ghost_fix, which must have a usable compare file
-(else the check fails rather than trying another fix); without one, the first fault fix /ghost can
-show; without that, the first usable fix in catalogue order. The PASS line names which.
+They read the fix /ghost starts on, among the fixes catalogue.json's fixes list offers: the coach's
+ghost_fix, which must be usable (else the check fails rather than trying another fix); without one,
+the first of the coach's faults with a usable fix; without that, the first usable fix in catalogue
+order. "Usable" is the page's rule: no error string at all. The PASS line names which.
 
 To test a broken copy of the saved files without the web app serving it, point --swings-dir at a
 folder holding them (catalogue.json and the files it names); the other checks still use the servers:
@@ -343,27 +344,55 @@ class Smoke:
 
 # ---- Checks ----
 
-def _usable(option) -> bool:
-    """A catalogue fix /ghost can open: no error, and a compare file."""
-    return isinstance(option, dict) and not option.get("error") and bool(option.get("file"))
+def _offered_fixes(catalogue: dict, entry: dict) -> dict:
+    """The fixes /ghost offers for this swing, in order (buildEntries in app/ghost/sources.ts): the
+    ids in catalogue.json's top-level fixes list that the swing has. Others are never shown."""
+    fixes = entry.get("fixes") or {}
+    return {fix: fixes[fix] for fix in catalogue["fixes"] if fix in fixes}
+
+
+def _unavailable(option: dict) -> str | None:
+    """The page's FixOption.unavailable: the catalogue's error whenever it is a string, even an empty
+    one, else None. Only None counts as usable (coachPickFix and activeFix test unavailable === null)."""
+    error = option.get("error")
+    return error if isinstance(error, str) else None
+
+
+def _coach_faults(coach: dict) -> list:
+    """The coach's faults as parseCoach gives them to the page: the faults list, or, for older coach
+    files without one, fault then ghost_fault (each fault id once)."""
+    if isinstance(coach.get("faults"), list):
+        return coach["faults"]
+    faults: list = []
+    for fault in (coach.get("fault"), coach.get("ghost_fault")):
+        if isinstance(fault, dict) and all(f.get("id") != fault.get("id") for f in faults):
+            faults.append(fault)
+    return faults
 
 
 def _compare_for(smoke: Smoke, entry: dict, coach: dict) -> tuple[str, dict, str]:
     """(fix, compare file, why this fix) for the fix /ghost starts on, in the page's order
-    (coachPickFix in app/ghost/sources.ts, then activeFix in app/ghost/ghost-demo.tsx):
+    (coachPickFix in app/ghost/sources.ts, then activeFix in app/ghost/ghost-demo.tsx), among the
+    fixes the page offers (_offered_fixes) that it counts as usable (_unavailable is None):
 
-    1. The coach's ghost_fix. The coach promised this ghost, so it must have a usable compare file.
-       If it hasn't, the check fails; the page would quietly open another fix instead.
-    2. Else the first fault whose fix is usable. Like the page, skip fault fixes physics can't show
-       (e.g. firm_wrist), so a coach without a ghost fix doesn't fail here while the demo works.
-    3. Else the first usable fix in catalogue order ("Nothing to fix"). The PASS line says so.
+    1. The coach's ghost_fix. The coach promised this ghost, so it must be offered and usable.
+       If it isn't, the check fails; the page would quietly open another fix instead.
+    2. Else the first of the coach's faults (_coach_faults) whose fix is usable. Like the page, skip
+       fault fixes it can't show (e.g. firm_wrist), so this doesn't fail while the demo works.
+    3. Else the first usable offered fix ("Nothing to fix"). The PASS line says so.
 
-    The compare file must pass parseCompare and be for that fix (loadCompareFor). Every compare
-    file of a swing has the same "you" ball, which is what the checks read."""
-    swing, fixes = entry.get("id"), entry.get("fixes") or {}
+    The chosen fix needs a compare file (without one the page would ask the live API instead), which
+    must pass parseCompare and be for that fix (loadCompareFor). Every compare file of a swing has
+    the same "you" ball, which is what the checks read."""
+    swing = entry.get("id")
+    offered = _offered_fixes(smoke.saved("catalogue.json"), entry)
+    usable = {fix: option for fix, option in offered.items() if _unavailable(option) is None}
 
     def load(fix: str, why: str) -> tuple[str, dict, str]:
-        name = fixes[fix]["file"]
+        name = usable[fix].get("file")
+        if name is None:
+            raise CheckFailed(f"{swing}: {why}, but catalogue.json gives it no compare file "
+                              "(the page would ask the live API for it instead)")
         try:
             result = smoke.saved(name, parse_compare)
         except CheckFailed as e:
@@ -375,21 +404,21 @@ def _compare_for(smoke: Smoke, entry: dict, coach: dict) -> tuple[str, dict, str
 
     ghost = coach.get("ghost_fix")
     if isinstance(ghost, str) and ghost:
-        option = fixes.get(ghost)
-        if option is None:
-            raise CheckFailed(f"{swing}: the coach's ghost fix {ghost!r} isn't listed in catalogue.json")
-        if not _usable(option):
-            reason = option.get("error") or "catalogue.json has no compare file for it"
-            raise CheckFailed(f"{swing}: the coach's ghost fix {ghost!r} has no usable compare file: {reason}")
+        if ghost not in offered:
+            where = ("isn't in catalogue.json's top-level fixes list" if ghost in (entry.get("fixes") or {})
+                     else "isn't one of this swing's fixes in catalogue.json")
+            raise CheckFailed(f"{swing}: the coach's ghost fix {ghost!r} {where}, so /ghost can't open it")
+        if ghost not in usable:
+            reason = _unavailable(offered[ghost]) or "its error is an empty string"
+            raise CheckFailed(f"{swing}: the coach's ghost fix {ghost!r} is marked unavailable: {reason}")
         return load(ghost, f"the coach's ghost fix {ghost}")
-    for fault in coach.get("faults") or []:
+    for fault in _coach_faults(coach):
         fix = fault.get("fix") if isinstance(fault, dict) else None
-        if isinstance(fix, str) and _usable(fixes.get(fix)):
+        if isinstance(fix, str) and fix in usable:
             return load(fix, f"no ghost fix, so the fix for the coach's {fault.get('id')} fault: {fix}")
-    for fix in smoke.saved("catalogue.json").get("fixes") or list(fixes):
-        if _usable(fixes.get(fix)):
-            return load(fix, f"the coach names no fix, so /ghost opens on the first usable fix: {fix}")
-    raise CheckFailed(f"{swing}: no fix has a usable compare file in catalogue.json")
+    for fix in usable:
+        return load(fix, f"the coach names no fix, so /ghost opens on the first usable fix: {fix}")
+    raise CheckFailed(f"{swing}: /ghost has no usable fix to open (catalogue.json offers none without an error)")
 
 
 def _swing_file(smoke: Smoke, entry: dict) -> dict:
