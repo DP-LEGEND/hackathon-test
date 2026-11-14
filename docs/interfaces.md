@@ -47,6 +47,52 @@ Readers must tolerate its absence. The standard-library `scripts/check_swing.py`
 accepts both versions and validates 33 actual booleans when the field is present.
 Joint coordinates remain finite and the contact-frame convention is unchanged.
 
+## Optional wrist-sensor entry on a swing
+
+A swing may carry an **optional, additive** top-level `wrist` object: that swing's
+entry from the `wrist_metrics.json` that `python -m wrist.run` writes from a phone
+strapped to the forearm (`services/wrist`). Entries are keyed by swing `id`;
+`coach.wrist_sensor.attach_wrist` copies one in, and gives a swing missing from the
+file `{"usable": false, "skip_reason": "..."}` so the skip stays visible. Today only
+`python -m coach.agent <swing.json> --wrist <wrist_metrics.json>` adds it: the pipeline
+doesn't write it and the web app doesn't read it.
+
+The coach reads only these fields:
+
+```ts
+wrist?: {
+  usable: boolean;                 // false: unpaired, alignment off, or orientation fails the gyro check
+  skip_reason: string | null;      // why it's unusable; null when usable
+  mock?: boolean;                  // true for synthetic recordings (wrist/synth.py); absent = false
+  roll_change_abs_deg?: number;    // size of the forearm roll, -150..+100 ms around contact
+  peak_roll_rate_abs_dps?: number; // fastest roll rate about the forearm axis in that window
+  peak_angular_speed_dps?: number; // fastest total forearm turn rate in that window
+};
+```
+
+`wrist.run` writes more per-swing fields (signed roll, `impact_s`, `align_error_ms`,
+`tempo`, `impact`, `racket_speed_sensor`, `occlusion_fill`; see `services/wrist/README.md`).
+Readers must ignore fields they don't use.
+
+The coach uses the entry only when `usable` is true and all three numbers are finite.
+Otherwise, including when `wrist` is absent, every sensor measurement is null and
+`rolled_wrist` is skipped and listed in `not_measured`, never guessed. Absence means no
+sensor, not "no roll". Every coach result's `metrics` carries these keys, with or without
+a sensor:
+
+| Key | Value |
+|---|---|
+| `forearm_roll_deg` | from `roll_change_abs_deg`, deg, or null |
+| `forearm_roll_rate_dps` | from `peak_roll_rate_abs_dps`, deg/s, or null |
+| `forearm_speed_dps` | from `peak_angular_speed_dps`, deg/s, or null |
+| `wrist_sensor` | `"sensor"`, `"mock sensor"`, or null when unused |
+| `wrist_sensor_skipped` | why the sensor wasn't used, or null when it was |
+
+When `mock` is true, sensor fault labels end in "(MOCK sensor data)", and screens must
+show the data as mock. The `rolled_wrist` thresholds come from mock swings (source
+"mock wrist-sensor swings") until `python -m wrist.tune` is rerun on real ones. Its fix,
+`firm_wrist`, isn't animated, so it is never `ghost_ready`.
+
 ## Swing label join
 
 The API joins labels on the pair `(pipeline_run, swing_id)`, using the processed

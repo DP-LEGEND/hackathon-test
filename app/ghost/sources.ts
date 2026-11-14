@@ -13,6 +13,7 @@ import {
   type CompareResult,
 } from "./compare";
 import { loadSwing, type LoadedSwing } from "./swing";
+import { parseWristSeries, type WristSeries } from "./wrist";
 
 const API = "/api"; // the proxy answers 502 when the Python service isn't running
 const SAMPLES_DIR = "/swings";
@@ -47,6 +48,8 @@ export type SwingEntry = {
   /** Saved samples: file names in public/swings. */
   swingFile: string | null;
   coachFile: string | null;
+  /** Saved samples with forearm-sensor data: the wrist_series.json holding this swing. */
+  wristFile: string | null;
   /** Before the coach answers. Live swings: every fix at its demo size (see fixOptionsFor). */
   fixes: FixOption[];
 };
@@ -160,16 +163,28 @@ export type Selection = {
 };
 
 /**
- * Which swing is on screen. The demo swing only while nothing has been picked; after that, only
- * the swing that was picked. Never a silent switch: if it drops out of the list, `entry` is null
- * and `gone` says so. While its list is still loading (catalogue, or the live list being
- * re-checked), it isn't called gone yet.
+ * Which swing is on screen. Before anything is picked: the swing a link asked for
+ * (/ghost?swing=<id>, how /upload opens a new swing), else the demo swing. After a pick, only
+ * the swing that was picked. Never a silent switch: if it drops out of (or never shows up in)
+ * its list, `entry` is null and `gone` says so. While its list is still loading (catalogue, or
+ * the live list being re-checked), it isn't called gone yet.
  */
 export function resolveSelection(
   entries: SwingEntry[],
   selectedKey: string | null,
   loaded: { samples: boolean; live: boolean },
+  requestedId: string | null = null,
 ): Selection {
+  if (selectedKey === null && requestedId !== null) {
+    // An id alone doesn't say which list it's in. Wait for both, then prefer the live swing
+    // (uploads are live), so the swing shown never changes once it's on screen.
+    if (!loaded.samples || !loaded.live) return { entry: null, gone: false };
+    const entry =
+      entries.find((e) => e.origin === "api" && e.id === requestedId) ??
+      entries.find((e) => e.id === requestedId) ??
+      null;
+    return { entry, gone: entry === null };
+  }
   if (selectedKey === null) return { entry: entries.find((e) => e.isDefault) ?? null, gone: false };
   const entry = entries.find((e) => e.key === selectedKey) ?? null;
   // Live entries are built from the catalogue too, so a live list needs both loaded.
@@ -191,6 +206,7 @@ export function buildEntries(catalogue: Catalogue, api: ApiState): SwingEntry[] 
         isDefault: s.id === defaultId,
         swingFile: s.swing,
         coachFile: s.coach,
+        wristFile: s.wristSeries,
         fixes: catalogue.fixes
           .filter((id) => id in s.fixes)
           .map((id) => {
@@ -212,6 +228,7 @@ export function buildEntries(catalogue: Catalogue, api: ApiState): SwingEntry[] 
             isDefault: false,
             swingFile: null,
             coachFile: null,
+            wristFile: null,
             fixes: catalogue.fixes
               .filter((fix) => fix in catalogue.demoAmounts)
               .map((fix) => ({
@@ -259,6 +276,17 @@ export function loadSwingFor(entry: SwingEntry, attempt: number): Promise<Loaded
       : getJson(`${API}/swings/${encodeURIComponent(entry.id)}`, (v) => loadSwing(v), {
           signal: AbortSignal.timeout(API_TIMEOUT_MS),
         }),
+  );
+}
+
+/**
+ * The swing's forearm-sensor series (services/wrist), or null when it has none, so the Wrist
+ * sensor panel stays hidden. Saved samples name a wrist_series.json in the catalogue
+ * (`wristSeries`). Live swings have no source yet: the API doesn't serve wrist data.
+ */
+export function loadWristFor(entry: SwingEntry, attempt: number): Promise<WristSeries | null> {
+  return cached(`wrist:${entry.key}:${attempt}`, async () =>
+    entry.wristFile ? getJson(`${SAMPLES_DIR}/${entry.wristFile}`, (v) => parseWristSeries(v, entry.id)) : null,
   );
 }
 
