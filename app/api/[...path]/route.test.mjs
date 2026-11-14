@@ -206,7 +206,7 @@ for (const overflow of [false, true]) {
   });
 }
 
-test("processing gets a 600-second timeout and propagates client cancellation", async (t) => {
+test("processing keeps a 600-second local timeout with a 300-second platform cap and client cancellation", async (t) => {
   const abort = new AbortController();
   const timeout = new AbortController();
   let timeoutMilliseconds;
@@ -225,7 +225,7 @@ test("processing gets a 600-second timeout and propagates client cancellation", 
   }), context(["process"]));
   assert.equal(timeoutMilliseconds, 10 * 60_000);
   assert.equal(forwardedSignal.aborted, true);
-  assert.equal(maxDuration, 600);
+  assert.equal(maxDuration, 300);
   assert.equal(response.status, 502);
 });
 
