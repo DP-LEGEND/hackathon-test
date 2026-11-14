@@ -50,15 +50,38 @@ def calibrate(A: dict, B: dict, scale: float, offset: float, f_a=1400.0, f_b=140
     imgB, visB = sample_b_at_a(A, B, scale, offset)
     J = CALIB_JOINTS
     m = (A["vis"][:, J] > min_vis) & (visB[:, J] > min_vis)
-    m &= np.isfinite(A["img"][:, J, 0]) & np.isfinite(imgB[:, J, 0])
+    m &= np.isfinite(A["img"][:, J, :2]).all(axis=-1) & np.isfinite(imgB[:, J, :2]).all(axis=-1)
     pa, pb = A["img"][:, J, :2][m], imgB[:, J, :2][m]
+    if len(pa) < 12:
+        raise ValueError("Not enough shared visible joints for stereo calibration; check sync and camera overlap")
     Ka, Kb = _K(f_a, tuple(A["size"])), _K(f_b, tuple(B["size"]))
     na = cv2.undistortPoints(pa.reshape(-1, 1, 2), Ka, None).reshape(-1, 2)
     nb = cv2.undistortPoints(pb.reshape(-1, 1, 2), Kb, None).reshape(-1, 2)
     E, inl = cv2.findEssentialMat(na, nb, np.eye(3), cv2.RANSAC, 0.999, thresh_px / ((f_a + f_b) / 2))
-    _, R, t, _ = cv2.recoverPose(E, na, nb, np.eye(3), mask=inl.copy())
+    if E is None or inl is None:
+        raise ValueError("Stereo calibration failed; check sync, focal lengths and camera baseline")
+    candidates = []
+    for candidate in np.split(E, len(E) // 3):
+        count, R, t, mask = cv2.recoverPose(candidate, na, nb, np.eye(3), mask=inl.copy())
+        candidates.append((count, R, t, mask))
+    count, R, t, mask = max(candidates, key=lambda item: item[0])
+    if count < 12 or count / len(pa) < 0.25:
+        raise ValueError("Stereo calibration has too few points in front of both cameras")
+    good = mask.ravel() != 0
+    p1 = Ka @ np.hstack([np.eye(3), np.zeros((3, 1))])
+    p2 = Kb @ np.hstack([R, t])
+    homogeneous = cv2.triangulatePoints(p1, p2, pa[good].T, pb[good].T)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        xyz = homogeneous[:3] / homogeneous[3]
+        proj_a = Ka @ xyz
+        proj_b = Kb @ (R @ xyz + t)
+        error = np.maximum(np.linalg.norm((proj_a[:2] / proj_a[2]).T - pa[good], axis=1),
+                           np.linalg.norm((proj_b[:2] / proj_b[2]).T - pb[good], axis=1))
+    reprojection = float(np.median(error))
+    if not np.isfinite(reprojection) or reprojection > thresh_px:
+        raise ValueError("Stereo reprojection error exceeds calibration tolerance")
     return {"Ka": Ka, "Kb": Kb, "R": R, "t": t, "scale": scale, "offset": offset,
-            "inliers": float(inl.mean()), "n": int(len(pa))}
+            "inliers": float(good.mean()), "n": int(len(pa)), "reprojectionErrorPx": reprojection}
 
 
 def triangulate(A: dict, B: dict, cal: dict, f0: int, f1: int, min_vis=0.3) -> np.ndarray:
@@ -69,11 +92,23 @@ def triangulate(A: dict, B: dict, cal: dict, f0: int, f1: int, min_vis=0.3) -> n
     out = np.full((f1 - f0, 33, 3), np.nan)
     for k, i in enumerate(range(f0, f1)):
         a, b = A["img"][i, :, :2], imgB[i, :, :2]
-        ok = np.isfinite(a[:, 0]) & np.isfinite(b[:, 0]) & (A["vis"][i] > min_vis) & (visB[i] > min_vis)
+        ok = np.isfinite(a).all(axis=-1) & np.isfinite(b).all(axis=-1) & (A["vis"][i] > min_vis) & (visB[i] > min_vis)
         if ok.sum() == 0:
             continue
         X = cv2.triangulatePoints(P1, P2, a[ok].T.astype(float), b[ok].T.astype(float))
         out[k, ok] = (X[:3] / X[3]).T
+    # Keep only points in front of both cameras and consistent with both images.
+    for k, i in enumerate(range(f0, f1)):
+        xyz = out[k]
+        za = xyz[:, 2]
+        xb = xyz @ cal["R"].T + cal["t"].reshape(3)
+        pa = xyz @ cal["Ka"].T
+        pb = xb @ cal["Kb"].T
+        with np.errstate(divide="ignore", invalid="ignore"):
+            ea = np.linalg.norm(pa[:, :2] / pa[:, 2:] - A["img"][i, :, :2], axis=1)
+            eb = np.linalg.norm(pb[:, :2] / pb[:, 2:] - imgB[i, :, :2], axis=1)
+        valid = (za > 0) & (xb[:, 2] > 0) & (ea <= 12) & (eb <= 12)
+        out[k, ~valid] = np.nan
     return out
 
 
@@ -82,11 +117,28 @@ def normalise(X: np.ndarray, torso_m: float = 0.5) -> np.ndarray:
     sh = (X[:, 11] + X[:, 12]) / 2
     hp = (X[:, 23] + X[:, 24]) / 2
     an = (X[:, 27] + X[:, 28]) / 2
-    s = torso_m / np.nanmedian(np.linalg.norm(sh - hp, axis=1))
+    lengths = np.linalg.norm(sh - hp, axis=1)
+    lengths = lengths[np.isfinite(lengths) & (lengths > 1e-6)]
+    if not len(lengths) or not np.isfinite(torso_m) or torso_m <= 0:
+        raise ValueError("Cannot set metric scale: no valid stereo torso")
+    s = torso_m / np.median(lengths)
     X = X * s
-    up = np.nanmean((sh - an) * s, axis=0)
+    directions = sh - an
+    valid = np.isfinite(directions).all(axis=1)
+    up = np.mean(directions[valid], axis=0) if valid.any() else np.zeros(3)
+    if np.linalg.norm(up) < 1e-6:
+        # Feet can leave the frame: use the required torso, not invented ankles.
+        directions = sh - hp
+        valid = np.isfinite(directions).all(axis=1)
+        if not valid.any():
+            raise ValueError("Cannot level skeleton: no valid torso direction")
+        up = np.mean(directions[valid], axis=0)
+    if np.linalg.norm(up) < 1e-6:
+        raise ValueError("Cannot level skeleton: degenerate torso direction")
     up /= np.linalg.norm(up)
     fwd = np.array([0, 0, 1.0]) - up * up[2]
+    if np.linalg.norm(fwd) < 1e-6:
+        fwd = np.array([1., 0, 0]) - up * up[0]
     fwd /= np.linalg.norm(fwd)
     right = np.cross(up, fwd)
     Rm = np.stack([right, up, fwd])
