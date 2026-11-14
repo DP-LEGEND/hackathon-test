@@ -28,12 +28,14 @@ def _K(f: float, size=(1920, 1080)) -> np.ndarray:
 def sample_b_at_a(A: dict, B: dict, scale: float, offset: float):
     """For every frame of A, B's image joints + visibility at the same real moment (linear interp)."""
     tb = A["t"] * scale + offset
-    fb = tb * float(B["fps"])
-    i0 = np.clip(np.floor(fb).astype(int), 0, len(B["t"]) - 2)
-    w = np.clip(fb - i0, 0, 1)[:, None, None]
+    times = np.asarray(B["t"])
+    if len(times) < 2 or np.any(np.diff(times) <= 0):
+        raise ValueError("Camera B needs at least two increasing timestamps")
+    i0 = np.clip(np.searchsorted(times, tb, side="right") - 1, 0, len(times) - 2)
+    w = ((tb - times[i0]) / (times[i0 + 1] - times[i0]))[:, None, None]
     img = (1 - w) * B["img"][i0] + w * B["img"][i0 + 1]
     vis = np.minimum(B["vis"][i0], B["vis"][i0 + 1])
-    valid = (fb >= 0) & (fb < len(B["t"]) - 1)
+    valid = (tb >= times[0]) & (tb <= times[-1])
     img[~valid] = np.nan
     vis[~valid] = 0
     return img, vis
@@ -84,7 +86,7 @@ def normalise(X: np.ndarray, torso_m: float = 0.5) -> np.ndarray:
     fwd /= np.linalg.norm(fwd)
     right = np.cross(up, fwd)
     Rm = np.stack([right, up, fwd])
-    centre = np.nanmean((X[:, 23] + X[:, 24]) / 2, axis=0)
+    centre = ((X[:, 23] + X[:, 24]) / 2)[:, None, :]
     return (X - centre) @ Rm.T
 
 

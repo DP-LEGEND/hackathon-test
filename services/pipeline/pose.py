@@ -47,12 +47,18 @@ def extract_raw(
     max_width: int = 1280,
 ) -> dict:
     """Run pose on [start_s, end_s) of a clip. Returns numpy arrays (see module doc)."""
-    import mediapipe as mp
-
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     n_total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    if not cap.isOpened() or w <= 0 or h <= 0 or n_total <= 0:
+        cap.release()
+        raise ValueError(f"Cannot read video: {video_path}")
+    if start_s < 0 or (end_s is not None and end_s <= start_s) or max_width <= 0:
+        cap.release()
+        raise ValueError("Invalid extraction interval or max_width")
+    import mediapipe as mp
+
     f0 = int(start_s * fps)
     f1 = n_total if end_s is None else min(n_total, int(end_s * fps))
     cap.set(cv2.CAP_PROP_POS_FRAMES, f0)
@@ -93,6 +99,7 @@ def extract_raw(
 
 def smooth(x: np.ndarray, win: int = 5) -> np.ndarray:
     """Centred moving average over time (axis 0), ignoring NaNs."""
+    win = min(win, len(x))
     if win <= 1:
         return x
     k = np.ones(win)
@@ -103,15 +110,30 @@ def smooth(x: np.ndarray, win: int = 5) -> np.ndarray:
         return num / den
 
 
-def to_swing(raw: dict, f0: int = 0, f1: int | None = None, smooth_win: int = 3) -> dict:
-    """Slice raw output into the `Swing` shape from lib/ghost/types.ts."""
+def to_swing(raw: dict, f0: int = 0, f1: int | None = None, smooth_win: int = 3,
+             *, swing_id: str = "swing", contact_frame: int | None = None) -> dict:
+    """Serialize a complete Swing; reject missing poses rather than invent zeros.
+
+    contact_frame is relative to the selected window. Without a measured contact,
+    the fastest right-wrist frame is an explicitly approximate contact proxy.
+    """
     world = smooth(raw["world"][f0:f1], smooth_win)
     t = raw["t"][f0:f1]
+    if len(t) < 2 or world.shape != (len(t), 33, 3):
+        raise ValueError("A swing needs at least two frames of 33 joints")
+    if not np.isfinite(world).all():
+        raise ValueError("Swing contains missing joints; choose a fully tracked window")
+    world = world - ((world[:, 23] + world[:, 24]) / 2)[:, None, :]
+    if contact_frame is None:
+        contact_frame = int(np.argmax(np.linalg.norm(np.diff(world[:, 16], axis=0), axis=1))) + 1
+    if not 0 <= contact_frame < len(t):
+        raise ValueError("Contact frame is outside the swing")
     frames = [
-        {"t": float(ti - t[0]), "joints": np.nan_to_num(wj).round(4).tolist()}
+        {"t": float(ti - t[0]), "joints": wj.round(6).tolist()}
         for ti, wj in zip(t, world)
     ]
-    return {"fps": float(raw["fps"]), "frames": frames}
+    return {"id": swing_id, "fps": float(raw["fps"]),
+            "contactFrame": int(contact_frame), "frames": frames}
 
 
 def extract_pose(video_path: str) -> dict:

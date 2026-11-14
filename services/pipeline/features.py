@@ -25,7 +25,11 @@ def _angle(a, b, c):
 def _yaw(a, b):
     """Heading of the line a->b in the floor plane (x, z), degrees."""
     d = b - a
-    return np.degrees(np.unwrap(np.arctan2(d[:, 2], d[:, 0])))
+    yaw = np.arctan2(d[:, 2], d[:, 0])
+    finite = np.flatnonzero(np.isfinite(yaw))
+    for span in np.split(finite, np.where(np.diff(finite) > 1)[0] + 1):
+        yaw[span] = np.unwrap(yaw[span])
+    return np.degrees(yaw)
 
 
 def swing_features(world: np.ndarray, impact: int, fps_real: float, hand: str = "R") -> dict:
