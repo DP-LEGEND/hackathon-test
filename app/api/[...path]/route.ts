@@ -1,6 +1,6 @@
 type ProxyContext = { params: Promise<{ path: string[] }> };
 
-export const maxDuration = 600;
+export const maxDuration = 300;
 const MAX_UPLOAD_BYTES = 250 * 1024 * 1024;
 
 function uploadTooLarge(): Response {
