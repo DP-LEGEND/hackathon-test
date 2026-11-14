@@ -8,6 +8,8 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode 
 import { Columns2, Crosshair, Grid3x3, Layers, Pause, PersonStanding, Play, RotateCcw, Turtle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { GHOST_COLOUR, YOU_COLOUR } from "./colours";
+import { JointLegend } from "./joint-legend";
+import { fadedJointsAt, jointWords, summariseGuesses } from "./provenance";
 import type { BallPathView, CameraView, ReplayLayout, SkeletonScene } from "./skeleton-scene";
 import {
   buildTimeline,
@@ -212,6 +214,13 @@ export function GhostStage({
   const youFrame = you ? frameIndexAt(you, tau) : 0;
   const ghostFrame = ghost ? frameIndexAt(ghost, tau) : 0;
   const timeLabel = timeline ? formatTau(tau, timeline.step) : "";
+  const guessSummary = useMemo(() => (you ? summariseGuesses(you.guessed) : null), [you]);
+  // Joints drawn faded on your current frame, named so the fade is never only visual.
+  const fadedNow = you ? [...new Set(fadedJointsAt(you.guessed, youFrame).map(jointWords))] : [];
+  const fadedLabel = fadedNow.length > 2 ? `${fadedNow.slice(0, 2).join(", ")} +${fadedNow.length - 2}` : fadedNow.join(", ");
+  // Solid joints count as measured only on a frame the file marks, for every figure drawn.
+  const marked =
+    you !== null && you.guessed.recorded[youFrame] === true && (ghost === null || ghost.guessed.recorded[ghostFrame] === true);
   const ready = layout !== null;
   const error = sceneError
     ? { message: sceneError, onRetry: retryScene }
@@ -248,6 +257,8 @@ export function GhostStage({
         {ready && !error && children}
       </div>
 
+      {ready && !error && <JointLegend summary={guessSummary} marked={marked} />}
+
       <div className="flex flex-col gap-3 rounded-xl border bg-card p-3 sm:p-4">
         <div className="relative pt-4">
           {timeline && (
@@ -273,7 +284,9 @@ export function GhostStage({
             value={tau}
             onChange={onScrub}
             disabled={!ready}
-            aria-valuetext={`${timeLabel}, your frame ${youFrame}${ghost ? `, ghost frame ${ghostFrame}` : ""}`}
+            aria-valuetext={`${timeLabel}, your frame ${youFrame}${ghost ? `, ghost frame ${ghostFrame}` : ""}${
+              fadedNow.length > 0 ? `, estimated: ${fadedNow.join(", ")}` : ""
+            }`}
           />
         </div>
 
@@ -297,6 +310,7 @@ export function GhostStage({
               <>
                 {" · "}
                 <span style={{ color: YOU_COLOUR }}>you f{youFrame}</span>
+                {fadedLabel && <span className="opacity-60"> (est. {fadedLabel})</span>}
                 {ghost && (
                   <>
                     {" · "}
