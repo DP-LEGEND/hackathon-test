@@ -20,6 +20,7 @@ Where the ball model's inputs come from (physics/ball.py):
   "audio-transient", else the pipeline's wrist-speed estimate; `contactMethod` says which.
 - Stroke (forehand or backhand) picks the anchor and the default elevation: given, else the
   pipeline's label, else measured from the skeleton (ESTIMATE), else forehand labelled ASSUMED.
+  A label from the pipeline's auto classifier is checked against the skeleton first.
 - Launch point: each swing's racket head at contact, height above the lowest foot MEASURED.
   Yours sits over the ASSUMED anchor, the drive spot for the stroke (DRIVE_SPOT_RIGHT_HANDED,
   mirrored for a left-hander). The ghost's is wherever its racket head ends up with your
@@ -166,35 +167,54 @@ def ball_contact(swing: dict, P: np.ndarray, hand: str) -> tuple[int, str]:
     return int(np.nanargmax(v)), "wrist-speed-peak-estimate"
 
 
-STROKE_LABELS = {"given": "RECORDED", "recorded": "RECORDED", "measured": "ESTIMATE", "assumed": "ASSUMED"}
+AUTO_LABEL_OVERRIDDEN = "measured (auto label overridden)"
+STROKE_LABELS = {"given": "RECORDED", "recorded": "RECORDED", "measured": "ESTIMATE",
+                 AUTO_LABEL_OVERRIDDEN: "ESTIMATE", "assumed": "ASSUMED"}
+
+
+def _measured_stroke(P: np.ndarray, hand: str, contact: int) -> str | None:
+    """The stroke from the skeleton, or None when it's too close to call.
+
+    The hitting-hand side of the body at contact is a forehand: which side of the hips the
+    racket head is on, across the court, at least SIDE_DEAD_ZONE_M out.
+    """
+    try:
+        Pc = court_axes(P)
+    except ValueError:  # can't tell up from down, so can't tell left from right either
+        return None
+    across = racket_head(Pc, hand)[contact, 0] - mid(Pc, L_HIP, R_HIP)[contact, 0]  # + = player's right
+    if not np.isfinite(across) or abs(across) < SIDE_DEAD_ZONE_M:
+        return None
+    return "forehand" if (across > 0) == (hand == "R") else "backhand"
 
 
 def swing_stroke(swing: dict, P: np.ndarray, hand: str, contact: int, side: str | None = None) -> tuple[str, str]:
     """("forehand" | "backhand", where it came from). It picks the anchor and the default elevation.
 
     "given": `side`, e.g. the stroke the coach was told. "recorded": the pipeline's label
-    (swing["stroke"] or swing["side"]). "measured": the hitting-hand side of the body at contact
-    is a forehand, i.e. which side of the hips the racket head is on, across the court. (The
-    coach's and the pipeline's detectors measure along the shoulder line, which turns side-on at
-    contact: both call the labelled IMG_2116 backhand a forehand.) "assumed": none of those
-    works, so it is a forehand, labelled ASSUMED. Never a silent default.
+    (swing["stroke"] or swing["side"]). A label from the pipeline's auto classifier
+    (metadata.strokeSource "auto") is checked against the skeleton first, and the skeleton wins
+    when they disagree: AUTO_LABEL_OVERRIDDEN. "measured": no label, so the skeleton
+    (_measured_stroke). "assumed": nothing works, so it is a forehand, labelled ASSUMED. Never a
+    silent default.
+
+    Why the skeleton can beat an auto label: the coach's and the pipeline's classifiers measure
+    along the shoulder line, which turns side-on at contact, and both call the labelled IMG_2116
+    backhand a forehand. Manual labels, side= and files without strokeSource are trusted as is.
     """
     if side is not None:
         if side not in SIDES:
             raise ValueError(f"side must be 'forehand' or 'backhand', got {side!r}")
         return side, "given"
-    for key in ("stroke", "side"):
-        if swing.get(key) in SIDES:
-            return swing[key], "recorded"
-    try:
-        Pc = court_axes(P)
-    except ValueError:  # can't tell up from down, so can't tell left from right either
-        return "forehand", "assumed"
-    across = racket_head(Pc, hand)[contact, 0] - mid(Pc, L_HIP, R_HIP)[contact, 0]  # + = player's right
-    if not np.isfinite(across) or abs(across) < SIDE_DEAD_ZONE_M:
-        return "forehand", "assumed"
-    on_right = across > 0
-    return ("forehand" if on_right == (hand == "R") else "backhand"), "measured"
+    label = next((swing[key] for key in ("stroke", "side") if swing.get(key) in SIDES), None)
+    meta = swing.get("metadata")
+    auto = isinstance(meta, dict) and meta.get("strokeSource") == "auto"
+    if label is not None and not auto:
+        return label, "recorded"
+    measured = _measured_stroke(P, hand, contact)
+    if label is not None:
+        return (measured, AUTO_LABEL_OVERRIDDEN) if measured not in (None, label) else (label, "recorded")
+    return (measured, "measured") if measured is not None else ("forehand", "assumed")
 
 
 def drive_spot(hand: str, side: str) -> tuple[float, float]:

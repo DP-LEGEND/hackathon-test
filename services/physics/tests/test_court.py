@@ -282,6 +282,33 @@ def test_stroke_given_beats_recorded_beats_measured(backhand):
         compare(backhand, "close_stance", 15, side="lob")
 
 
+def test_an_auto_classified_stroke_label_is_checked_against_the_skeleton(backhand, forehand):
+    # pipeline/process.py's auto classifier can call IMG_2116 a forehand; the skeleton says backhand.
+    misread = {**backhand, "side": "forehand", "metadata": {"strokeSource": "auto"}}
+    a = compare(misread, "close_stance", 15)["assumptions"]
+    assert a["stroke"] == {"value": "backhand", "source": "measured (auto label overridden)", "label": "ESTIMATE"}
+    assert (a["anchor"]["x"], a["anchor"]["z"]) == (2.0, 7.0) and a["launchElevationDeg"] == 3.0
+
+    agrees = {**backhand, "side": "backhand", "metadata": {"strokeSource": "auto"}}
+    assert compare(agrees, "close_stance", 15)["assumptions"]["stroke"] == {
+        "value": "backhand", "source": "recorded", "label": "RECORDED"}
+    # A manual label, side= and a file without strokeSource are trusted as before.
+    manual = {**backhand, "side": "forehand", "metadata": {"strokeSource": "manual"}}
+    assert compare(manual, "close_stance", 15)["assumptions"]["stroke"]["source"] == "recorded"
+    assert compare(misread, "close_stance", 15, side="forehand")["assumptions"]["stroke"]["source"] == "given"
+    assert compare({**backhand, "side": "forehand"}, "close_stance", 15)["assumptions"]["anchor"]["x"] == 5.4
+    # Too close to call (racket head 4 cm from the hips at frame 62): the auto label stands.
+    unsure = {**misread, "contactFrame": 62}
+    assert compare(unsure, "close_stance", 15)["assumptions"]["stroke"]["source"] == "recorded"
+
+    # The hero forehand is unchanged, with or without an auto label (the skeleton agrees).
+    for swing in (forehand, {**forehand, "metadata": {**forehand["metadata"], "strokeSource": "auto"}}):
+        r = compare(swing, "turn_shoulders_less", 15)
+        assert r["assumptions"]["stroke"] == {"value": "forehand", "source": "recorded", "label": "RECORDED"}
+        assert r["you"]["ball"]["frontWallHeightM"] == pytest.approx(1.92, abs=0.005)
+        assert r["you"]["ball"]["speedKmh"] == pytest.approx(133.2, abs=0.05)
+
+
 @pytest.mark.filterwarnings("ignore:Mean of empty slice")  # the all-NaN skeleton below
 def test_unknown_stroke_is_a_forehand_labelled_assumed(backhand):
     # At frame 62 (IMG_2116's hit sound) the racket head is only 4 cm to one side of the hips:
@@ -321,8 +348,9 @@ def _real_backhands() -> list[Path]:
 
 @pytest.mark.skipif(not _real_backhands(), reason="no real backhand runs (data/processed/bh-*) on this machine")
 @pytest.mark.xfail(strict=False, raises=AssertionError,
-                   reason="open on PR #42: the wrist-speed racket estimate gives 32-203 km/h on these mono "
-                          "swings, and the peak-speed rule makes it worse (178-378)")
+                   reason="known gap (PR #42): the wrist-speed racket estimate gives 32-203 km/h on these mono "
+                          "swings. Kept on purpose, no cap. Fix: wrist-sensor racket speed (Henoch's PR #44, "
+                          "gyro angular velocity) plus bh-05 audio-sync checks in the pipeline.")
 def test_real_backhands_are_plausible_drives():
     for path in _real_backhands():
         r = compare(json.loads(path.read_text()), "straighten_elbow", 5)
