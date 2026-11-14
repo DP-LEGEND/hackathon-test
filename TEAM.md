@@ -177,7 +177,7 @@ Good prompts say four things: **who you are, the goal, what done looks like, and
 | **14:00** | **Kill gate:** a real clip in, a rotating 3D skeleton out. If not, switch to Kin |
 | 18:00 | Ugly end-to-end: swing, metrics, one fix, ghost and two ball paths |
 | Sun 01:00 | Core complete |
-| 10:00 | Feature freeze, backup video recorded |
+| 09:00 | Feature freeze, backup video recorded (see WORKFLOW.md for all key times) |
 | 18:00 | End |
 
 ## Never
