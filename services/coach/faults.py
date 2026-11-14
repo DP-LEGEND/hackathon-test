@@ -35,7 +35,7 @@ from physics.metrics import measure, real_fps
 from physics.skeleton import L_SH, R_SH, to_array
 from pipeline.features import swing_features
 
-from coach.measure_extra import STROKES, stance_open_deg, stroke_side
+from coach.measure_extra import STROKES, stance_joints_filled, stance_open_deg, stroke_side
 
 Stroke = Literal["forehand", "backhand"]
 Confidence = Literal["high", "medium", "low"]
@@ -225,6 +225,16 @@ def measure_swing(swing: dict, stroke: Optional[Stroke] = None, fps_real: Option
         if _finite(shoulder_width) and shoulder_width > 1e-6 else float("nan")
     )
     m["forearm_roll_deg"] = None  # not measured yet
+
+    # Stance comes from the ankles. If either is a filled-in placeholder, both stance
+    # numbers are unmeasured: no stance fault beats a false one.
+    filled = stance_joints_filled(swing, m["contact_frame"])
+    m["stance_skipped"] = (
+        "; ".join(f"joint {j} {why}" for j, why in sorted(filled.items())) if filled else None
+    )
+    if filled:
+        m["stance_open_deg"] = None
+        m["stance_width_ratio"] = None
     return m
 
 

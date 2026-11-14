@@ -356,3 +356,77 @@ def test_mock_forehand_is_detected_as_forehand() -> None:
 def test_bad_stroke_is_rejected(sample: dict) -> None:
     with pytest.raises(ValueError, match="stroke"):
         measure_swing(sample, "lob")  # type: ignore[arg-type]
+
+
+# ---- Filled-in ankles never produce stance faults -----------------------------------
+
+STANCE_FAULT = "stance_too_open"
+L_ANKLE, R_ANKLE, L_KNEE, R_KNEE = 27, 28, 25, 26
+
+
+def _with(sample: dict, **changes) -> dict:
+    import copy
+
+    s = copy.deepcopy(sample)
+    for key, value in changes.items():
+        s[key] = value
+    return s
+
+
+def _stance_result(swing: dict, stroke: str = "backhand") -> tuple[dict, dict]:
+    m = measure_swing(swing, stroke)
+    return m, coach_swing(swing, stroke=stroke)
+
+
+def test_real_ankles_are_measured(sample: dict) -> None:
+    m, result = _stance_result(sample)
+    assert m["stance_skipped"] is None
+    assert math.isfinite(m["stance_open_deg"]) and math.isfinite(m["stance_width_ratio"])
+    assert result["fault"]["id"] == STANCE_FAULT  # the sample's real top fault
+
+
+@pytest.mark.parametrize("stroke", STROKES)
+@pytest.mark.parametrize("ankle", [L_ANKLE, R_ANKLE])
+def test_ankle_listed_as_approximated_skips_stance(sample: dict, stroke: str, ankle: int) -> None:
+    swing = _with(sample, metadata={"approximatedJoints": [19, ankle, 31]})
+    m, result = _stance_result(swing, stroke)
+    assert m["stance_open_deg"] is None and m["stance_width_ratio"] is None
+    assert f"joint {ankle} approximated" in m["stance_skipped"]
+    ids = [f["id"] for f in detect_faults(swing, metrics=m)]
+    assert STANCE_FAULT not in ids
+    assert result["fault"] is None or result["fault"]["id"] != STANCE_FAULT
+    assert STANCE_FAULT not in result["other_faults"]
+    assert STANCE_FAULT in result["not_measured"]
+    json.dumps(result, allow_nan=False)
+
+
+def test_ankle_copied_from_knee_at_contact_skips_stance_without_metadata(sample: dict) -> None:
+    swing = _with(sample)
+    c = swing["contactFrame"]
+    swing["frames"][c]["joints"][R_ANKLE] = list(swing["frames"][c]["joints"][R_KNEE])
+    m, result = _stance_result(swing)
+    assert m["stance_skipped"] == "joint 28 copied from knee at contact"
+    assert STANCE_FAULT not in [result["fault"]["id"]] + result["other_faults"]
+
+
+def test_ankle_missing_at_contact_skips_stance(sample: dict) -> None:
+    swing = _with(sample)
+    swing["frames"][swing["contactFrame"]]["joints"][L_ANKLE] = [0.0, 0.0, 0.0]  # pipeline's "lost"
+    m, _ = _stance_result(swing)
+    assert m["stance_skipped"] == "joint 27 missing at contact"
+    assert m["stance_open_deg"] is None and m["stance_width_ratio"] is None
+
+
+def test_copy_away_from_contact_or_other_filled_joints_keep_stance(sample: dict) -> None:
+    swing = _with(sample, metadata={"approximatedJoints": [19, 20, 31, 32]})  # hands and toes only
+    swing["frames"][0]["joints"][R_ANKLE] = list(swing["frames"][0]["joints"][R_KNEE])  # not contact
+    m, result = _stance_result(swing)
+    assert m["stance_skipped"] is None
+    assert result["fault"]["id"] == STANCE_FAULT
+
+
+def test_other_faults_still_fire_when_stance_is_skipped(sample: dict) -> None:
+    clean = {f["id"] for f in detect_faults(sample, "backhand")}
+    swing = _with(sample, metadata={"approximatedJoints": [L_ANKLE, R_ANKLE]})
+    skipped = {f["id"] for f in detect_faults(swing, "backhand")}
+    assert skipped == clean - {STANCE_FAULT}

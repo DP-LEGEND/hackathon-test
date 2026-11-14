@@ -17,9 +17,41 @@ from __future__ import annotations
 import numpy as np
 
 from physics.metrics import contact_frame, shoulder_coil, shoulder_yaw
-from physics.skeleton import ARM, L_ANKLE, L_SH, R_ANKLE, R_SH, RACKET_TIP, hitting_hand, to_array, up_vector
+from physics.skeleton import (
+    ARM, L_ANKLE, L_KNEE, L_SH, R_ANKLE, R_KNEE, R_SH, RACKET_TIP, hitting_hand, to_array, up_vector,
+)
 
 STROKES = ("forehand", "backhand")
+
+# Stance is measured from the ankles. The pipeline fills a missing ankle by copying its
+# knee (pipeline/process.py complete_optional_joints) and lists it in
+# metadata.approximatedJoints. A filled ankle is a placeholder, not a measurement.
+STANCE_JOINTS = {L_ANKLE: L_KNEE, R_ANKLE: R_KNEE}
+
+
+def stance_joints_filled(swing: dict, contact: int) -> dict[int, str]:
+    """Ankles we can't trust for stance on this swing: {joint id: why}. Empty = OK.
+
+    - "approximated": listed in metadata.approximatedJoints. That list is per swing,
+      not per frame, so we can't rule out contact and treat it as filled there.
+    - "missing at contact": no finite position at the contact frame.
+    - "copied from knee at contact": exactly the knee's position, the pipeline's fill
+      signature (real ankle and knee points never coincide).
+    Short gaps the pipeline interpolates aren't flagged in the swing JSON, so they
+    can't be detected here.
+    """
+    listed = set((swing.get("metadata") or {}).get("approximatedJoints") or [])
+    P = to_array(swing)
+    out: dict[int, str] = {}
+    for ankle, knee in STANCE_JOINTS.items():
+        a, k = P[contact, ankle], P[contact, knee]
+        if ankle in listed:
+            out[ankle] = "approximated"
+        elif not np.isfinite(a).all():
+            out[ankle] = "missing at contact"
+        elif np.isfinite(k).all() and np.array_equal(a, k):
+            out[ankle] = "copied from knee at contact"
+    return out
 
 
 def _flat(v: np.ndarray, up: np.ndarray) -> np.ndarray:
