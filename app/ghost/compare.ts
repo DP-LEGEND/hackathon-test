@@ -1,0 +1,277 @@
+// Compare and coach files for the /ghost replay: validation only, no maths.
+// Code measures, the browser only shows: every number here is read from a file that
+// services/physics/compare.py or services/coach/agent.py wrote. Nothing is recomputed.
+
+import type { Vec3 } from "@/lib/ghost/types";
+import { loadSwing, type LoadedSwing } from "./swing";
+
+export type BallOutcome = "in" | "tin" | "out" | "down";
+
+/** One PREDICTED ball path in court coordinates (metres, x across, y up, z back from the front wall). */
+export type BallPath = {
+  points: Vec3[];
+  speedKmh: number;
+  outcome: BallOutcome;
+  /** Wall and floor hits, in order. */
+  bounces: Vec3[];
+  /** [x, z] of the first floor bounce after the front wall, or null if it never lands. */
+  landing: [number, number] | null;
+  frontWallHeightM: number | null;
+};
+
+export type RacketSpeed = { value: number; unit: string; label: string };
+
+export type CompareSide = {
+  swing: LoadedSwing;
+  ball: BallPath;
+  racketSpeed: RacketSpeed;
+};
+
+export type Change = { you: number | null; ghost: number | null; change: number | null };
+export type MetricChange = Change & { key: string; unit: string };
+
+export type CompareResult = {
+  fix: { id: string; amount: number; unit: string };
+  hand: "R" | "L";
+  /** True when the ghost is the swing with a real fix applied (physics/ghost.py), not a copy. */
+  ghostIsReal: boolean;
+  you: CompareSide;
+  ghost: CompareSide;
+  metrics: MetricChange[];
+  ball: {
+    outcome: { you: BallOutcome; ghost: BallOutcome };
+    speedKmh: Change;
+    frontWallHeightM: Change;
+    landingDepthM: Change;
+  };
+  assumptions: { contactSpot: Vec3; note: string };
+};
+
+export type CoachFault = { id: string; label: string; confidence: string; fix: string; ghostReady: boolean };
+
+/** Output of `coach.agent.coach_swing`: the top fault and its cue, decided by the fault library. */
+export type CoachCaption = {
+  stroke: string;
+  fault: CoachFault | null;
+  cue: string;
+  /** Every fault that fired, worst first (`faults` in the file; falls back to the top fault). */
+  faults: CoachFault[];
+};
+
+export class CompareDataError extends Error {
+  name = "CompareDataError";
+}
+
+const OUTCOMES: readonly BallOutcome[] = ["in", "tin", "out", "down"];
+
+const FIX_NAMES: Record<string, string> = {
+  straighten_elbow: "Straighten elbow",
+  turn_shoulders_more: "Turn shoulders more",
+  hold_wrist_cock: "Hold wrist cock",
+  bend_elbow: "Bend elbow",
+  close_stance: "Close stance",
+  turn_shoulders_less: "Turn shoulders less",
+  firm_wrist: "Firm wrist",
+};
+
+const METRIC_NAMES: Record<string, string> = {
+  elbow_at_contact_deg: "Elbow at contact",
+  shoulder_turn_deg: "Shoulder turn",
+  wrist_at_contact_deg: "Wrist angle at contact",
+  wrist_release_ms: "Wrist release before contact",
+};
+
+function humanise(id: string): string {
+  const words = id.replace(/_/g, " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+export function fixName(id: string): string {
+  return FIX_NAMES[id] ?? humanise(id);
+}
+
+export function metricName(key: string): string {
+  return METRIC_NAMES[key] ?? humanise(key);
+}
+
+/** "deg" shows as °, other units after a space. Formatting only: the value is the file's. */
+export function formatValue(value: number | null, unit: string): string {
+  if (value === null) return "n/a";
+  return unit === "deg" ? `${value}°` : unit ? `${value} ${unit}` : String(value);
+}
+
+/** A change from the file with its sign, e.g. "+12 ms". Null when the file has none. */
+export function formatChange(value: number | null, unit: string): string {
+  if (value === null) return "n/a";
+  if (value === 0) return "no change";
+  return `${value > 0 ? "+" : ""}${formatValue(value, unit)}`;
+}
+
+export const OUTCOME_WORDS: Record<BallOutcome, string> = {
+  in: "in",
+  tin: "hits the tin",
+  out: "out",
+  down: "floor first",
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function record(value: unknown, where: string): Record<string, unknown> {
+  if (!isRecord(value)) throw new CompareDataError(`${where} must be an object`);
+  return value;
+}
+
+function text(value: unknown, where: string): string {
+  if (typeof value !== "string" || value === "") throw new CompareDataError(`${where} must be a non-empty string`);
+  return value;
+}
+
+function num(value: unknown, where: string): number {
+  if (!isFiniteNumber(value)) throw new CompareDataError(`${where} must be a finite number`);
+  return value;
+}
+
+function numOrNull(value: unknown, where: string): number | null {
+  return value === null || value === undefined ? null : num(value, where);
+}
+
+function vec3(value: unknown, where: string): Vec3 {
+  if (!Array.isArray(value) || value.length !== 3 || !value.every(isFiniteNumber)) {
+    throw new CompareDataError(`${where} must be [x, y, z]`);
+  }
+  return [value[0], value[1], value[2]];
+}
+
+function outcome(value: unknown, where: string): BallOutcome {
+  const found = OUTCOMES.find((o) => o === value);
+  if (!found) throw new CompareDataError(`${where} must be one of ${OUTCOMES.join(", ")}`);
+  return found;
+}
+
+function change(value: unknown, where: string): Change {
+  const c = record(value, where);
+  return {
+    you: numOrNull(c.you, `${where}.you`),
+    ghost: numOrNull(c.ghost, `${where}.ghost`),
+    change: numOrNull(c.change, `${where}.change`),
+  };
+}
+
+function parseBall(value: unknown, where: string): BallPath {
+  const b = record(value, where);
+  // Hard rule: there is no real ball, so a path that isn't marked PREDICTED is refused.
+  if (b.predicted !== true || b.label !== "PREDICTED") {
+    throw new CompareDataError(`${where} is not marked PREDICTED`);
+  }
+  if (!Array.isArray(b.points) || b.points.length < 2) {
+    throw new CompareDataError(`${where}.points must hold at least two points`);
+  }
+  const events = Array.isArray(b.events) ? b.events : [];
+  let landing: [number, number] | null = null;
+  if (b.landing !== null && b.landing !== undefined) {
+    if (!Array.isArray(b.landing) || b.landing.length !== 2 || !b.landing.every(isFiniteNumber)) {
+      throw new CompareDataError(`${where}.landing must be [x, z] or null`);
+    }
+    landing = [b.landing[0], b.landing[1]];
+  }
+  return {
+    points: b.points.map((p: unknown, i: number) => vec3(p, `${where}.points[${i}]`)),
+    speedKmh: num(b.speedKmh, `${where}.speedKmh`),
+    outcome: outcome(b.outcome, `${where}.outcome`),
+    bounces: events.map((e: unknown, i: number) => vec3(record(e, `${where}.events[${i}]`).point, `${where}.events[${i}].point`)),
+    landing,
+    frontWallHeightM: numOrNull(b.frontWallHeightM, `${where}.frontWallHeightM`),
+  };
+}
+
+function parseSide(value: unknown, where: string, contactFrame: number): CompareSide {
+  const s = record(value, where);
+  const r = record(s.racketSpeed, `${where}.racketSpeed`);
+  let swing: LoadedSwing;
+  try {
+    // The swing's own contactFrame wins; the compare file's top-level one is the fallback.
+    swing = loadSwing(s.swing, contactFrame);
+  } catch (error) {
+    throw new CompareDataError(`${where}.swing: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return {
+    swing,
+    ball: parseBall(s.ball, `${where}.ball`),
+    racketSpeed: {
+      value: num(r.value, `${where}.racketSpeed.value`),
+      unit: text(r.unit, `${where}.racketSpeed.unit`),
+      label: typeof r.label === "string" ? r.label : "ESTIMATE",
+    },
+  };
+}
+
+/** Checks an untrusted `physics.compare` JSON value. Throws CompareDataError. */
+export function parseCompare(value: unknown): CompareResult {
+  const c = record(value, "file");
+  const fix = record(c.fix, "fix");
+  const contactFrame = isFiniteNumber(c.contactFrame) && Number.isInteger(c.contactFrame) ? c.contactFrame : -1;
+  const hand = c.hand === "L" ? "L" : c.hand === "R" ? "R" : null;
+  if (!hand) throw new CompareDataError("hand must be R or L");
+
+  const you = parseSide(c.you, "you", contactFrame);
+  const ghost = parseSide(c.ghost, "ghost", contactFrame);
+  const rawGhost = record(record(c.ghost, "ghost").swing, "ghost.swing");
+  const ghostIsReal = rawGhost.synthetic === true && Array.isArray(rawGhost.edits) && rawGhost.edits.length > 0;
+
+  const delta = record(c.delta, "delta");
+  const metrics = Object.entries(record(delta.metrics, "delta.metrics")).map(([key, m]): MetricChange => {
+    const row = record(m, `delta.metrics.${key}`);
+    return { key, unit: typeof row.unit === "string" ? row.unit : "", ...change(row, `delta.metrics.${key}`) };
+  });
+  const ball = record(delta.ball, "delta.ball");
+  const outcomes = record(ball.outcome, "delta.ball.outcome");
+  const assumptions = record(c.assumptions, "assumptions");
+
+  return {
+    fix: { id: text(fix.id, "fix.id"), amount: num(fix.amount, "fix.amount"), unit: text(fix.unit, "fix.unit") },
+    hand,
+    ghostIsReal,
+    you,
+    ghost,
+    metrics,
+    ball: {
+      outcome: { you: outcome(outcomes.you, "delta.ball.outcome.you"), ghost: outcome(outcomes.ghost, "delta.ball.outcome.ghost") },
+      speedKmh: change(ball.speedKmh, "delta.ball.speedKmh"),
+      frontWallHeightM: change(ball.frontWallHeightM, "delta.ball.frontWallHeightM"),
+      landingDepthM: change(ball.landingDepthM, "delta.ball.landingDepthM"),
+    },
+    assumptions: {
+      contactSpot: vec3(assumptions.contactSpot, "assumptions.contactSpot"),
+      note: typeof assumptions.note === "string" ? assumptions.note : "",
+    },
+  };
+}
+
+function parseFault(value: unknown, where: string): CoachFault {
+  const f = record(value, where);
+  return {
+    id: text(f.id, `${where}.id`),
+    label: text(f.label, `${where}.label`),
+    confidence: typeof f.confidence === "string" ? f.confidence : "unknown",
+    fix: text(f.fix, `${where}.fix`),
+    ghostReady: f.ghost_ready === true,
+  };
+}
+
+/** Checks an untrusted coach JSON value (coach_swing output). Throws CompareDataError. */
+export function parseCoach(value: unknown): CoachCaption {
+  const c = record(value, "file");
+  const fault = c.fault === null || c.fault === undefined ? null : parseFault(c.fault, "fault");
+  const faults = Array.isArray(c.faults)
+    ? c.faults.map((f: unknown, i: number) => parseFault(f, `faults[${i}]`))
+    : fault
+      ? [fault]
+      : [];
+  return { stroke: typeof c.stroke === "string" ? c.stroke : "", fault, cue: text(c.cue, "cue"), faults };
+}
