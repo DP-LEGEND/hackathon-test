@@ -218,6 +218,9 @@ export function GhostStage({
   // Joints drawn faded on your current frame, named so the fade is never only visual.
   const fadedNow = you ? [...new Set(fadedJointsAt(you.guessed, youFrame).map(jointWords))] : [];
   const fadedLabel = fadedNow.length > 2 ? `${fadedNow.slice(0, 2).join(", ")} +${fadedNow.length - 2}` : fadedNow.join(", ");
+  // Solid joints count as measured only on a frame the file marks, for every figure drawn.
+  const marked =
+    you !== null && you.guessed.recorded[youFrame] === true && (ghost === null || ghost.guessed.recorded[ghostFrame] === true);
   const ready = layout !== null;
   const error = sceneError
     ? { message: sceneError, onRetry: retryScene }
@@ -254,7 +257,7 @@ export function GhostStage({
         {ready && !error && children}
       </div>
 
-      {ready && !error && <JointLegend summary={guessSummary} />}
+      {ready && !error && <JointLegend summary={guessSummary} marked={marked} />}
 
       <div className="flex flex-col gap-3 rounded-xl border bg-card p-3 sm:p-4">
         <div className="relative pt-4">

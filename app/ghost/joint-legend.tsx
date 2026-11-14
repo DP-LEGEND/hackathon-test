@@ -1,17 +1,24 @@
 // Under the 3D view: solid = measured from video, faded and dashed = estimated because the
-// camera couldn't see it. When the file doesn't mark guessed joints, it says so rather than
-// let every solid joint pass for a measurement.
+// camera couldn't see it. On a frame the file doesn't mark, solid only means "not marked in this
+// file", never "measured": absence of a record is unknown, not a measurement.
 
 import { percentOf, type GuessSummary } from "./provenance";
 
-export function JointLegend({ summary }: { summary: GuessSummary | null }) {
+export function JointLegend({
+  summary,
+  marked,
+}: {
+  summary: GuessSummary | null;
+  /** The frame on screen carries its own guessed-joint record, for every figure drawn. */
+  marked: boolean;
+}) {
   const unrecorded = summary ? summary.totalFrames - summary.recordedFrames : 0;
   return (
     <div className="flex flex-wrap items-center gap-x-5 gap-y-1 px-1 text-xs text-muted-foreground">
       <span className="flex items-center gap-2">
         <span aria-hidden className="h-[3px] w-6 shrink-0 rounded-full bg-foreground/85" />
         <span>
-          <span className="text-foreground">Solid</span>: measured from video
+          <span className="text-foreground">Solid</span>: {marked ? "measured from video" : "not marked in this file"}
         </span>
       </span>
       <span className="flex items-center gap-2">

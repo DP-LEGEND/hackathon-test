@@ -2,11 +2,12 @@
 // threshold it crossed, then what it didn't judge and why. The fault library decides;
 // nothing here is computed.
 
-import { EyeOff, RotateCcw } from "lucide-react";
+import { RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { YOU_COLOUR } from "./colours";
-import { tidyLabel, type CaptionState } from "./coach-caption";
-import { faultName, fixName, formatValue, groupNotJudged, listWords, type CoachCaption } from "./compare";
+import { checkedEverything, tidyLabel, type CaptionState } from "./coach-caption";
+import { fixName, formatValue, listWords, notCheckedFaults, type CoachCaption } from "./compare";
+import { ReasonList } from "./reason-list";
 
 export function CoachDetails({ state }: { state: CaptionState }) {
   return (
@@ -32,9 +33,9 @@ export function CoachDetails({ state }: { state: CaptionState }) {
           </p>
           {state.caption.faults.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              {state.caption.notJudged.length > 0
-                ? "Every measurement the coach could judge is inside its threshold."
-                : "Every measurement is inside its threshold."}
+              {checkedEverything(state.caption)
+                ? "Every measurement is inside its threshold."
+                : "No fault found in what was checked: every measurement the coach could make is inside its threshold. What it couldn't check is below."}
             </p>
           ) : (
             <ol className="flex flex-col divide-y">
@@ -65,30 +66,17 @@ export function CoachDetails({ state }: { state: CaptionState }) {
 
 /**
  * Checks the coach skipped instead of judging them from a guessed joint, then every fault it
- * couldn't check, both as the coach listed them. Shown, never hidden.
+ * couldn't check (e.g. rolled_wrist without a wrist sensor), both as the coach listed them.
+ * Shown, never hidden.
  */
 function NotJudgedList({ caption }: { caption: CoachCaption }) {
-  const groups = groupNotJudged(caption.notJudged);
-  if (groups.length === 0 && caption.notMeasured.length === 0) return null;
+  if (checkedEverything(caption)) return null;
   return (
     <div className="flex flex-col gap-1.5 border-t pt-2">
-      {groups.length > 0 && (
-        <ul className="flex flex-col gap-1" aria-label="Not judged">
-          {groups.map((group) => (
-            <li key={group.reason} className="flex gap-2 text-sm">
-              <EyeOff aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-              <span>
-                <span className="font-medium">Not judged:</span> {listWords(group.checks)}.{" "}
-                <span className="text-muted-foreground">{group.reason.charAt(0).toUpperCase() + group.reason.slice(1)}.</span>
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
+      <ReasonList label="Not judged" items={caption.notJudged} />
       {caption.notMeasured.length > 0 && (
         <p className="text-xs text-muted-foreground">
-          Faults the coach couldn&apos;t check on this swing (a measurement is missing):{" "}
-          {listWords(caption.notMeasured.map(faultName))}.
+          Not checked on this swing (a measurement it needs is missing): {listWords(notCheckedFaults(caption))}.
         </p>
       )}
     </div>

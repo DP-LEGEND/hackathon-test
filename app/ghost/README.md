@@ -8,7 +8,7 @@ The demo flow has four steps: **pick a swing**, **the coach's call**, **the ghos
 | `sources.ts` | Swings from the swing API or the saved samples |
 | `ghost-stage.tsx`, `skeleton-scene.ts`, `skeleton-shape.ts` | The 3D view (three.js) and playback |
 | `compare.ts`, `swing.ts`, `wrist.ts` | Checks the JSON before anything is drawn |
-| `provenance.ts`, `joint-legend.tsx`, `prediction-panel.tsx` | Which joints were measured and which guessed, and "How this was predicted" |
+| `provenance.ts`, `joint-legend.tsx`, `prediction-panel.tsx`, `reason-list.tsx` | Which joints were measured and which guessed, what wasn't judged or measured, and "How this was predicted" |
 | `wrist-panel.tsx` | The Wrist sensor panel on the coach's call |
 
 ## Where swings come from
@@ -51,13 +51,14 @@ A guess is never drawn or written as a measurement. `provenance.ts` reads, per f
 - `frames[i].approximatedJoints` lists it, by index or by MediaPipe name (`right_wrist`, `RIGHT_WRIST` and `rightWrist` all work);
 - or `metadata.approximatedJoints` lists it, which covers the whole swing, so every frame.
 
-A list with the wrong length, or an entry that isn't a joint, is ignored. A file with none of these fields draws every joint solid, and the legend says the file doesn't mark guessed joints frame by frame: absence means unknown, not measured. Today's saved samples are like that. The ghost is your swing with one fix, so it also takes your flags frame for frame.
+A list with the wrong length, or an entry that isn't a joint, is ignored. A frame with none of these fields draws every joint solid, but absence means unknown, not measured, so the legend never calls those joints measured. The backhand sample has `filled` and `visibility` on every frame (#54). The forehand sample has neither. The ghost is your swing with one fix, so it also takes your flags frame for frame.
 
 - **3D view:** a guessed joint and every bone touching it are drawn at 35% of the figure's opacity, as thin dashes, on that frame only. The head fades with an ear and the neck with a shoulder. The frame counter names what's faded, e.g. `you f28 (est. right wrist)`, and the slider's screen-reader text says it too.
-- **Legend under the view:** solid = measured from video, faded = estimated (the camera couldn't see it).
+- **Legend under the view:** faded = estimated (the camera couldn't see it). Solid = measured from video, but only on a frame the file marks, for every figure drawn. On any other frame it reads "Solid: not marked in this file". A file with no frame marks also says so, and a partly marked file says how many frames aren't marked.
 - **"How this was predicted"** (collapsed, under everything): two-camera 3D pose and this swing's camera count (`source`, else `metadata.reconstruction`); how physics stands you on court from the racket head at contact; every input the ball model used, each with the label the compare response gives it (`ESTIMATE`, `ASSUMED`, `RECORDED`, …), never one the page makes up; and how many frames show a faded joint, with which joints and frames. The share of frames counts the joints the figure draws. Guessed points it doesn't draw (face, little fingers, thumbs) are listed on their own.
-- **Coach:** the checks the coach skipped because they'd read a guessed joint (`metrics.guessed_joints`, plus the older `stance_skipped` / `wrist_skipped`) show as "Not judged: … The camera couldn't see the right wrist (filled at frame 26)." `not_measured` lists the faults it couldn't check. With no fault left to call, the caption says "No fault found in what the camera could see".
-- **What the fix changes:** physics doesn't check for guessed joints yet. Where the coach says a measurement with the same name reads one (e.g. `stance_open_deg`), that row says "Not a measurement" and why.
+- **Coach:** the checks the coach skipped because they'd read a guessed joint (`metrics.guessed_joints`, plus the older `stance_skipped` / `wrist_skipped`) show as "Not judged: … The camera couldn't see the right elbow (visibility 0.41 at contact)." `not_measured` lists the faults it couldn't check. `rolled_wrist` carries the coach's `wrist_sensor_skipped` reason, e.g. "no wrist sensor data for this swing". The caption says plain "No fault found" only when nothing was skipped. Otherwise it says "No fault found in what was checked" and lists what wasn't checked, and the coach details say the same.
+- **What the fix changes:** physics leaves out any body measurement that reads a guessed joint and lists it in compare's `notMeasured` ({measurement: why}). The card lists those as "Not measured: … and why" under the table. On the Ball card, physics keeps ball speed and racket speed but flags them (`ball_speed`, `racket_speed`), so those rows say "Not a measurement" and why. A row the coach says reads a guessed joint says so too.
+- **No correction:** when a fix would edit a guessed joint, the live service returns the unchanged comparison with `noCorrection: true` and the reason in `ghostNote`. Both cards then show that reason. The ghost's key reads "no correction: your swing unchanged", and "This fix changes your body position, not the ball" is hidden, because nothing was changed.
 
 To see it, serve a swing with flags through the live service. Write a folder holding the swing file and a `manifest.json` of `{"files": ["<swing>.json"]}`, then point `GHOST_SWINGS_DIR` at that folder.
 

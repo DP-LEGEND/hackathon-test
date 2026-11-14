@@ -1,12 +1,12 @@
 // Coach caption laid over the 3D view, like a subtitle: the top fault, its cue and, when the
 // ghost shows a different fix, the coach's ghost_note. Orange = what the player did (the
-// fault), cyan = the fix (the cue).
+// fault), cyan = the fix (the cue). "No fault" never claims more than the coach checked.
 
 import { RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { GHOST_COLOUR, YOU_COLOUR } from "./colours";
-import { groupNotJudged, listWords, type CoachCaption } from "./compare";
+import { groupNotJudged, listWords, notCheckedFaults, type CoachCaption } from "./compare";
 
 export type CaptionState =
   | { kind: "loading" }
@@ -16,6 +16,15 @@ export type CaptionState =
 /** "Stance 80 deg open" -> "Stance 80° open". Wording only; the number is the file's. */
 export function tidyLabel(label: string): string {
   return label.replace(/(\d) deg\b/g, "$1°");
+}
+
+/**
+ * The coach judged every check and could check every fault. False when it skipped a check over a
+ * guessed joint (`notJudged`) or listed a fault it couldn't check (`notMeasured`, e.g. rolled_wrist
+ * without a wrist sensor): then "no fault" only covers what was checked.
+ */
+export function checkedEverything(caption: CoachCaption): boolean {
+  return caption.notJudged.length === 0 && caption.notMeasured.length === 0;
 }
 
 export function CoachCaptionBar({ state, size }: { state: CaptionState; size: "large" | "compact" }) {
@@ -54,9 +63,9 @@ export function CoachCaptionBar({ state, size }: { state: CaptionState; size: "l
             >
               {state.caption.fault
                 ? tidyLabel(state.caption.fault.label)
-                : state.caption.notJudged.length > 0
-                  ? "No fault found in what the camera could see"
-                  : "No fault found"}
+                : checkedEverything(state.caption)
+                  ? "No fault found"
+                  : "No fault found in what was checked"}
             </p>
             <blockquote
               className={cn(
@@ -72,7 +81,7 @@ export function CoachCaptionBar({ state, size }: { state: CaptionState; size: "l
                 {state.caption.ghostNote}
               </p>
             )}
-            <NotJudgedNote caption={state.caption} large={large} />
+            <UncheckedNote caption={state.caption} large={large} />
           </>
         )}
       </figure>
@@ -80,16 +89,28 @@ export function CoachCaptionBar({ state, size }: { state: CaptionState; size: "l
   );
 }
 
-/** One line saying some checks weren't judged, and which joints the camera couldn't see. */
-function NotJudgedNote({ caption, large }: { caption: CoachCaption; large: boolean }) {
+/**
+ * What the coach didn't check, so "no fault" never reads as every fault ruled out: the faults it
+ * couldn't check (only when it names no fault; the details list them either way), then how many
+ * checks it skipped and which joints the camera couldn't see.
+ */
+function UncheckedNote({ caption, large }: { caption: CoachCaption; large: boolean }) {
   const groups = groupNotJudged(caption.notJudged);
-  if (groups.length === 0) return null;
   const checks = new Set(groups.flatMap((g) => g.checks)).size;
   const joints = [...new Set(groups.map((g) => g.joint).filter((j): j is string => j !== null))];
+  const faults = caption.fault ? [] : notCheckedFaults(caption);
+  const lines = [
+    faults.length > 0 ? `Not checked: ${listWords(faults)}.` : "",
+    checks > 0
+      ? `Not judged: ${checks} ${checks === 1 ? "check" : "checks"}${
+          joints.length > 0 ? `, because the camera couldn't see the ${listWords(joints)}` : ""
+        }.`
+      : "",
+  ].filter(Boolean);
+  if (lines.length === 0) return null;
   return (
     <p className={cn("mt-1.5 text-balance text-muted-foreground", large ? "text-sm sm:text-base" : "text-xs sm:text-sm")}>
-      Not judged: {checks} {checks === 1 ? "check" : "checks"}
-      {joints.length > 0 && `, because the camera couldn't see the ${listWords(joints)}`}.
+      {lines.join(" ")}
     </p>
   );
 }

@@ -50,6 +50,18 @@ export type CompareResult = {
   coordinateSystem: string | null;
   /** Where the ball model's inputs came from, with physics' own labels. */
   howPredicted: HowPredicted;
+  /**
+   * The service's `noCorrection`: physics refused this fix (it would edit a guessed joint), so the
+   * ghost is your swing unchanged, amount 0. False when the file doesn't say.
+   */
+  noCorrection: boolean;
+  /** The service's `ghostNote`: why there is no correction. Null when absent. */
+  ghostNote: string | null;
+  /**
+   * compare's `notMeasured` ({measurement: why}): body measurements physics left out, and
+   * racket_speed / ball_speed it kept but flagged, because they read a guessed joint. Empty in older files.
+   */
+  notMeasured: NotJudged[];
 };
 
 /** One input to the court placement or the ball model, with the label physics gave it. */
@@ -64,6 +76,8 @@ export type LaunchFact = {
   method: string | null;
   /** The ghost's label, only when it differs from yours. */
   ghostLabel: string | null;
+  /** Physics' reason when this input reads a guessed joint (compare `notMeasured`), else null. */
+  guessed: string | null;
 };
 
 export type HowPredicted = {
@@ -201,6 +215,7 @@ const CHECK_NAMES: Record<string, string> = {
   wrist_angle_change_pre_deg: "wrist angle change before contact",
   elbow_at_contact_deg: "elbow angle at contact",
   elbow_min_before_deg: "elbow bend before contact",
+  wrist_at_contact_deg: "wrist angle at contact",
   shoulder_turn_deg: "shoulder turn",
   hip_turn_range_deg: "hip turn",
   stance_open_deg: "stance angle",
@@ -220,15 +235,34 @@ export function faultName(id: string): string {
 }
 
 /**
- * The coach's reason in words: "joint 16 filled at frame 22" -> "the camera couldn't see the
- * right wrist (filled at frame 22)". Anything else is shown as the coach wrote it.
+ * The faults the coach couldn't check (`not_measured`), in words, with the coach's reason where
+ * it gives one. Only the sensor fault comes with one: per docs/interfaces.md, `rolled_wrist` is
+ * listed when the forearm sensor wasn't used, and `metrics.wrist_sensor_skipped` says why.
+ */
+export function notCheckedFaults(caption: CoachCaption): string[] {
+  return caption.notMeasured.map((id) => {
+    const why = id === "rolled_wrist" ? caption.wristSensor.skipped : null;
+    return why ? `${faultName(id)} (${why})` : faultName(id);
+  });
+}
+
+/**
+ * A coach or physics reason in words: "joint 16 filled at frame 22" -> "the camera couldn't see
+ * the right wrist (filled at frame 22)". Each "; " part is read on its own, so "racket speed reads
+ * the hitting wrist ...; joint 16 visibility 0.32 at contact" keeps its first half as written.
+ * Anything else is shown as the file wrote it.
  */
 export function notJudgedReason(why: string): { joint: string | null; text: string } {
-  const match = /^joint (\d+)\b\s*(.*)$/.exec(why);
-  if (!match) return { joint: null, text: why };
-  const joint = jointWords(Number(match[1]));
-  const detail = match[2].trim();
-  return { joint, text: `the camera couldn't see the ${joint}${detail ? ` (${detail})` : ""}` };
+  let joint: string | null = null;
+  const parts = why.split(/;\s*/).map((part) => {
+    const match = /^joint (\d+)\b\s*(.*)$/.exec(part.trim());
+    if (!match) return part.trim();
+    const words = jointWords(Number(match[1]));
+    joint ??= words;
+    const detail = match[2].trim();
+    return `the camera couldn't see the ${words}${detail ? ` (${detail})` : ""}`;
+  });
+  return { joint, text: parts.filter(Boolean).join("; ") };
 }
 
 /** Not-judged checks grouped by reason, so one guessed wrist reads as one line. */
@@ -396,17 +430,26 @@ const STROKE_SOURCES: Record<string, string> = {
  * Every input the file labels, read as written. Court-coordinate files (physics #42) label each
  * one; older files only label racket speed and give the rest as plain numbers (label null).
  */
-function readHowPredicted(c: Record<string, unknown>, assumptions: Record<string, unknown>): HowPredicted {
+function readHowPredicted(
+  c: Record<string, unknown>,
+  assumptions: Record<string, unknown>,
+  notMeasured: NotJudged[],
+): HowPredicted {
   const facts: LaunchFact[] = [];
-  const add = (fact: Omit<LaunchFact, "ghostLabel">, ghostLabel: string | null = null) =>
-    facts.push({ ...fact, ghostLabel: ghostLabel !== null && ghostLabel !== fact.label ? ghostLabel : null });
+  const add = (fact: Omit<LaunchFact, "ghostLabel" | "guessed">, ghostLabel: string | null = null, guessed: string | null = null) =>
+    facts.push({ ...fact, ghostLabel: ghostLabel !== null && ghostLabel !== fact.label ? ghostLabel : null, guessed });
   const unit = (r: Record<string, unknown>, fallback: string) => (typeof r.unit === "string" ? r.unit : fallback);
 
   const youSpeed = optional(optional(c.you)?.racketSpeed);
   if (youSpeed && isFiniteNumber(youSpeed.value)) {
     const value = formatValue(youSpeed.value, unit(youSpeed, "m/s"));
     const ghostSpeed = optional(optional(c.ghost)?.racketSpeed);
-    add({ key: "racketSpeed", name: "Racket speed", value, label: labelOf(youSpeed), method: methodOf(youSpeed) }, labelOf(ghostSpeed));
+    const guessed = notMeasured.find((n) => n.measurement === "racket_speed")?.why ?? null;
+    add(
+      { key: "racketSpeed", name: "Racket speed", value, label: labelOf(youSpeed), method: methodOf(youSpeed) },
+      labelOf(ghostSpeed),
+      guessed,
+    );
   }
 
   const launch = optional(assumptions.launch);
@@ -481,6 +524,7 @@ export function parseCompare(value: unknown): CompareResult {
   const ball = record(delta.ball, "delta.ball");
   const outcomes = record(ball.outcome, "delta.ball.outcome");
   const assumptions = record(c.assumptions, "assumptions");
+  const notMeasured = readReasons(c.notMeasured);
 
   return {
     fix: { id: text(fix.id, "fix.id"), amount: num(fix.amount, "fix.amount"), unit: text(fix.unit, "fix.unit") },
@@ -500,7 +544,10 @@ export function parseCompare(value: unknown): CompareResult {
       contactSpot: vec3(assumptions.contactSpot, "assumptions.contactSpot"),
       note: typeof assumptions.note === "string" ? assumptions.note : "",
     },
-    howPredicted: readHowPredicted(c, assumptions),
+    howPredicted: readHowPredicted(c, assumptions, notMeasured),
+    noCorrection: c.noCorrection === true,
+    ghostNote: typeof c.ghostNote === "string" && c.ghostNote.trim() !== "" ? c.ghostNote.trim() : null,
+    notMeasured,
   };
 }
 
@@ -621,16 +668,20 @@ function parseWristSensor(metrics: unknown): CoachWristSensor {
   };
 }
 
+/** A {measurement: why} object (coach `guessed_joints`, compare `notMeasured`). Never throws: anything else is empty. */
+function readReasons(value: unknown): NotJudged[] {
+  return Object.entries(optional(value) ?? {}).flatMap(([measurement, why]) =>
+    measurement !== "" && typeof why === "string" && why.trim() !== "" ? [{ measurement, why: why.trim() }] : [],
+  );
+}
+
 /**
  * What the coach skipped rather than judge from a guessed joint: `metrics.guessed_joints`
  * ({measurement: why}, coach #38), plus the older `stance_skipped` / `wrist_skipped` reasons
  * ("; "-joined) where guessed_joints doesn't already give the same one.
  */
 function readNotJudged(metrics: Record<string, unknown>): NotJudged[] {
-  const out: NotJudged[] = [];
-  for (const [measurement, why] of Object.entries(optional(metrics.guessed_joints) ?? {})) {
-    if (typeof why === "string" && why !== "") out.push({ measurement, why });
-  }
+  const out = readReasons(metrics.guessed_joints);
   for (const [area, skipped] of [["stance", metrics.stance_skipped], ["wrist", metrics.wrist_skipped]] as const) {
     if (typeof skipped !== "string") continue;
     for (const why of skipped.split(";").map((s) => s.trim()).filter(Boolean)) {

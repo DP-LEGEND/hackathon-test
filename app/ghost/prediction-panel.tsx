@@ -7,7 +7,7 @@ import type { ReactNode } from "react";
 import { ChevronRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { listWords, type CompareResult, type LaunchFact } from "./compare";
+import { listWords, notJudgedReason, type CompareResult, type LaunchFact } from "./compare";
 import { formatFrameRanges, MIN_VISIBILITY, percentOf, summariseGuesses, type GuessField, type GuessSummary } from "./provenance";
 import type { LoadedSwing } from "./swing";
 
@@ -76,8 +76,9 @@ export function PredictionPanel({ you, compare }: { you: LoadedSwing; compare: C
           <p>
             Faded, dashed joints were filled in: the camera couldn&apos;t see them on those frames, so the pipeline
             interpolated them from nearby frames or copied them from a neighbouring joint. They keep the skeleton whole but
-            they aren&apos;t measurements: the coach skips any check that would read one. Physics doesn&apos;t check for them
-            yet, so where the coach says one of the ghost&apos;s numbers reads a faded joint, that row says so.
+            they aren&apos;t measurements. The coach skips any check that would read one, physics leaves those body
+            measurements out of the ghost comparison and flags a racket or ball speed that reads one, and the page lists
+            each of them with the reason instead of hiding it.
           </p>
           <GuessStats summary={guesses} />
         </Part>
@@ -137,6 +138,9 @@ function FactList({ facts }: { facts: LaunchFact[] }) {
           <dd className="flex flex-col gap-0.5">
             <span className="tabular-nums">{fact.value}</span>
             {fact.method && <span className="text-xs text-pretty text-muted-foreground">{fact.method}</span>}
+            {fact.guessed && (
+              <span className="text-xs text-pretty">Not a measurement: {notJudgedReason(fact.guessed).text}.</span>
+            )}
           </dd>
           <dd className="flex flex-wrap items-center gap-1.5">
             <LabelBadge label={fact.label} />
