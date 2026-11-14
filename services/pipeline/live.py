@@ -11,7 +11,7 @@ import wave
 import numpy as np
 
 from coach.agent import coach_swing
-from physics.compare import compare
+from physics.compare import GuessedFixError, compare, decide_stroke
 from physics.ghost import FIXES
 from pipeline.pose import DEFAULT_MODEL, extract_raw
 from pipeline.process import Options, swings_from_raw
@@ -126,16 +126,16 @@ def process_live_clip(clip: Path, output: Path, options: LiveOptions = LiveOptio
                 metadata['strokeSource'] = 'coach-inferred'
             else:
                 swing['stroke'] = stroke
+            # Decide the stroke once, before coaching, so advice, ghost fix and ball path agree:
+            # the skeleton beats a guessed label (physics swing_stroke); if it can't tell, the coach infers.
+            decided, source = decide_stroke(swing, metadata['hand'])
+            if source.startswith('measured'):
+                stroke = swing['stroke'] = metadata['stroke'] = decided
+                metadata['strokeSource'] = source
             coached = coach_swing(swing, stroke=stroke, fps_real=swing['fpsReal'])
             metadata['stroke'] = stroke or coached['stroke']
             swing['stroke'] = metadata['stroke']
-            chosen_fix, chosen_amount = ghost_choice(coached)
-            ready = chosen_fix is not None
-            # No-fault swings get an unchanged comparison, explicitly marked as such.
-            fix = chosen_fix if ready else 'straighten_elbow'
-            amount = chosen_amount if ready else 0.0
-            comparison = compare(swing, fix, amount, fps_real=swing['fpsReal'], hand=metadata['hand'])
-            comparison['noCorrection'] = not ready
+            comparison = live_comparison(swing, coached, metadata['hand'])
             name = f"{swing['id']}.json"
             files.append(name)
             (stage / name).write_text(json.dumps(swing, allow_nan=False), encoding='utf-8')
@@ -176,6 +176,29 @@ def peak_wrist_speed(swing: dict) -> float:
     speed = np.linalg.norm(np.gradient(relative, axis=0), axis=1) * swing['fpsReal']
     finite = speed[np.isfinite(speed)]
     return float(finite.max()) if len(finite) else float('nan')
+
+
+def live_comparison(swing: dict, coached: dict, hand: str) -> dict:
+    """The comparison a live clip publishes. Never aborts the clip.
+
+    No-fault swings, and swings whose chosen fix would edit a joint the camera couldn't
+    see (GuessedFixError), get an unchanged comparison (amount 0) with noCorrection true;
+    the reason goes into the coach output's ghost_note.
+    """
+    chosen_fix, chosen_amount = ghost_choice(coached)
+    if chosen_fix is not None:
+        try:
+            comparison = compare(swing, chosen_fix, chosen_amount, fps_real=swing['fpsReal'], hand=hand)
+            comparison['noCorrection'] = False
+            return comparison
+        except GuessedFixError as exc:
+            coached['ghost_note'] = str(exc)
+            fix = chosen_fix
+    else:
+        fix = 'straighten_elbow'
+    comparison = compare(swing, fix, 0.0, fps_real=swing['fpsReal'], hand=hand)
+    comparison['noCorrection'] = True
+    return comparison
 
 
 def ghost_choice(coached: dict) -> tuple[str | None, float | None]:

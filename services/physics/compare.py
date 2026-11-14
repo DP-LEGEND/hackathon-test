@@ -20,7 +20,7 @@ Where the ball model's inputs come from (physics/ball.py):
   "audio-transient", else the pipeline's wrist-speed estimate; `contactMethod` says which.
 - Stroke (forehand or backhand) picks the anchor and the default elevation: given, else the
   pipeline's label, else measured from the skeleton (ESTIMATE), else forehand labelled ASSUMED.
-  A label from the pipeline's auto classifier is checked against the skeleton first.
+  A label the pipeline's classifier or the coach guessed is checked against the skeleton first.
 - Launch point: each swing's racket head at contact, height above the lowest foot MEASURED.
   Yours sits over the ASSUMED anchor, the drive spot for the stroke (DRIVE_SPOT_RIGHT_HANDED,
   mirrored for a left-hander). The ghost's is wherever its racket head ends up with your
@@ -167,7 +167,13 @@ def ball_contact(swing: dict, P: np.ndarray, hand: str) -> tuple[int, str]:
     return int(np.nanargmax(v)), "wrist-speed-peak-estimate"
 
 
+# metadata.strokeSource values that mean a machine guessed the stroke label: the pipeline's
+# classifier ("auto") or, for an ambiguous stroke, the coach (pipeline/live.py "coach-inferred").
+AUTO_STROKE_SOURCES = ("auto", "coach-inferred")
 AUTO_LABEL_OVERRIDDEN = "measured (auto label overridden)"
+# strokeSource values a caller writes back after decide_stroke() measured the stroke from the
+# skeleton (pipeline/live.py does, before coaching). compare() carries them through as ESTIMATE.
+MEASURED_STROKE_SOURCES = ("measured", AUTO_LABEL_OVERRIDDEN)
 STROKE_LABELS = {"given": "RECORDED", "recorded": "RECORDED", "measured": "ESTIMATE",
                  AUTO_LABEL_OVERRIDDEN: "ESTIMATE", "assumed": "ASSUMED"}
 
@@ -192,13 +198,14 @@ def swing_stroke(swing: dict, P: np.ndarray, hand: str, contact: int, side: str 
     """("forehand" | "backhand", where it came from). It picks the anchor and the default elevation.
 
     "given": `side`, e.g. the stroke the coach was told. "recorded": the pipeline's label
-    (swing["stroke"] or swing["side"]). A label from the pipeline's auto classifier
-    (metadata.strokeSource "auto") is checked against the skeleton first, and the skeleton wins
-    when they disagree: AUTO_LABEL_OVERRIDDEN. "measured": no label, so the skeleton
-    (_measured_stroke). "assumed": nothing works, so it is a forehand, labelled ASSUMED. Never a
-    silent default.
+    (swing["stroke"] or swing["side"]). A machine-guessed label (metadata.strokeSource in
+    AUTO_STROKE_SOURCES: the pipeline's classifier or the coach) is checked against the skeleton
+    first, and the skeleton wins when they disagree: AUTO_LABEL_OVERRIDDEN. "measured": no label,
+    so the skeleton (_measured_stroke). "assumed": nothing works, so it is a forehand, labelled
+    ASSUMED. Never a silent default. A stroke a caller already measured and wrote back
+    (strokeSource in MEASURED_STROKE_SOURCES, e.g. pipeline/live.py before coaching) is kept.
 
-    Why the skeleton can beat an auto label: the coach's and the pipeline's classifiers measure
+    Why the skeleton can beat a guessed label: the coach's and the pipeline's classifiers measure
     along the shoulder line, which turns side-on at contact, and both call the labelled IMG_2116
     backhand a forehand. Manual labels, side= and files without strokeSource are trusted as is.
     """
@@ -208,13 +215,28 @@ def swing_stroke(swing: dict, P: np.ndarray, hand: str, contact: int, side: str 
         return side, "given"
     label = next((swing[key] for key in ("stroke", "side") if swing.get(key) in SIDES), None)
     meta = swing.get("metadata")
-    auto = isinstance(meta, dict) and meta.get("strokeSource") == "auto"
+    source = meta.get("strokeSource") if isinstance(meta, dict) else None
+    if label is not None and source in MEASURED_STROKE_SOURCES:
+        return label, source  # already measured from this skeleton (decide_stroke) before coaching
+    auto = source in AUTO_STROKE_SOURCES
     if label is not None and not auto:
         return label, "recorded"
     measured = _measured_stroke(P, hand, contact)
     if label is not None:
         return (measured, AUTO_LABEL_OVERRIDDEN) if measured not in (None, label) else (label, "recorded")
     return (measured, "measured") if measured is not None else ("forehand", "assumed")
+
+
+def decide_stroke(swing: dict, hand: str | None = None) -> tuple[str, str]:
+    """swing_stroke() for a whole swing dict: the stroke compare() will use, and its source.
+
+    For callers that must agree with compare() before it runs. pipeline/live.py coaches with
+    this stroke, so the advice, the ghost fix and the ball path all use one stroke.
+    """
+    P = to_array(swing)
+    hand = hand or swing_hand(swing, P)
+    contact, _ = ball_contact(swing, P, hand)
+    return swing_stroke(swing, P, hand, contact)
 
 
 def drive_spot(hand: str, side: str) -> tuple[float, float]:
@@ -295,6 +317,60 @@ def _on_court(swing: dict, fps_real, hand: str, contact: int, shift: np.ndarray,
     return side, {"point": point, "azimuth": azimuth}
 
 
+def guessed_metrics(swing: dict, hand: str, contact: int, fps: float) -> dict[str, str]:
+    """{compare metric: why} for every METRICS entry that reads a joint the pipeline guessed.
+
+    Same rule as the coach (coach.measure_extra): a joint listed in metadata.approximatedJoints,
+    marked true in frames[i].filled on a frame the metric reads, or below 0.5 visibility at
+    contact. stance_open_deg here is the hitting-direction angle, so it is guessed whenever
+    the hitting wrist around contact is (the coach may judge stance from the feet instead,
+    but that is a different number). Files without flags give {} (absence means unknown).
+    """
+    from coach.measure_extra import _guessed_why, _per_joint, guessed_measurements
+
+    out = {k: why for k, why in guessed_measurements(swing, hand, contact, fps).items() if k in METRICS}
+    frames = swing.get("frames") or []
+    if frames and "wrist_at_contact_deg" in METRICS:
+        c = int(np.clip(contact, 0, len(frames) - 1))
+        listed = set((swing.get("metadata") or {}).get("approximatedJoints") or [])
+        vis = _per_joint(frames[c], "visibility")
+        a = ARM[hand]
+        why = next((w for j in (a["el"], a["wr"], a["index"])
+                    if (w := _guessed_why(j, listed, frames, range(c, c + 1), vis))), None)
+        if why:
+            out["wrist_at_contact_deg"] = why
+        # Racket speed (and so the PREDICTED ball speed) reads the hitting wrist's speed over
+        # the frames around contact and the elbow->wrist forearm: if either is guessed there,
+        # the numbers are still shown but flagged as not measured.
+        span = range(max(0, c - 2), min(len(frames), c + 3))
+        why = next((w for j in (a["wr"], a["el"]) if (w := _guessed_why(j, listed, frames, span, vis))), None)
+        if why:
+            reason = f"racket speed reads the hitting wrist and elbow around contact; {why}"
+            out["racket_speed"] = reason
+            out["ball_speed"] = reason
+    return out
+
+
+# Fix -> the measurement it edits, and the joint that measurement needs around contact.
+FIX_TARGETS = {
+    "straighten_elbow": ("elbow_at_contact_deg", "elbow"),
+    "bend_elbow": ("elbow_at_contact_deg", "elbow"),
+    "hold_wrist_cock": ("wrist_release_ms", "wrist"),
+    "close_stance": ("stance_open_deg", "wrist"),  # stance is measured against the wrist's direction
+    "turn_shoulders_more": ("shoulder_turn_deg", "shoulder"),
+    "turn_shoulders_less": ("shoulder_turn_deg", "shoulder"),
+}
+
+
+class GuessedFixError(ValueError):
+    """The fix edits a measurement the camera couldn't make on this swing."""
+
+
+def _drop_guessed(side: dict, guessed: dict[str, str]) -> None:
+    for k in guessed:
+        side["metrics"].pop(k, None)
+
+
 def _change(a, b, nd: int = 1) -> dict:
     return {"you": a, "ghost": b, "change": None if a is None or b is None else round(b - a, nd)}
 
@@ -310,7 +386,8 @@ def _fmt(x, unit: str = "") -> str:
 def _delta(you: dict, ghost: dict) -> dict:
     metrics = {}
     for k, (unit, _) in METRICS.items():
-        metrics[k] = {**_change(you["metrics"][k], ghost["metrics"][k]), "unit": unit}
+        if k in you["metrics"] and k in ghost["metrics"]:
+            metrics[k] = {**_change(you["metrics"][k], ghost["metrics"][k]), "unit": unit}
     yb, gb = you["ball"], ghost["ball"]
     ball = {
         "predicted": True,
@@ -323,8 +400,8 @@ def _delta(you: dict, ghost: dict) -> dict:
     }
     summary = []
     for k, (unit, words) in METRICS.items():
-        d = metrics[k]
-        if d["change"]:
+        d = metrics.get(k)
+        if d and d["change"]:
             summary.append(f"{words} {_fmt(d['you'])} -> {_fmt(d['ghost'])} {unit} ({d['change']:+g})")
     depth = ball["landingDepthM"]
     summary.append(
@@ -368,10 +445,22 @@ def compare(swing: dict, fix_name: str, amount: float, fps_real: float | None = 
     elevation = float(elevation_deg) if given_elevation else DEFAULT_ELEVATION_DEG[stroke]
     shift = court_shift(P, hand, contact, anchor)  # from YOUR racket head; the ghost reuses it
     played = {**swing, "contactFrame": contact}
+    # Never show a number read from a guessed joint, and never edit one: refuse a fix whose
+    # target measurement is guessed, and leave guessed metrics out (listed in notMeasured).
+    guessed = guessed_metrics(played, hand, contact, real_fps(swing, fps_real))
+    target = FIX_TARGETS.get(fix_name)
+    if target and target[0] in guessed and float(amount) != 0.0:  # amount 0 = "unchanged", always allowed
+        side_name = "right" if hand == "R" else "left"
+        raise GuessedFixError(f"Not available on this swing: the camera couldn't see the {side_name} {target[1]} "
+                              "around contact (guessed joints), so a ghost of this fix would edit a guess.")
     ghost_swing = apply_fix(played, fix_name, amount, fps_real, hand)
 
     you, you_launch = _on_court(played, fps_real, hand, contact, shift, elevation)
     ghost, ghost_launch = _on_court(ghost_swing, fps_real, hand, contact, shift, elevation)
+    # The ghost inherits your frames' flags, so the same metrics are left out on both sides.
+    _drop_guessed(you, guessed)
+    _drop_guessed(ghost, guessed)
+    delta = _delta(you, ghost)
     edit, _ = FIXES[fix_name]
     return {
         "fix": {"id": fix_name, "amount": float(amount), "unit": EDITS[edit]["unit"]},
@@ -382,7 +471,8 @@ def compare(swing: dict, fix_name: str, amount: float, fps_real: float | None = 
         "coordinateSystem": "court",
         "you": you,
         "ghost": ghost,
-        "delta": _delta(you, ghost),
+        "delta": delta,
+        "notMeasured": guessed,
         "assumptions": {
             "stroke": {"value": stroke, "source": stroke_source, "label": STROKE_LABELS[stroke_source]},
             "anchor": {
