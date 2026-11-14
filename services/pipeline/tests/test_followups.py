@@ -42,15 +42,19 @@ def test_tap_spacing():
     assert len(found)==1
     assert find_swings(motion_clip(kind='walk'),min_speed=7,speed_fallback=True)==[]
 
-def test_fallback_metadata_and_gate(stereo_pair):
+def test_fallback_metadata_and_gate(stereo_pair, monkeypatch):
+    import pipeline.process as process
     a,b,*_=stereo_pair
-    a['img'][:,16,0]=700+200*(1+np.tanh((a['t']-.8)/.035))/2
-    swings,_=swings_from_raw(a,b)
+    # A speed-only proposal must still have real 3D motion and tracked core joints.
+    monkeypatch.setattr(process, 'find_swings', lambda *args, **kwargs: [
+        {'start': 0, 'end': 114, 'peak': 72, 'speed': 10, 'detection': 'speed_peak'}])
+    swings,_=swings_from_raw(a,b,Options(hand='R'))
     assert swings and swings[0]['metadata']['detection']=='speed_peak'
     a['vis'][60:150,13]=0
-    _,report=swings_from_raw(a,b)
+    b['vis'][60:150,13]=0
+    _,report=swings_from_raw(a,b,Options(hand='R'))
     assert '13' in report['rejected'][0]['reason']
-    assert report['rejected'][0]['sourcePeakSeconds']==pytest.approx(.8,abs=.05)
+    assert report['rejected'][0]['sourcePeakSeconds']==pytest.approx(.6)
 
 def test_pipeline_switches(stereo_pair,monkeypatch):
     import pipeline.process as process
@@ -62,6 +66,8 @@ def test_pipeline_switches(stereo_pair,monkeypatch):
         n=len(raw['t'])
         return [{'start':2,'end':n-3,'peak':n//2,'speed':10,'detection':'speed_peak'}]
     monkeypatch.setattr(process,'find_swings',detection)
+    # This test injects artificial rate-section events, not physical swings.
+    monkeypatch.setattr(process, 'swing_evidence', lambda *args: {})
     swings,report=swings_from_raw(a,b,Options(slowdown_a=4,a_realtime_before=1,a_realtime_after=5))
     assert report['written']==3
     assert [s['fpsReal'] for s in swings]==[30,120,30]
@@ -103,7 +109,8 @@ def test_occluded_windup_edge_is_cropped_not_fabricated(stereo_pair, monkeypatch
     monkeypatch.setattr(process, 'find_swings', lambda *args, **kwargs: [
         {'start': 0, 'end': 110, 'peak': 72, 'speed': 10, 'detection': 'speed_peak'}])
     a['vis'][:35, 13] = 0  # unbounded gap cannot be interpolated
-    swings, report = swings_from_raw(a, b)
+    b['vis'][:35, 13] = 0
+    swings, report = swings_from_raw(a, b, Options(hand='R'))
     assert report['written'] == 1
     assert swings[0]['metadata']['croppedForCoreVisibility']
     assert swings[0]['metadata']['sourceStartFrame'] == 35
