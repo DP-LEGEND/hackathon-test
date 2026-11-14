@@ -471,11 +471,23 @@ export type CoachVoice = {
   wordedByClaude: boolean;
 };
 
-/** Only audio the service made itself plays: an inline data: clip or a same-origin path. */
+/**
+ * Only audio the service made itself plays: an inline data:audio clip, or a path on this site.
+ * A path must start with exactly one "/", have no backslash (browsers read "/\host" as "//host",
+ * another site) and resolve to this page's origin. Anything that doesn't parse is refused. On
+ * the server there's no origin to check against, so only the inline clip passes there.
+ */
 function playableAudio(value: unknown): string | null {
   if (typeof value !== "string") return null;
   if (/^data:audio\/[\w.+-]+;base64,/i.test(value)) return value;
-  return value.startsWith("/") && !value.startsWith("//") ? value : null;
+  if (typeof window === "undefined") return null;
+  if (!value.startsWith("/") || value.startsWith("//") || value.includes("\\")) return null;
+  try {
+    const origin = window.location.origin;
+    return new URL(value, origin).origin === origin ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Checks an untrusted voice answer. Throws CompareDataError unless it has a usable cue. */

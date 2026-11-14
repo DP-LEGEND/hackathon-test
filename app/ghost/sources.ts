@@ -21,7 +21,10 @@ const API = "/api"; // the proxy answers 502 when the Python service isn't runni
 const SAMPLES_DIR = "/swings";
 const API_LIST_TIMEOUT_MS = 4000;
 const API_TIMEOUT_MS = 30000; // coach and compare run physics on the server
-const VOICE_TIMEOUT_MS = 60000; // a first voice call waits on Claude, then ElevenLabs
+// A first voice call waits on Claude, then the TTS. The web proxy (app/api/[...path]/route.ts)
+// aborts at 30 s, and the voice service keeps Claude plus TTS under about 25 s, so give up just
+// before the proxy would.
+const VOICE_TIMEOUT_MS = 28000;
 
 /** One fix the picker offers for a swing. */
 export type FixOption = {
