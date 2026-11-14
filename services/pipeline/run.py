@@ -14,7 +14,7 @@ def main() -> None:
         print("usage: python -m pipeline.run <clip>")
         sys.exit(1)
     swing = extract_pose(sys.argv[1])
-    print(json.dumps(swing)[:500])
+    print(json.dumps(swing))
 
 
 if __name__ == "__main__":
