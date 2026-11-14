@@ -11,7 +11,7 @@ import wave
 import numpy as np
 
 from coach.agent import coach_swing
-from physics.compare import compare
+from physics.compare import compare, decide_stroke
 from physics.ghost import FIXES
 from pipeline.pose import DEFAULT_MODEL, extract_raw
 from pipeline.process import Options, swings_from_raw
@@ -126,6 +126,12 @@ def process_live_clip(clip: Path, output: Path, options: LiveOptions = LiveOptio
                 metadata['strokeSource'] = 'coach-inferred'
             else:
                 swing['stroke'] = stroke
+            # Decide the stroke once, before coaching, so advice, ghost fix and ball path agree:
+            # the skeleton beats a guessed label (physics swing_stroke); if it can't tell, the coach infers.
+            decided, source = decide_stroke(swing, metadata['hand'])
+            if source.startswith('measured'):
+                stroke = swing['stroke'] = metadata['stroke'] = decided
+                metadata['strokeSource'] = source
             coached = coach_swing(swing, stroke=stroke, fps_real=swing['fpsReal'])
             metadata['stroke'] = stroke or coached['stroke']
             swing['stroke'] = metadata['stroke']
