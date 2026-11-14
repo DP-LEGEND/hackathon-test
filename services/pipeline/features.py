@@ -61,7 +61,7 @@ def swing_features(world: np.ndarray, impact: int, fps_real: float, hand: str = 
         "shoulder_yaw_at_impact": float(shoulders[i]),
         "shoulder_yaw_end": float(np.nanmean(shoulders[-5:])),
         "hip_turn_range": float(np.nanmax(hips) - np.nanmin(hips)),
-        "x_factor_max": float(np.nanmax(np.abs(shoulders - hips))),
+        "x_factor_max": float(np.nanmax(np.abs((shoulders - hips + 180) % 360 - 180))),
         "stance_yaw": float(np.nanmedian(feet[pre])),
         "stance_width_m": float(np.nanmedian(np.linalg.norm(W[pre, h["an"]] - W[pre, o["an"]], axis=1))),
         "wrist_speed_peak": float(v_wr[pk_wr]) if len(v_wr) else float("nan"),

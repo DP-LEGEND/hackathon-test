@@ -42,3 +42,19 @@ def test_normalise_centres_each_frame():
     x += np.arange(3.)[:, None, None]
     y = normalise(x)
     np.testing.assert_allclose((y[:, 23] + y[:, 24]) / 2, 0, atol=1e-12)
+
+
+def test_exact_stereo_match_survives_missing_neighbours():
+    b = {'t': np.arange(3.), 'img': np.ones((3, 33, 3)), 'vis': np.ones((3, 33))}
+    b['img'][1] = np.nan; b['vis'][1] = 0
+    img, vis = sample_b_at_a({'t': np.array([0., 2.])}, b, 1, 0)
+    assert np.isfinite(img).all() and (vis == 1).all()
+
+
+def test_x_factor_wraps_boundary():
+    from pipeline.features import swing_features
+    x = np.zeros((5, 33, 3))
+    for j, angle in ((12, 179), (24, -179)):
+        x[:, j, 0] = np.cos(np.radians(angle))
+        x[:, j, 2] = np.sin(np.radians(angle))
+    assert swing_features(x, 2, 30)['x_factor_max'] == pytest.approx(2)

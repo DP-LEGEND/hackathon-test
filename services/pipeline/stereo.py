@@ -35,6 +35,10 @@ def sample_b_at_a(A: dict, B: dict, scale: float, offset: float):
     w = ((tb - times[i0]) / (times[i0 + 1] - times[i0]))[:, None, None]
     img = (1 - w) * B["img"][i0] + w * B["img"][i0 + 1]
     vis = np.minimum(B["vis"][i0], B["vis"][i0 + 1])
+    for endpoint, weight in ((i0, 0.0), (i0 + 1, 1.0)):
+        exact = np.isclose(w[:, 0, 0], weight, rtol=0, atol=1e-9)
+        img[exact] = B["img"][endpoint[exact]]
+        vis[exact] = B["vis"][endpoint[exact]]
     valid = (tb >= times[0]) & (tb <= times[-1])
     img[~valid] = np.nan
     vis[~valid] = 0
