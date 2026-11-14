@@ -19,6 +19,9 @@ from scipy.signal import butter, find_peaks, sosfiltfilt
 from pipeline.pose import smooth
 
 L_WRIST, R_WRIST, L_HIP, R_HIP, L_SH, R_SH = 15, 16, 23, 24, 11, 12
+BACKSWING_LOOKBACK_S = .6
+REVERSAL_SUPPORT_S = .05
+PEAK_MATCH_S = .12
 
 
 def torso_px(img: np.ndarray) -> float:
@@ -51,22 +54,55 @@ def wrist_speed(raw: dict, wrist: int = R_WRIST, slowdown: float = 1.0, win: int
 
 def swing_evidence(world: np.ndarray, times: np.ndarray, wrist: int, peak: int,
                    torso_m: float = .5) -> dict:
-    """Admit a sharp metric wrist peak only with a preceding backswing.
+    """Admit a metric wrist peak only with a preceding track reversal.
 
     This final 3D gate also applies to image-space speed-fallback candidates;
     neither a hit sound nor an isolated fast feed bypasses it.
     """
-    fps = 1 / float(np.median(np.diff(times)))
+    if len(times) < 2 or not 0 <= peak < len(times):
+        raise ValueError('Not a swing: candidate peak is outside tracked evidence')
     track = world[:, wrist] - (world[:, 23] + world[:, 24]) / 2
     speed = np.linalg.norm(np.gradient(track, times, axis=0), axis=1)
-    peaks, _ = find_peaks(speed, height=6., prominence=3.,
-                          width=(max(1., .008 * fps), max(1., .18 * fps)))
+    peaks, properties = find_peaks(speed, height=6., prominence=3., width=(1., None))
+    # Evidence may precede a playback-rate switch. Convert peak widths through
+    # actual real timestamps instead of assuming one FPS across the history.
+    indices = np.arange(len(times))
+    widths_s = (np.interp(properties['right_ips'], indices, times)
+                - np.interp(properties['left_ips'], indices, times))
+    peaks = peaks[(widths_s >= .008 - 1e-9) & (widths_s <= .3 + 1e-9)]
     for candidate in sorted(peaks, key=lambda index: abs(index - peak)):
-        if abs(candidate - peak) > .12 * fps:
+        if abs(times[candidate] - times[peak]) > PEAK_MATCH_S + 1e-9:
             continue
-        if _swing_pattern(track / torso_m, int(candidate), fps):
+        if _backswing_reversal(track / torso_m, times, int(candidate)):
             return {'peakWristSpeedMs': float(speed[candidate]), 'backswingVerified': True}
     raise ValueError('Not a swing: needs a sharp wrist-speed peak of at least 6 m/s and a preceding backswing')
+
+
+def _backswing_reversal(track: np.ndarray, times: np.ndarray, peak: int) -> bool:
+    """Find a pullback then forward sweep within .6 real seconds of the peak.
+
+    Project onto the local sweep direction, so hand/camera orientation does not
+    prescribe the sign. A .04-torso-length turn (2 cm at the default scale)
+    excludes tiny jitter; no fixed sweep distance or follow-through shape is
+    required. Extra left context only confirms turns at the lookback boundary.
+    """
+    when = times[peak]
+    left = max(0, int(np.searchsorted(times, when - .025)))
+    right = min(len(track) - 1, int(np.searchsorted(times, when + .025)))
+    if not np.isfinite(track[left:right + 1]).all():
+        return False
+    direction = track[right] - track[left]
+    length = np.linalg.norm(direction)
+    if length < 1e-9:
+        return False
+    start = int(np.searchsorted(times, when - BACKSWING_LOOKBACK_S - REVERSAL_SUPPORT_S - 1e-9))
+    missing = np.flatnonzero(~np.isfinite(track[start:peak + 1]).all(axis=1))
+    if len(missing):
+        start += int(missing[-1]) + 1  # only use this contiguous observed run
+    projected = track[start:peak + 1] @ (direction / length)
+    turns, _ = find_peaks(-projected, prominence=.04)
+    return any(when - BACKSWING_LOOKBACK_S - 1e-9 <= times[start + turn] < when
+               for turn in turns)
 
 
 def _swing_pattern(track: np.ndarray, peak: int, fps_real: float) -> bool:

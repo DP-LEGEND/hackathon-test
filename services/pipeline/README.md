@@ -247,8 +247,8 @@ It is a frame percentage, not a percentage of all 33 joint samples.
 - Swing proposals use hip-relative dominant-wrist speed (default threshold
   **8 torso lengths / second**, minimum accepted-peak spacing .5 real seconds),
   followed by a mandatory measured 3D gate: peak wrist speed at least **6 m/s**,
-  prominence at least 3 m/s, half-prominence peak width at most .18 real seconds,
-  and a preceding backswing/sweep/follow-through. `--min-speed` adjusts proposal
+  prominence at least 3 m/s, half-prominence peak width at most .3 real seconds,
+  and a preceding hip-relative wrist-track reversal. `--min-speed` adjusts proposal
   sensitivity; it does not bypass the metric gate. `metadata.peakWristSpeedMs`
   and `metadata.backswingVerified` record the accepted evidence. Saved windows
   start .6 real seconds before the selected contact, clipped at recording/rate
@@ -257,7 +257,17 @@ It is a frame percentage, not a percentage of all 33 joint samples.
   Speed-peak fallback proposes candidates but cannot admit a catch/feed without
   the metric peak and backswing. The direction is derived from
   the wrist near the peak, so hand choice and image rotation do not set its sign.
-  Starting heuristic thresholds: .12 torso lengths of preceding pullback,
+  The final gate searches the full .6 real seconds before the measured peak
+  for a pullback followed by the forward sweep. It uses the local 3D sweep
+  direction, with a minimum turn prominence of .04 torso lengths (2 cm at the
+  default scale) to exclude tiny jitter; it does not require a fixed forward
+  sweep distance, follow-through displacement or path coherence. Source history
+  includes .05 s before the search boundary to confirm an edge reversal and
+  .12 s for the allowed difference between image and metric peaks. This extra
+  evidence can cross a rate boundary; peak widths and lookback bounds use real
+  timestamps. It does not move the replay window or contact. No missing trajectory is
+  interpolated by the admission check.
+  The earlier 2D proposal heuristic still uses .12 torso lengths of pullback,
   .25 before the peak and .10 after it, .50 total forward sweep, and net/path
   coherence at least .60. Candidate spacing matches main: .5 real seconds,
   or 2.5 with `--tap-filter`, before the final reconstruction and metric gates.

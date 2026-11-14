@@ -11,7 +11,8 @@ import cv2
 
 from pipeline.cache import extract_pair
 from pipeline.pose import DEFAULT_MODEL, extract_raw, to_swing
-from pipeline.segment import audio_hits, find_swings, wrist_speed, swing_evidence
+from pipeline.segment import (BACKSWING_LOOKBACK_S, REVERSAL_SUPPORT_S, PEAK_MATCH_S,
+                              audio_hits, find_swings, wrist_speed, swing_evidence)
 from pipeline.kinematics import gap_limit
 from pipeline.timing import Timeline
 from pipeline.stereo import calibrate, clean, normalise, triangulate
@@ -291,7 +292,12 @@ def swings_from_raw(a: dict, b: dict | None = None, options: Options = Options()
                 normalised = normalise(mono[start:end], options.torso_m)
             # Sound can be offset from the speed peak. Keep its requested .6 s
             # replay trim without throwing away earlier backswing evidence.
-            evidence_start = max(lo, min(start, event['peak'] - int(round(.6 * fps_real))))
+            # Metric and image peaks may differ by PEAK_MATCH_S. Read enough
+            # source history for the entire reversal search at either peak;
+            # this does not change the replay window or contact selection.
+            history_s = BACKSWING_LOOKBACK_S + REVERSAL_SUPPORT_S + PEAK_MATCH_S
+            evidence_start = max(0, min(start, int(np.searchsorted(
+                real_a, real_a[event['peak']] - history_s - 1e-9))))
             trajectory = (stereo if source == 'stereo' else mono)
             wrist = 15 if hand == 'L' else 16
             usable = np.isfinite(trajectory[:, [wrist, 23, 24]]).all(axis=(1, 2))
