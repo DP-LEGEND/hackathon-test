@@ -7,10 +7,10 @@ Team repo for the Imperial AI Hackathon. Our product is **Ghost**: film one squa
 ## Team and roles
 | Who | GitHub | Owns |
 |---|---|---|
-| Dev | DP-LEGEND | Pipeline (`services/pipeline/`), Ghost API routes, merging PRs |
-| Sammy | jeffrey-sammy | 3D ghost web demo (`app/ghost/`) |
-| Henoch | 5quiwyrm | Coach, voice and wrist sensor, labels, demo |
-| aryan | Programmer-123 | Physics (`services/physics/`), coach with Dev |
+| Dev | DP-LEGEND | Pipeline, infra and live clips (`services/pipeline/`, Ghost API routes) |
+| Sammy | jeffrey-sammy | Ghost UI and upload page (`app/ghost/`) |
+| Henoch | 5quiwyrm | Coach thresholds, voice and the wrist sensor |
+| aryan | Programmer-123 | Physics engine and court frame (`services/physics/`) |
 
 ## Run Ghost locally
 
@@ -69,7 +69,12 @@ To keep the model somewhere else, set `GHOST_POSE_MODEL` to its path.
 
 ### 4. API keys (optional)
 
-Coaching, the ghost and the ball paths need no keys. To have Claude word the cue and ElevenLabs speak it, copy `.env.example` to `.env.local` at the repo root and fill in `ANTHROPIC_API_KEY` and `ELEVENLABS_API_KEY`. Never commit `.env.local`.
+The live flow (the API, `/ghost` and new clips) needs no keys: coaching, the ghost and the ball paths are all plain code. Keys are only needed for two command-line demos that aren't wired into the live flow yet:
+
+- `python -m coach.cue` has Claude word a cue from MOCK metrics (`ANTHROPIC_API_KEY`)
+- `python -m coach.cue --speak` also reads it aloud with ElevenLabs (`ELEVENLABS_API_KEY`)
+
+To run them, copy `.env.example` to `.env.local` at the repo root and fill in those keys. Never commit `.env.local`.
 
 ### 5. Start the API
 
