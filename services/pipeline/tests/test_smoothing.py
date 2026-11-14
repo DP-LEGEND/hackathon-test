@@ -97,3 +97,21 @@ def test_occluded_backhand_wrist_goes_behind_the_body():
     assert (out[20, 16] - c) @ nrm < 0          # now behind the shoulder-hip plane
     assert np.isclose(np.linalg.norm(out[20, 16] - out[20, 14]), np.linalg.norm(P[0, 16] - P[0, 14]))
     assert np.allclose(out[~filled[:, 16]], P[~filled[:, 16]])  # seen frames untouched
+
+
+def test_saved_backhand_demo_has_no_occluded_wrist_in_front():
+    import json
+    from pathlib import Path
+    from pipeline.smoothing import _unit, frontal_plane
+    swing = json.loads((Path(__file__).resolve().parents[3] / "public" / "swings" / "swing_2116_bh_stereo.json").read_text())
+    P = np.array([f["joints"] for f in swing["frames"]])
+    c = swing["contactFrame"]
+    bad = []
+    for k, f in enumerate(swing["frames"]):
+        if not f["filled"][16] or c - 12 <= k <= c + 12:
+            continue
+        nrm, centre = frontal_plane(P[k])
+        across = (P[k, 16] - centre) @ _unit(P[k, 12] - P[k, 11]) < 0
+        if across and (P[k, 16] - centre) @ nrm > 0:
+            bad.append(k)
+    assert bad == []

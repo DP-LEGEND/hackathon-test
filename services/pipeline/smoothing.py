@@ -144,6 +144,34 @@ def frontal_plane(Pk: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return n, centre
 
 
+def keep_wrist_behind(P: np.ndarray, frames: np.ndarray, hand: str = "R", margin: float = 0.01,
+                      length: float | None = None, iterations: int = 20) -> np.ndarray:
+    """Postcondition for the backhand backswing: on `frames`, a hitting wrist that is across the
+    body (free-arm side) must not be in front of the shoulder-hip plane. Moves it to `margin`
+    behind, re-projected to forearm `length` from the (fixed) elbow, repeating until it holds;
+    the hand points move with the wrist."""
+    out = np.asarray(P, float).copy()
+    el, wr = (14, 16) if hand == "R" else (13, 15)
+    hand_pts = (18, 20, 22) if hand == "R" else (17, 19, 21)
+    free_sh, hit_sh = (11, 12) if hand == "R" else (12, 11)
+    for k in np.where(np.asarray(frames, bool))[0]:
+        L = length if length is not None else float(np.linalg.norm(out[k, wr] - out[k, el]))
+        w0 = out[k, wr].copy()
+        for _ in range(iterations):
+            nrm, c = frontal_plane(out[k])
+            across = (out[k, wr] - c) @ _unit(out[k, hit_sh] - out[k, free_sh]) < 0
+            depth = (out[k, wr] - c) @ nrm
+            if not across or depth <= -margin + 1e-9:
+                break
+            w = out[k, wr] - (depth + margin) * nrm
+            out[k, wr] = out[k, el] + _unit(w - out[k, el]) * L
+        else:  # still in front: clamp the depth (may shorten the drawn forearm slightly)
+            out[k, wr] = out[k, wr] - (depth + margin) * nrm
+        for h in hand_pts:
+            out[k, h] = out[k, h] + (out[k, wr] - w0)
+    return out
+
+
 def fix_occluded_hitting_wrist(P: np.ndarray, filled: np.ndarray, evidence: np.ndarray | None = None,
                                evidence_ok: np.ndarray | None = None, protect: tuple[int, int] | None = None,
                                hand: str = "R", window: int = 9, blend: int = BLEND) -> tuple[np.ndarray, np.ndarray]:
@@ -203,4 +231,6 @@ def fix_occluded_hitting_wrist(P: np.ndarray, filled: np.ndarray, evidence: np.n
     out[guessed, wr] = w_new[guessed]
     for h in hand_pts:
         out[guessed, h] = P[guessed, h] + delta[guessed]
+    # the filter and end ramps can pull a frame back in front: enforce "behind" again
+    out = keep_wrist_behind(out, guessed, hand, length=length)
     return out, guessed
