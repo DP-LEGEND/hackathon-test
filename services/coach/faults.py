@@ -226,6 +226,8 @@ def ghost_ready(fix: str, amount: Optional[float], unit: str, metrics: dict[str,
     edit = FIXES[fix][0]
     if EDITS[edit]["unit"] != unit:
         return False  # e.g. a ratio can't drive a degree edit
+    if fix == "close_stance" and metrics.get("stance_direction") == "front_wall_axis":
+        return False  # the edit changes the hitting-direction angle, which was guessed here
     if edit == "shoulder_turn":
         turn = metrics.get("shoulder_turn_deg")
         if not _finite(turn) or turn < MIN_SHOULDER_TURN_FOR_EDIT:

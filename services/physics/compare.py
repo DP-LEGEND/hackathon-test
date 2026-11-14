@@ -326,6 +326,8 @@ FIX_TARGETS = {
     "bend_elbow": ("elbow_at_contact_deg", "elbow"),
     "hold_wrist_cock": ("wrist_release_ms", "wrist"),
     "close_stance": ("stance_open_deg", "wrist"),  # stance is measured against the wrist's direction
+    "turn_shoulders_more": ("shoulder_turn_deg", "shoulder"),
+    "turn_shoulders_less": ("shoulder_turn_deg", "shoulder"),
 }
 
 
@@ -416,7 +418,7 @@ def compare(swing: dict, fix_name: str, amount: float, fps_real: float | None = 
     # target measurement is guessed, and leave guessed metrics out (listed in notMeasured).
     guessed = guessed_metrics(played, hand, contact, real_fps(swing, fps_real))
     target = FIX_TARGETS.get(fix_name)
-    if target and target[0] in guessed:
+    if target and target[0] in guessed and float(amount) != 0.0:  # amount 0 = "unchanged", always allowed
         side_name = "right" if hand == "R" else "left"
         raise GuessedFixError(f"Not available on this swing: the camera couldn't see the {side_name} {target[1]} "
                               "around contact (guessed joints), so a ghost of this fix would edit a guess.")
