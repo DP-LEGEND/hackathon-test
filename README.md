@@ -1,5 +1,7 @@
 # Imperial AI Hackathon (14–15 Nov 2026)
 
+**Team: follow [WORKFLOW.md](WORKFLOW.md)** for the exact steps (start a task, test, PR, merge, after a merge). Roles and prompts are in [TEAM.md](TEAM.md).
+
 Team repo for the Imperial AI Hackathon: build an agentic AI product in a weekend. Product: _to be picked Saturday after the sponsor briefs_ (see `PRODUCT_BRIEF.template.md`).
 
 ## Team and roles
