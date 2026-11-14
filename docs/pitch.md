@@ -67,17 +67,17 @@ Same clicks as the runbook's beats 1–3, faster. The wrist sensor (beat 4) move
 
 | OPERATOR clicks | On screen | PRESENTER says |
 |---|---|---|
-| **Try another swing**, then **Backhand · two-camera stereo** | The coach's call: *"No fault found"*, cue *"Nothing to fix on this swing. Hit the next one the same way."* | A backhand, filmed on two cameras at once. Nothing to fix in what the camera could see, and it couldn't see the wrist. That's exactly why we strapped a sensor to the arm. |
+| **Try another swing**, then **Backhand · two-camera stereo** | The coach's call: *"No fault found in what was checked"*, cue *"Nothing to fix on this swing. Hit the next one the same way."* | A backhand, filmed on two cameras at once. Nothing to fix in what the camera could see, and it couldn't see the wrist. It also says what it couldn't check: the wrist (no sensor on this swing) and checks that need the right elbow, which the camera couldn't see. That's exactly why we strapped a sensor to the arm. |
 | **Pick a swing** (the step bar at the top) | The swing list | |
 
 ### Fresh clip (1:35–2:05)
 
 | OPERATOR clicks | On screen | PRESENTER says |
 |---|---|---|
-| Switch to browser tab 2 | The new swing at the coach's call: *"Reading the coach's call…"*, then the call, or *"No fault found"* (see below) | This one we filmed today on one phone. Slow motion, hitting hand, and forehand or backhand are all detected automatically. The coach measures it live. *(Read the caption exactly as shown.)* |
+| Switch to browser tab 2 | The new swing at the coach's call: *"Reading the coach's call…"*, then the call, or *"No fault found"* or *"No fault found in what was checked"* (see below) | This one we filmed today on one phone. Slow motion, hitting hand, and forehand or backhand are all detected automatically. The coach measures it live. *(Read the caption exactly as shown.)* |
 | Only if the coach named a fault: **Show the ghost**, then **Show the court** | The ghost (*Coach's pick*), then both *PREDICTED* paths | And there's their ghost, computed just now. |
 
-**If the caption says "No fault found":** read it as shown. Then do one of these:
+**If the caption says "No fault found" or "No fault found in what was checked":** read it as shown. Then do one of these:
 - Stop the beat there and go to *How it works*.
 - Or click **Show the ghost** and say: "This is an example edit at demo size, not a coached fix." The panel says *"Demo size: the coach didn't flag this fault."* Never call it the fix.
 

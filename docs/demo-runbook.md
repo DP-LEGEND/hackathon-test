@@ -153,7 +153,7 @@ The page has four steps: **Pick a swing → Coach's call → The ghost → On co
 
 | Click | Screen shows | PRESENTER says |
 |---|---|---|
-| **Try another swing**, then **"Backhand · two-camera stereo · 120 fps"** | **The coach's call:** *"No fault found"*, cue *"Nothing to fix on this swing. Hit the next one the same way."* | A backhand, filmed on two cameras at once. Nothing to fix in what the camera could see, and it couldn't see the wrist. That's exactly why we strapped a sensor to the arm. |
+| **Try another swing**, then **"Backhand · two-camera stereo · 120 fps"** | **The coach's call:** *"No fault found in what was checked"*, cue *"Nothing to fix on this swing. Hit the next one the same way."* | A backhand, filmed on two cameras at once. Nothing to fix in what the camera could see, and it couldn't see the wrist. It also says what it couldn't check: the wrist (no sensor on this swing) and checks that need the right elbow, which the camera couldn't see. That's exactly why we strapped a sensor to the arm. |
 | **Pick a swing** (the step bar at the top) | The swing list | |
 
 Don't click **Show the ghost** here. With nothing flagged, the page would show an uncoached example edit.
@@ -164,12 +164,12 @@ The clip was sent at 0:00 from browser tab 2 (`/upload`: **Choose a video**, set
 
 | Click | Screen shows | PRESENTER says |
 |---|---|---|
-| Switch to browser tab 2 | It has opened `/ghost?swing=<id>` at **the coach's call** for the fresh swing: *"Reading the coach's call…"*, then the call, or *"No fault found"* (see below). If it still shows the progress panel, see *Upload still processing* in the fallback table | One phone. Speed, hitting hand and forehand/backhand are detected automatically. Depth is estimated from one camera. Then read the caption as shown: its numbers depend on the swing. |
+| Switch to browser tab 2 | It has opened `/ghost?swing=<id>` at **the coach's call** for the fresh swing: *"Reading the coach's call…"*, then the call, or *"No fault found"* or *"No fault found in what was checked"* (see below). If it still shows the progress panel, see *Upload still processing* in the fallback table | One phone. Speed, hitting hand and forehand/backhand are detected automatically. Depth is estimated from one camera. Then read the caption as shown: its numbers depend on the swing. |
 | Only if the ghost shows the badge *Coach's pick*: **Show the ghost**, then **Show the court** | *"Making the … ghost…"*, then the ghost (badge *Coach's pick*) and both PREDICTED paths | Same as before, computed just now. |
 
 If browser tab 2 says *"Your ghost is ready."* but hasn't moved on, click **Open it in Ghost**.
 
-**If the caption says "No fault found":** read it as shown. Then do one of these:
+**If the caption says "No fault found" or "No fault found in what was checked":** read it as shown. Then do one of these:
 - Stop beat 3 there and go on to beat 4.
 - Or click **Show the ghost** and say: "This is an example edit at demo size, not a coached fix." The panel says *"Demo size: the coach didn't flag this fault."* Never call it the fix.
 
@@ -191,7 +191,7 @@ All of these come from the saved samples in `public/swings/` and are the same on
 
 | | Forehand over-rotation | Backhand |
 |---|---|---|
-| Coach's call | Over-rotation: hips turn 157° | No fault found |
+| Coach's call | Over-rotation: hips turn 157° | No fault found in what was checked |
 | Cue | Turn a little less and stay balanced through the ball. | Nothing to fix on this swing. Hit the next one the same way. |
 | Ghost fix (Coach's pick) | Turn shoulders less, 52.6° | None: the coach flagged nothing, so beat 2 stops at the coach's call |
 | Body change | Shoulder turn 137.6° → 85° | Not shown |
@@ -211,7 +211,7 @@ The launch angle isn't shown as a number. The court panel's footnote says the la
 |---|---|---|
 | **Python service down** | `/ghost`: *"The live Python service isn't running, so these are the saved samples."* `/upload`: *"The Ghost service isn't running"*. The health tab doesn't load | Beats 1 and 2 don't need it: the saved swings always work. Re-run the terminal tab 1 command with the same `GHOST_SWINGS_DIR=~/ghost-stage` (so the stage upload is kept). If it won't start, skip beat 3 and say the upload needs the service. |
 | **Upload still processing** | Browser tab 2 still shows the progress panel (*Finding your swing… / Measuring… / Building your ghost…*) | Say "that clip is still processing" and carry on. Switch back to browser tab 2 before the end, or skip beat 3. |
-| **Upload times out** | `/upload` (browser tab 2): *"Still processing, but this page stopped waiting"* | The Python service keeps going and saves the swing when done. Carry on. Later, in browser tab 1, go to **Pick a swing** and click **Check again**: the swing appears as the newest **Live** card. |
+| **Upload times out** | `/upload` (browser tab 2): *"Still processing, but this page stopped waiting"* | The Python service keeps going and saves the swing when done. Carry on. Later, in browser tab 1, go to **Pick a swing** and click **Check again**: the swing appears as the **Live** card that wasn't there before you clicked **Check again**. |
 | **Upload refused** | `/upload` (browser tab 2): *"A clip is already processing"* | Only one clip at a time. Wait for the first one, then click **Try again**. |
 | **Slow-mo clip fails** | `/upload` (browser tab 2): *"Couldn't build your ghost"* with the server's message (e.g. *"No fully tracked swing found; keep the whole body in frame and film one clear swing"*) | Set **Slowdown** by hand: **1×** for a normal 60 fps video, **4×** or **8×** for slow motion. Set **Hitting hand** or **Stroke** if those were misread. Then click **Try again**. To show the rehearsal swing instead, stop terminal tab 1 (Ctrl+C), restart it with `GHOST_SWINGS_DIR=~/ghost-rehearsal ~/ghost-env/bin/python -m uvicorn pipeline.server:app --port 8000`, then in browser tab 1 go to **Pick a swing** and click **Check again**. |
 | **Speed wildly wrong** | Browser tab 2 opened the fresh swing in `/ghost`, but its speed is wildly wrong | There's no **Try again** here: a finished upload jumps to `/ghost`, and `/upload` resets. In browser tab 2, go back to http://localhost:3000/upload, click **Choose a video** and pick `~/Downloads/fresh.mov` again. Set **Slowdown** (**1×** for a normal 60 fps video, **4×** or **8×** for slow motion), and **Hitting hand** or **Stroke** if those were misread. Then click **Build my ghost**. |
