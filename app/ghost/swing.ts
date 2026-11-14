@@ -137,8 +137,12 @@ function flipYDown(p: Vec3 | null | undefined): Vec3 | null {
   return p ? [p[0], -p[1], -p[2]] : null;
 }
 
-/** Validates a Swing JSON value and prepares it for playback. Throws SwingDataError. */
-export function loadSwing(value: unknown): LoadedSwing {
+/**
+ * Validates a Swing JSON value and prepares it for playback. Throws SwingDataError.
+ * Contact frame, in order of preference: the swing's own `contactFrame`, then
+ * `fileContactFrame` (e.g. the compare file's top-level one), then the fastest wrist.
+ */
+export function loadSwing(value: unknown, fileContactFrame?: number): LoadedSwing {
   let swing = parseSwing(value);
   const flippedFromYDown = isYDown(swing.frames);
   if (flippedFromYDown) {
@@ -152,8 +156,16 @@ export function loadSwing(value: unknown): LoadedSwing {
       })),
     };
   }
-  const fromFile = swing.contactFrame >= 0;
-  const contactFrame = fromFile ? swing.contactFrame : fastestWristFrame(swing.frames);
+  const fallback =
+    fileContactFrame !== undefined &&
+    Number.isInteger(fileContactFrame) &&
+    fileContactFrame >= 0 &&
+    fileContactFrame < swing.frames.length
+      ? fileContactFrame
+      : -1;
+  const fileContact = swing.contactFrame >= 0 ? swing.contactFrame : fallback;
+  const fromFile = fileContact >= 0;
+  const contactFrame = fromFile ? fileContact : fastestWristFrame(swing.frames);
   let floorY = Infinity;
   for (const frame of swing.frames) {
     for (const j of FOOT_JOINTS) floorY = Math.min(floorY, frame.joints[j][1]);

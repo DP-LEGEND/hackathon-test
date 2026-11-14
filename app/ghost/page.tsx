@@ -1,13 +1,13 @@
 // Ghost demo screen. Owner: Sammy.
-// 3D replay of your swing (orange) with the ghost (cyan) overlaid and aligned at contact.
-// Next: the two PREDICTED ball paths and the coach caption. Data shapes: lib/ghost/types.ts.
+// 3D replay of your swing (orange) with the ghost (cyan) aligned at contact, both PREDICTED
+// ball paths on the court, the coach's caption and a fix picker. Data: app/ghost/README.md.
 
 import type { Metadata } from "next";
 import { GhostReplay } from "./ghost-replay";
 
 export const metadata: Metadata = {
   title: "Ghost · Swing replay",
-  description: "Your squash swing and its ghost in 3D, aligned at contact.",
+  description: "Your squash swing and its ghost in 3D, with the coach's fix and both PREDICTED ball paths.",
 };
 
 export default function GhostPage() {

@@ -1,9 +1,11 @@
-// three.js scene for /ghost: a squash court in court coordinates and two skeletons.
-// Court coordinates (metres): x across 0..6.40, y up, z back from the front wall 0..9.75.
+// three.js scene for /ghost: a squash court in court coordinates, two skeletons and the two
+// PREDICTED ball paths. Court coordinates (metres): x across 0..6.40, y up, z back from the
+// front wall 0..9.75. Ball paths arrive in these coordinates already (services/physics/ball.py).
 // Imperative on purpose: the React component owns playback and calls setPoses() every frame.
 
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { CSS2DObject, CSS2DRenderer } from "three/addons/renderers/CSS2DRenderer.js";
 import type { Vec3 } from "@/lib/ghost/types";
 import { GHOST_COLOUR, YOU_COLOUR } from "./colours";
 import type { SkeletonPose } from "./swing";
@@ -21,11 +23,12 @@ export const COURT = {
 } as const;
 
 /**
- * Where the hip centre is drawn: the T. The pipeline gives hip-centred joints, not a court
- * position, so this placement is for display only.
+ * The pipeline gives hip-centred joints, not a court position, so where the player stands is
+ * for display only: at the T, or beside the ball's assumed contact spot when there is one.
  */
-export const PLAYER_SPOT = { x: COURT.width / 2, z: COURT.shortLine } as const;
-const SIDE_BY_SIDE_OFFSET = 1.1; // metres along x
+const T_SPOT = { x: COURT.width / 2, z: COURT.shortLine } as const;
+const PLAYER_FROM_CONTACT = 0.8; // metres from the contact spot towards the middle of the court
+const SIDE_BY_SIDE_OFFSET = 1.1; // metres along x, towards the middle of the court
 
 // MediaPipe landmark indices, plus two derived points.
 const NECK = 33; // midpoint of the shoulders
@@ -45,6 +48,10 @@ const BONE_RADIUS = 0.022;
 const JOINT_RADIUS = 0.032;
 const HEAD_RADIUS = 0.1;
 
+const PATH_RADIUS = 0.012;
+const BOUNCE_RADIUS = 0.035;
+const BALL_RADIUS = 0.03; // a squash ball is 40 mm across; drawn a little bigger to be seen
+
 const UP = new THREE.Vector3(0, 1, 0);
 const tmpDir = new THREE.Vector3();
 const tmpMid = new THREE.Vector3();
@@ -61,6 +68,20 @@ function segmentMatrix(a: THREE.Vector3, b: THREE.Vector3, thickness: number): T
   tmpMid.addVectors(a, b).multiplyScalar(0.5);
   tmpScale.set(thickness, length, thickness);
   return tmpMatrix.compose(tmpMid, tmpQuat, tmpScale);
+}
+
+/** Frees the GPU memory of everything under `root` and removes its HTML tags. */
+function disposeTree(root: THREE.Object3D) {
+  root.traverse((object) => {
+    // A tag only removes its own element when it is removed directly, not via a parent group.
+    if (object instanceof CSS2DObject) object.element.remove();
+    if (object instanceof THREE.Mesh || object instanceof THREE.LineSegments) {
+      object.geometry.dispose();
+      const materials: THREE.Material[] = Array.isArray(object.material) ? object.material : [object.material];
+      materials.forEach((m) => m.dispose());
+    }
+    if (object instanceof THREE.InstancedMesh) object.dispose();
+  });
 }
 
 type FigureStyle = {
@@ -111,6 +132,7 @@ class SkeletonFigure {
       mesh.frustumCulled = false; // instances move every frame; skip stale bounds
     }
     this.group.add(this.bones, this.joints, this.head, this.racket);
+    this.group.visible = false; // until the first pose arrives
   }
 
   update(pose: SkeletonPose) {
@@ -130,7 +152,86 @@ class SkeletonFigure {
       const [throat, tip] = pose.racket.map((v: Vec3) => new THREE.Vector3().fromArray(v));
       this.racket.matrix.copy(segmentMatrix(throat, tip, this.thickness * 0.6));
     }
+    this.group.visible = true;
   }
+}
+
+/** One PREDICTED ball path as the scene draws it. Points are court coordinates. */
+export type BallPathView = {
+  points: Vec3[];
+  /** Wall and floor hits. */
+  bounces: Vec3[];
+  /** [x, z] of the first floor bounce after the front wall, or null. */
+  landing: [number, number] | null;
+  /** Text of the on-court tag, e.g. "PREDICTED · you · tin". */
+  label: string;
+};
+
+function pathTag(text: string, colour: string, above: boolean): CSS2DObject {
+  const el = document.createElement("div");
+  el.className =
+    "rounded-md border bg-background/90 px-1.5 py-0.5 font-mono text-[0.65rem] leading-tight font-semibold tracking-wide whitespace-nowrap";
+  el.style.color = colour;
+  el.style.borderColor = colour;
+  el.style.margin = above ? "0 0 6px" : "6px 0 0";
+  el.textContent = text;
+  const tag = new CSS2DObject(el);
+  tag.center.set(0.5, above ? 1 : 0); // above or below its anchor so the two tags don't overlap
+  return tag;
+}
+
+/**
+ * Same trick as the skeletons: the ghost's path is fatter and drawn back faces only, so where
+ * the two paths coincide it shows as a cyan rim around the orange instead of flickering.
+ */
+type PathStyle = { colour: string; opacity: number; halo: number; tagAbove: boolean };
+
+function buildBallPath(path: BallPathView, style: PathStyle): THREE.Group {
+  const { colour, opacity, halo, tagAbove } = style;
+  const group = new THREE.Group();
+  const transparent = opacity < 1;
+  const material = new THREE.MeshBasicMaterial({
+    color: colour,
+    transparent,
+    opacity,
+    depthWrite: !transparent,
+    side: halo > 0 ? THREE.BackSide : THREE.FrontSide,
+  });
+  const points = path.points.map((p) => new THREE.Vector3().fromArray(p));
+
+  const segments = new THREE.InstancedMesh(
+    new THREE.CylinderGeometry(PATH_RADIUS + halo, PATH_RADIUS + halo, 1, 8),
+    material,
+    points.length - 1,
+  );
+  for (let i = 1; i < points.length; i++) segments.setMatrixAt(i - 1, segmentMatrix(points[i - 1], points[i], 1));
+  segments.instanceMatrix.needsUpdate = true;
+  segments.computeBoundingSphere();
+  group.add(segments);
+
+  if (path.bounces.length > 0) {
+    const dots = new THREE.InstancedMesh(new THREE.SphereGeometry(BOUNCE_RADIUS + halo, 12, 8), material, path.bounces.length);
+    path.bounces.forEach((b, i) => dots.setMatrixAt(i, tmpMatrix.makeTranslation(b[0], b[1], b[2])));
+    dots.instanceMatrix.needsUpdate = true;
+    dots.computeBoundingSphere();
+    group.add(dots);
+  }
+
+  let anchor = points[points.length - 1];
+  if (path.landing) {
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(tagAbove ? 0.11 : 0.17, tagAbove ? 0.16 : 0.21, 32), // ghost ring outside yours
+      new THREE.MeshBasicMaterial({ color: colour, side: THREE.DoubleSide, transparent: true, opacity: 0.9 }),
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(path.landing[0], 0.006, path.landing[1]);
+    group.add(ring);
+    anchor = ring.position;
+  }
+  const tag = pathTag(path.label, colour, tagAbove);
+  tag.position.copy(anchor);
+  group.add(tag);
+  return group;
 }
 
 function lines(points: number[], colour: number, opacity: number): THREE.LineSegments {
@@ -194,21 +295,34 @@ function buildCourt(): THREE.Group {
 }
 
 export type FloorOffsets = { you: number; ghost: number };
+export type CameraView = "player" | "court";
+
+export type ReplayLayout = {
+  /** Lowest foot height of each swing, so both stand on the floor. */
+  floor: FloorOffsets;
+  /** Assumed ball contact spot in court coordinates; the player is drawn beside it. Null = at the T. */
+  contactSpot: Vec3 | null;
+  ballPaths: { you: BallPathView; ghost: BallPathView } | null;
+};
 
 export class SkeletonScene {
   private readonly renderer: THREE.WebGLRenderer;
+  private readonly labels: CSS2DRenderer;
   private readonly scene = new THREE.Scene();
   private readonly camera: THREE.PerspectiveCamera;
   private readonly controls: OrbitControls;
   private readonly resizeObserver: ResizeObserver;
   private readonly you = new SkeletonFigure({ colour: YOU_COLOUR, opacity: 1, halo: 0 });
   private readonly ghost = new SkeletonFigure({ colour: GHOST_COLOUR, opacity: 0.5, halo: 0.012 });
+  private balls: THREE.Group | null = null;
+  private playerSpot: { x: number; z: number } = { ...T_SPOT };
+  /** +1 when the player stands on the right half of the court, -1 on the left. */
+  private towardsMiddle = -1;
+  private sideBySide = false;
+  private view: CameraView = "player";
 
   /** Throws if WebGL isn't available. */
-  constructor(
-    private readonly container: HTMLElement,
-    floor: FloorOffsets,
-  ) {
+  constructor(private readonly container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setClearColor(0x000000, 0); // the container's background shows through
@@ -218,26 +332,29 @@ export class SkeletonScene {
     canvas.style.height = "100%";
     container.appendChild(canvas);
 
+    // On-court tags (PREDICTED) are HTML laid over the canvas; clicks pass through to the canvas.
+    this.labels = new CSS2DRenderer();
+    const overlay = this.labels.domElement;
+    overlay.style.position = "absolute";
+    overlay.style.inset = "0";
+    overlay.style.pointerEvents = "none";
+    overlay.setAttribute("aria-hidden", "true");
+    container.appendChild(overlay);
+
     this.camera = new THREE.PerspectiveCamera(40, 1, 0.05, 100);
-    const target = new THREE.Vector3(PLAYER_SPOT.x, 1, PLAYER_SPOT.z);
-    this.camera.position.set(target.x + 2.4, 1.9, target.z + 3.6);
     this.controls = new OrbitControls(this.camera, canvas);
-    this.controls.target.copy(target);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
     this.controls.minDistance = 1;
     this.controls.maxDistance = 22;
     this.controls.maxPolarAngle = Math.PI * 0.495; // stay above the floor
-    this.controls.update();
-    this.controls.saveState();
+    this.applyView();
 
     this.scene.add(new THREE.HemisphereLight(0xffffff, 0x1d2027, 1.6));
     const sun = new THREE.DirectionalLight(0xffffff, 1.4);
     sun.position.set(COURT.width / 2 + 3, 6, COURT.length + 2);
     this.scene.add(sun, buildCourt(), this.you.group, this.ghost.group);
-
-    this.you.group.position.set(PLAYER_SPOT.x, -floor.you, PLAYER_SPOT.z);
-    this.ghost.group.position.set(PLAYER_SPOT.x, -floor.ghost, PLAYER_SPOT.z);
+    this.placeFigures();
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
@@ -248,8 +365,70 @@ export class SkeletonScene {
     const { clientWidth: width, clientHeight: height } = this.container;
     if (width === 0 || height === 0) return;
     this.renderer.setSize(width, height, false);
+    this.labels.setSize(width, height);
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
+  }
+
+  private placeFigures() {
+    const { x, z } = this.playerSpot;
+    this.you.group.position.x = x;
+    this.you.group.position.z = z;
+    this.ghost.group.position.x = x + (this.sideBySide ? this.towardsMiddle * SIDE_BY_SIDE_OFFSET : 0);
+    this.ghost.group.position.z = z;
+  }
+
+  /** Moves the camera to the current preset and makes it what "Reset view" returns to. */
+  private applyView() {
+    const target = new THREE.Vector3();
+    if (this.view === "court") {
+      target.set(COURT.width / 2, 1.2, COURT.length * 0.45);
+      this.camera.position.set(COURT.width / 2 + 2.6, 5.2, COURT.length + 5.2);
+    } else {
+      const { x, z } = this.playerSpot;
+      target.set(x, 1, z);
+      this.camera.position.set(x + this.towardsMiddle * 2.4, 1.9, z + 3.6);
+    }
+    this.controls.target.copy(target);
+    this.controls.update();
+    this.controls.saveState();
+  }
+
+  /** New swings, ball paths or contact spot. Keeps the camera unless the player moved. */
+  setReplay({ floor, contactSpot, ballPaths }: ReplayLayout) {
+    this.you.group.position.y = -floor.you;
+    this.ghost.group.position.y = -floor.ghost;
+
+    let spot: { x: number; z: number } = { ...T_SPOT };
+    if (contactSpot) {
+      const onRight = contactSpot[0] >= COURT.width / 2;
+      this.towardsMiddle = onRight ? -1 : 1;
+      const x = contactSpot[0] + this.towardsMiddle * PLAYER_FROM_CONTACT;
+      spot = { x: Math.min(Math.max(x, 0.4), COURT.width - 0.4), z: contactSpot[2] };
+    }
+    const moved = spot.x !== this.playerSpot.x || spot.z !== this.playerSpot.z;
+    this.playerSpot = spot;
+    this.placeFigures();
+    if (moved) this.applyView();
+
+    if (this.balls) {
+      this.scene.remove(this.balls);
+      disposeTree(this.balls);
+      this.balls = null;
+    }
+    if (ballPaths) {
+      const group = new THREE.Group();
+      group.add(buildBallPath(ballPaths.you, { colour: YOU_COLOUR, opacity: 1, halo: 0, tagAbove: true }));
+      group.add(buildBallPath(ballPaths.ghost, { colour: GHOST_COLOUR, opacity: 0.7, halo: 0.007, tagAbove: false }));
+      const ball = new THREE.Mesh(
+        new THREE.SphereGeometry(BALL_RADIUS, 16, 12),
+        new THREE.MeshBasicMaterial({ color: 0xf5f5f5 }),
+      );
+      ball.position.fromArray(ballPaths.you.points[0]);
+      group.add(ball);
+      this.balls = group;
+      this.scene.add(group);
+    }
   }
 
   setPoses(you: SkeletonPose, ghost: SkeletonPose) {
@@ -257,9 +436,16 @@ export class SkeletonScene {
     this.ghost.update(ghost);
   }
 
-  /** Overlay (default) or ghost moved beside the player along x. */
+  /** Overlay (default) or ghost moved beside the player, towards the middle of the court. */
   setSideBySide(on: boolean) {
-    this.ghost.group.position.x = PLAYER_SPOT.x + (on ? SIDE_BY_SIDE_OFFSET : 0);
+    this.sideBySide = on;
+    this.placeFigures();
+  }
+
+  /** Close on the player, or the whole court to see both ball paths. */
+  setView(view: CameraView) {
+    this.view = view;
+    this.applyView();
   }
 
   resetView() {
@@ -269,19 +455,15 @@ export class SkeletonScene {
   render() {
     this.controls.update(); // needed every frame for damping
     this.renderer.render(this.scene, this.camera);
+    this.labels.render(this.scene, this.camera);
   }
 
   dispose() {
     this.resizeObserver.disconnect();
     this.controls.dispose();
-    this.scene.traverse((object) => {
-      if (object instanceof THREE.Mesh || object instanceof THREE.LineSegments) {
-        object.geometry.dispose();
-        const materials: THREE.Material[] = Array.isArray(object.material) ? object.material : [object.material];
-        materials.forEach((m) => m.dispose());
-      }
-    });
+    disposeTree(this.scene);
     this.renderer.dispose();
     this.renderer.domElement.remove();
+    this.labels.domElement.remove();
   }
 }
