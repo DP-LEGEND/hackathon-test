@@ -37,7 +37,7 @@ def check(swing) -> tuple[list[str], list[str]]:
     if not isinstance(swing.get("id"), str) or not swing.get("id"):
         errors.append('missing "id" (non-empty string)')
     fps = swing.get("fps")
-    if not isinstance(fps, (int, float)) or isinstance(fps, bool) or fps <= 0:
+    if not isinstance(fps, (int, float)) or isinstance(fps, bool) or not math.isfinite(fps) or fps <= 0:
         errors.append('"fps" must be a positive number')
     frames = swing.get("frames")
     if not isinstance(frames, list) or len(frames) < 2:
