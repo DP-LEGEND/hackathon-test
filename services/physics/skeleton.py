@@ -222,6 +222,15 @@ def to_court(P: np.ndarray, hand: str, contact: int, anchor: tuple[float, float]
     P: (frames, 35, 3) from to_array, facing +z (the pipeline's convention), y up or down.
     Returns a new array. Missing points stay NaN.
     """
+    return court_axes(P) + court_shift(P, hand, contact, anchor)
+
+
+def court_shift(P: np.ndarray, hand: str, contact: int, anchor: tuple[float, float]) -> np.ndarray:
+    """The slide to_court adds after court_axes, shape (3,): steps 2 and 3 of to_court.
+
+    Add it to another swing's court_axes to place that swing exactly like this one. compare.py
+    places the ghost with the player's shift, so the two bodies overlap.
+    """
     if hand not in ARM:
         raise ValueError(f"hand must be 'R' or 'L', got {hand!r}")
     if not 0 <= contact < len(P):
@@ -236,4 +245,4 @@ def to_court(P: np.ndarray, hand: str, contact: int, anchor: tuple[float, float]
     if not np.isfinite(head).all():
         raise ValueError("can't place the swing on the court: the hitting elbow or wrist is missing at contact")
     x, z = anchor
-    return Q + np.array([x - head[0], -np.nanmin(feet), z - head[2]])
+    return np.array([x - head[0], -np.nanmin(feet), z - head[2]])

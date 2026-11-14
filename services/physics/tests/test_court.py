@@ -14,9 +14,10 @@ import pytest
 
 from physics.ball import COURT_WIDTH_M, DEFAULT_CONTACT
 from physics.compare import AZIMUTH_LIMIT_DEG, compare, drive_spot, estimate_azimuth, main
+from physics.ghost import apply_fix
 from physics.skeleton import (
-    ARM, FEET, L_HIP, L_SH, N_POINTS, NOSE, R_SH, bone_lengths, mid, racket_head, swing_hand, to_array,
-    to_court, up_vector,
+    ARM, FEET, L_HIP, L_SH, N_POINTS, NOSE, R_SH, bone_lengths, court_axes, court_shift, mid, racket_head,
+    swing_hand, to_array, to_court, up_vector,
 )
 from physics.tests.swing_factory import make_swing
 
@@ -150,15 +151,35 @@ def test_real_forehand_hits_the_front_wall_where_the_video_shows(forehand):
                                                        "label": "ASSUMED"}
 
 
-def test_you_and_the_ghost_share_the_anchor(fh_elbow):
+def test_you_and_the_ghost_share_the_court_translation(forehand, fh_elbow):
+    c = fh_elbow["contactFrame"]
     a = fh_elbow["assumptions"]["anchor"]
     anchor = (a["x"], a["z"])
     assert anchor == (DEFAULT_CONTACT[0], DEFAULT_CONTACT[2])
     assert (a["side"], a["sideSource"], a["label"]) == ("forehand", "recorded", "ASSUMED")
+
+    # Court minus the turned pipeline swing is one rigid slide, and it is the same slide for
+    # both: the one that puts YOUR racket head on the anchor.
+    played = {**forehand, "contactFrame": c}
+    pipeline = {"you": to_array(played), "ghost": to_array(apply_fix(played, "straighten_elbow", 12, None, "R"))}
+    expected = court_shift(pipeline["you"], "R", c, anchor)
     for side in ("you", "ghost"):
-        start = fh_elbow[side]["ball"]["points"][0]
-        assert (start[0], start[2]) == anchor
-        assert [_head(fh_elbow, side)[i] for i in (0, 2)] == pytest.approx(anchor, abs=1e-9)
+        slide = (to_array(fh_elbow[side]["swing"]) - court_axes(pipeline[side]))[:, :33]
+        np.testing.assert_allclose(slide, np.broadcast_to(expected, slide.shape), atol=1e-9)
+
+    # So the bodies overlap: everything the elbow fix leaves alone is exactly on top of you.
+    you, ghost = to_array(fh_elbow["you"]["swing"]), to_array(fh_elbow["ghost"]["swing"])
+    moved = {ARM["R"][k] for k in ("wr", "pinky", "index", "thumb")}
+    still = [j for j in range(33) if j not in moved]
+    np.testing.assert_allclose(ghost[:, still], you[:, still], atol=1e-12)
+    assert not np.allclose(ghost[c, ARM["R"]["wr"]], you[c, ARM["R"]["wr"]])  # the fix itself shows
+
+    # Your racket head is on the anchor. The ghost's is where the fix moved it (~10 cm off),
+    # and its ball starts there.
+    assert [_head(fh_elbow, "you")[i] for i in (0, 2)] == pytest.approx(anchor, abs=1e-9)
+    gx, _, gz = _head(fh_elbow, "ghost")
+    assert 0.05 < np.hypot(gx - anchor[0], gz - anchor[1]) < 0.2
+    assert fh_elbow["ghost"]["ball"]["points"][0] == pytest.approx(_head(fh_elbow, "ghost"), abs=5e-4)
     # Straightening the elbow lowers the racket head, so the fix (and only the fix) moves the ball.
     assert _head(fh_elbow, "ghost")[1] < _head(fh_elbow, "you")[1] - 0.05
     assert fh_elbow["ghost"]["ball"]["frontWallHeightM"] < fh_elbow["you"]["ball"]["frontWallHeightM"]

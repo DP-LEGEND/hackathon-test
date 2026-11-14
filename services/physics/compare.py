@@ -7,19 +7,22 @@ the left wall, y up from the floor, z 0-9.75 back from the front wall):
     ghost  the same for the swing with one fix applied (physics/ghost.py)
     delta  metric and outcome changes, e.g. elbow 137.7 -> 149.7 deg, ball tin -> in
 
-Both swings go on the court the same way (skeleton.to_court): turned to face the front
-wall, lowest foot on the floor, and slid so the racket head at contact sits over the
-ANCHOR, the drive spot for the stroke. Each PREDICTED ball starts at its own swing's racket
-head at contact, so the ball leaves the racket you see. The same anchor and launch rule
-apply to you and the ghost, so only the fix changes the ball.
+Your swing goes on the court with skeleton.to_court: turned to face the front wall, lowest
+foot on the floor, and slid so YOUR racket head at contact sits over the ANCHOR, the drive
+spot for the stroke. The ghost gets exactly the same turn and slide, so the two bodies
+overlap and only the fixed part differs. Each PREDICTED ball starts at its own swing's racket
+head at contact, so the ball leaves the racket you see: yours on the anchor, the ghost's
+wherever the fix moved its racket (about 10 cm away for the elbow fixes). The same placement
+and launch rule apply to both swings, so only the fix changes the ball.
 
 Where the ball model's inputs come from (physics/ball.py):
 - Contact: the swing's contactFrame. It is the hit sound when the pipeline's contactMethod is
   "audio-transient", else the pipeline's wrist-speed estimate; `contactMethod` says which.
-- Launch point: the racket head at contact. Its height above the lowest foot is MEASURED;
-  its floor position is the ASSUMED anchor: ball.py's forehand drive spot for a right-hander,
-  mirrored across the court for a backhand or a left hand. The racket head itself is an
-  ESTIMATE until racket tracking exists (skeleton.racket_head: wrist + 0.45 m along the forearm).
+- Launch point: each swing's racket head at contact, height above the lowest foot MEASURED.
+  Yours sits over the ASSUMED anchor: ball.py's forehand drive spot for a right-hander,
+  mirrored across the court for a backhand or a left hand. The ghost's is wherever its racket
+  head ends up with your placement. The racket head itself is an ESTIMATE until racket
+  tracking exists (skeleton.racket_head: wrist + 0.45 m along the forearm).
 - Racket speed is an ESTIMATE until racket tracking exists. The forearm and racket are
   treated as one straight lever turning about the elbow, so the racket's sweet spot
   moves (forearm + racket) / forearm times faster than the wrist:
@@ -57,8 +60,8 @@ from physics.ball import COURT_WIDTH_M, DEFAULT_CONTACT, predict_ball_path
 from physics.ghost import EDITS, FIXES, apply_fix
 from physics.metrics import contact_frame, measure, real_fps
 from physics.skeleton import (
-    ARM, L_HIP, R_HIP, RACKET_HEAD_M, court_axes, from_array, mid, racket_head, speed, swing_hand, to_array,
-    to_court,
+    ARM, L_HIP, R_HIP, RACKET_HEAD_M, court_axes, court_shift, from_array, mid, racket_head, speed, swing_hand,
+    to_array,
 )
 
 # ---- Racket speed estimate ----
@@ -233,16 +236,17 @@ def _in_court_frame(swing: dict) -> bool:
     return swing.get("coordinateSystem") == "court" or in_meta
 
 
-def _on_court(swing: dict, fps_real, hand: str, contact: int, anchor: tuple[float, float],
+def _on_court(swing: dict, fps_real, hand: str, contact: int, shift: np.ndarray,
               elevation_deg: float) -> tuple[dict, dict]:
     """One swing: metrics, racket speed, the swing on the court, its PREDICTED ball, and its launch.
 
+    `shift` is the player's court_shift, so you and the ghost stand in exactly the same place.
     Metrics and speed are measured on the swing as given; they don't depend on where it stands.
     """
     m = measure(swing, fps_real, hand)
     metrics = {k: _num(m[k]) for k in METRICS}
     racket = estimate_racket_speed(swing, fps_real, hand)
-    Pc = to_court(to_array(swing), hand, contact, anchor)
+    Pc = court_axes(to_array(swing)) + shift
     point = [round(float(c), 3) for c in racket_head(Pc, hand)[contact]]
     if not 0 < point[1] < 3:
         raise ValueError(f"the racket head at contact is {point[1]:.2f} m above the floor; "
@@ -322,11 +326,12 @@ def compare(swing: dict, fix_name: str, amount: float, fps_real: float | None = 
     contact, contact_method = ball_contact(swing, P, hand)
     side, side_source = anchor_side(swing, P, hand, contact, side)
     anchor = drive_spot(hand, side)
+    shift = court_shift(P, hand, contact, anchor)  # from YOUR racket head; the ghost reuses it
     played = {**swing, "contactFrame": contact}
     ghost_swing = apply_fix(played, fix_name, amount, fps_real, hand)
 
-    you, you_launch = _on_court(played, fps_real, hand, contact, anchor, elevation_deg)
-    ghost, ghost_launch = _on_court(ghost_swing, fps_real, hand, contact, anchor, elevation_deg)
+    you, you_launch = _on_court(played, fps_real, hand, contact, shift, elevation_deg)
+    ghost, ghost_launch = _on_court(ghost_swing, fps_real, hand, contact, shift, elevation_deg)
     edit, _ = FIXES[fix_name]
     return {
         "fix": {"id": fix_name, "amount": float(amount), "unit": EDITS[edit]["unit"]},
@@ -343,8 +348,8 @@ def compare(swing: dict, fix_name: str, amount: float, fps_real: float | None = 
                 "x": anchor[0], "z": anchor[1], "side": side, "sideSource": side_source,
                 "assumed": True, "label": "ASSUMED",
                 "method": "drive spot for the stroke: ball.py's forehand spot for a right-hander, mirrored "
-                          "across the court for a backhand or a left hand. Both swings are slid so the "
-                          "racket head at contact sits here.",
+                          "across the court for a backhand or a left hand. Your racket head at contact "
+                          "sits here; the ghost is moved by exactly the same amount, so the bodies overlap.",
             },
             "launch": {
                 "racketHead": f"ESTIMATE: hitting wrist + {RACKET_HEAD_M:g} m along elbow -> wrist, "
