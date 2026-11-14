@@ -320,9 +320,22 @@ def guessed_metrics(swing: dict, hand: str, contact: int, fps: float) -> dict[st
     return out
 
 
-def _blank_guessed(side: dict, guessed: dict[str, str]) -> None:
+# Fix -> the measurement it edits, and the joint that measurement needs around contact.
+FIX_TARGETS = {
+    "straighten_elbow": ("elbow_at_contact_deg", "elbow"),
+    "bend_elbow": ("elbow_at_contact_deg", "elbow"),
+    "hold_wrist_cock": ("wrist_release_ms", "wrist"),
+    "close_stance": ("stance_open_deg", "wrist"),  # stance is measured against the wrist's direction
+}
+
+
+class GuessedFixError(ValueError):
+    """The fix edits a measurement the camera couldn't make on this swing."""
+
+
+def _drop_guessed(side: dict, guessed: dict[str, str]) -> None:
     for k in guessed:
-        side["metrics"][k] = None
+        side["metrics"].pop(k, None)
 
 
 def _change(a, b, nd: int = 1) -> dict:
@@ -340,7 +353,8 @@ def _fmt(x, unit: str = "") -> str:
 def _delta(you: dict, ghost: dict) -> dict:
     metrics = {}
     for k, (unit, _) in METRICS.items():
-        metrics[k] = {**_change(you["metrics"][k], ghost["metrics"][k]), "unit": unit}
+        if k in you["metrics"] and k in ghost["metrics"]:
+            metrics[k] = {**_change(you["metrics"][k], ghost["metrics"][k]), "unit": unit}
     yb, gb = you["ball"], ghost["ball"]
     ball = {
         "predicted": True,
@@ -353,8 +367,8 @@ def _delta(you: dict, ghost: dict) -> dict:
     }
     summary = []
     for k, (unit, words) in METRICS.items():
-        d = metrics[k]
-        if d["change"]:
+        d = metrics.get(k)
+        if d and d["change"]:
             summary.append(f"{words} {_fmt(d['you'])} -> {_fmt(d['ghost'])} {unit} ({d['change']:+g})")
     depth = ball["landingDepthM"]
     summary.append(
@@ -398,18 +412,22 @@ def compare(swing: dict, fix_name: str, amount: float, fps_real: float | None = 
     elevation = float(elevation_deg) if given_elevation else DEFAULT_ELEVATION_DEG[stroke]
     shift = court_shift(P, hand, contact, anchor)  # from YOUR racket head; the ghost reuses it
     played = {**swing, "contactFrame": contact}
+    # Never show a number read from a guessed joint, and never edit one: refuse a fix whose
+    # target measurement is guessed, and leave guessed metrics out (listed in notMeasured).
+    guessed = guessed_metrics(played, hand, contact, real_fps(swing, fps_real))
+    target = FIX_TARGETS.get(fix_name)
+    if target and target[0] in guessed:
+        side_name = "right" if hand == "R" else "left"
+        raise GuessedFixError(f"Not available on this swing: the camera couldn't see the {side_name} {target[1]} "
+                              "around contact (guessed joints), so a ghost of this fix would edit a guess.")
     ghost_swing = apply_fix(played, fix_name, amount, fps_real, hand)
 
     you, you_launch = _on_court(played, fps_real, hand, contact, shift, elevation)
     ghost, ghost_launch = _on_court(ghost_swing, fps_real, hand, contact, shift, elevation)
-    # Never show a number read from a guessed joint: blank it on both sides (the ghost
-    # inherits your frames' flags), keep the row, and say why.
-    guessed = guessed_metrics(played, hand, contact, real_fps(swing, fps_real))
-    _blank_guessed(you, guessed)
-    _blank_guessed(ghost, guessed)
+    # The ghost inherits your frames' flags, so the same metrics are left out on both sides.
+    _drop_guessed(you, guessed)
+    _drop_guessed(ghost, guessed)
     delta = _delta(you, ghost)
-    for k, why in guessed.items():
-        delta["metrics"][k]["notMeasured"] = why
     edit, _ = FIXES[fix_name]
     return {
         "fix": {"id": fix_name, "amount": float(amount), "unit": EDITS[edit]["unit"]},

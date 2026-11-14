@@ -1,10 +1,11 @@
-"""compare() never shows a number read from a guessed joint."""
+"""compare() never shows or edits a number read from a guessed joint."""
 
-import copy
 import json
 from pathlib import Path
 
-from physics.compare import compare
+import pytest
+
+from physics.compare import GuessedFixError, compare
 
 SWINGS = Path(__file__).resolve().parents[3] / "public" / "swings"
 
@@ -17,34 +18,32 @@ def _unflagged(path: str) -> dict:
     return s
 
 
+def _wrist_guessed() -> dict:
+    s = _unflagged("swing_2116_bh_stereo.json")
+    for k in range(56, 63):
+        s["frames"][k]["filled"] = [False] * 33
+        s["frames"][k]["filled"][16] = True  # right wrist guessed around contact (59)
+    return s
+
+
 def test_unflagged_swing_keeps_every_metric():
     r = compare(_unflagged("swing_fh_over_rotation.json"), "turn_shoulders_less", 20, fps_real=120, hand="R",
                 side="forehand")
     assert r["notMeasured"] == {}
-    assert all(v is not None for v in r["you"]["metrics"].values())
-    assert r["delta"]["metrics"]["shoulder_turn_deg"]["change"] is not None
+    assert set(r["delta"]["metrics"]) == set(r["you"]["metrics"]) and len(r["you"]["metrics"]) == 5
 
 
-def test_guessed_wrist_blanks_wrist_elbow_and_stance_rows():
-    s = _unflagged("swing_2116_bh_stereo.json")
-    c = 59
-    for k in range(c - 3, c + 4):
-        s["frames"][k]["filled"] = [False] * 33
-        s["frames"][k]["filled"][16] = True  # right wrist guessed around contact
-    r = compare(s, "turn_shoulders_more", 15, fps_real=120, hand="R", side="backhand")
+def test_guessed_metrics_are_left_out_not_shown():
+    r = compare(_wrist_guessed(), "turn_shoulders_more", 15, fps_real=120, hand="R", side="backhand")
     for k in ("wrist_at_contact_deg", "wrist_release_ms", "stance_open_deg", "elbow_at_contact_deg"):
         assert k in r["notMeasured"], k
-        row = r["delta"]["metrics"][k]
-        assert row["you"] is None and row["ghost"] is None and row["change"] is None
-        assert "notMeasured" in row
-        assert r["you"]["metrics"][k] is None and r["ghost"]["metrics"][k] is None
-    # the shoulder turn doesn't read the wrist, so it's still a measurement
-    assert r["delta"]["metrics"]["shoulder_turn_deg"]["change"] is not None
-    assert not any("wrist" in line or "stance" in line for line in r["delta"]["summary"])
+        assert k not in r["delta"]["metrics"] and k not in r["you"]["metrics"] and k not in r["ghost"]["metrics"]
+    assert list(r["delta"]["metrics"]) == ["shoulder_turn_deg"]
+    assert not any("wrist" in line or "stance" in line or "elbow" in line for line in r["delta"]["summary"])
 
 
-def test_saved_backhand_sample_has_no_guessed_numbers():
-    s = json.loads((SWINGS / "swing_2116_bh_stereo.json").read_text())
-    r = compare(copy.deepcopy(s), "turn_shoulders_more", 15, fps_real=120, hand="R", side="backhand")
-    for k in r["notMeasured"]:
-        assert r["delta"]["metrics"][k]["you"] is None
+@pytest.mark.parametrize("fix,joint", [("straighten_elbow", "elbow"), ("bend_elbow", "elbow"),
+                                       ("hold_wrist_cock", "wrist"), ("close_stance", "wrist")])
+def test_fix_editing_a_guessed_measurement_is_refused(fix, joint):
+    with pytest.raises(GuessedFixError, match=f"couldn't see the right {joint} around contact"):
+        compare(_wrist_guessed(), fix, 10, fps_real=120, hand="R", side="backhand")
