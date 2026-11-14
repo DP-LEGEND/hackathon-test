@@ -120,7 +120,7 @@ def retry_fixture(live_run, monkeypatch, base_speed=5):
         for index, frame in enumerate(swing['frames']):
             frame['t'] = index / (30 * factor)
             frame['joints'][16] = [index * base_speed / 30, .2, 0]
-        swing['metadata']['sourceContactSeconds'] = .6 / factor
+        swing['metadata']['sourceContactSeconds'] = swing['contactFrame'] / 30
         swing['metadata']['realStartSeconds'] = 0
         report.update(detected=1, written=1)
         return [swing], report
@@ -141,6 +141,39 @@ def test_slowdown_retries_choose_measured_plausible_wrist_speed(live_run, monkey
     assert swing['metadata']['slowdownSource'] == 'speed-retry'
     assert swing['metadata']['retryPeakWristSpeedMs'] == pytest.approx(20)
     assert peak_wrist_speed(swing) == pytest.approx(20)
+
+
+@pytest.mark.parametrize('with_audio', [False, True])
+def test_retry_saves_same_contact_times_as_normalized_clip(live_run, monkeypatch, with_audio):
+    import pipeline.live as live
+    clip, output, model, raw = live_run
+    raw = copy.deepcopy(raw)
+    raw['world'][:, 16, 0] *= 1.5
+    slowed = {**raw, 't': raw['t'] * 4, 'fps': raw['fps'] / 4}
+    if with_audio:
+        monkeypatch.setattr(live, 'run_tool', lambda *args, **kwargs: '')
+        monkeypatch.setattr(live, 'audio_hits', lambda *args, **kwargs: np.array([.63, 1.53]) * 4)
+
+    def saved_swings(destination, info, pose, options):
+        monkeypatch.setattr(live, 'probe_video', lambda *args: info)
+        monkeypatch.setattr(live, 'extract_raw', lambda *args, **kwargs: copy.deepcopy(pose))
+        result = process_live_clip(clip, destination, options)
+        return [json.loads((destination / name).read_text()) for name in result['files']]
+
+    retried = saved_swings(output, VideoInfo(30, 30, 8, 30, 1, 'encoded-cadence', []), slowed,
+                          LiveOptions(hand='R', stroke='forehand', model_path=model))
+    normalized = saved_swings(output.with_name('manual'), VideoInfo(30, 30, 8, 120, 4, 'manual', []), raw,
+                             LiveOptions(slowdown=4, hand='R', stroke='forehand', model_path=model))
+    assert len(retried) == len(normalized) == 2
+    for actual, expected in zip(retried, normalized):
+        metadata = actual['metadata']
+        assert metadata['slowdown'] == 4 and metadata['slowdownSource'] == 'speed-retry'
+        assert metadata['contactMethod'] == ('audio-transient' if with_audio else 'wrist-speed-peak-estimate')
+        real_contact = metadata['realStartSeconds'] + actual['frames'][actual['contactFrame']]['t']
+        assert metadata['sourceContactSeconds'] == pytest.approx(real_contact)
+        for field in ('sourceContactSeconds', 'sourceContactPlaybackSeconds'):
+            assert metadata[field] == pytest.approx(expected['metadata'][field])
+        assert metadata['sourceContactPlaybackSeconds'] == pytest.approx(real_contact * 4)
 
 
 def test_no_plausible_retry_publishes_nothing(live_run, monkeypatch):
@@ -196,15 +229,80 @@ def test_oversized_content_length_rejected_before_form_parsing():
     server.PROCESS_SEMAPHORE.release()
 
 
-def test_busy_upload_rejected_before_form_parsing():
+async def streamed_upload(chunks):
+    sent = []
+    scope = {'type': 'http', 'asgi': {'version': '3.0'}, 'method': 'POST', 'path': '/process',
+             'root_path': '', 'scheme': 'http', 'query_string': b'', 'http_version': '1.1',
+             'headers': [(b'content-type', b'multipart/form-data; boundary=test')],
+             'server': ('localhost', 8000), 'client': ('127.0.0.1', 1)}
+    async def receive():
+        chunk = await anext(chunks, None)
+        return {'type': 'http.request', 'body': chunk or b'', 'more_body': chunk is not None}
+    async def send(message):
+        sent.append(message)
+    await app(scope, receive, send)
+    return sent
+
+
+def test_busy_upload_is_size_checked_before_job_admission(tmp_path, monkeypatch):
     import pipeline.server as server
+    monkeypatch.setenv('GHOST_SWINGS_DIR', str(tmp_path))
+    monkeypatch.setattr(server, 'MAX_UPLOAD_BYTES', 4)
     assert server.PROCESS_SEMAPHORE.acquire(blocking=False)
     try:
-        sent = admission_request([(b'content-length', b'1')])
-        assert sent[0]['status'] == 429
-        assert json.loads(sent[-1]['body'])['detail'] == 'A clip is already processing'
+        async def chunks():
+            yield (b'--test\r\nContent-Disposition: form-data; name="file"; filename="a.mov"\r\n'
+                   b'Content-Type: video/quicktime\r\n\r\ntoo-large\r\n--test--\r\n')
+        assert asyncio.run(streamed_upload(chunks()))[0]['status'] == 413
     finally:
         server.PROCESS_SEMAPHORE.release()
+
+
+def test_slow_upload_does_not_reserve_processing_slot(tmp_path, monkeypatch):
+    import pipeline.server as server
+    monkeypatch.setenv('GHOST_SWINGS_DIR', str(tmp_path))
+    processed = []
+    def process(upload, *args):
+        processed.append(upload.read_bytes())
+        return {'swingId': 'ready'}
+    monkeypatch.setattr(server, 'process_live_clip', process)
+
+    async def exercise():
+        paused, resume = asyncio.Event(), asyncio.Event()
+        async def slow_body():
+            yield (b'--test\r\nContent-Disposition: form-data; name="file"; filename="slow.mov"\r\n'
+                   b'Content-Type: video/quicktime\r\n\r\nsl')
+            paused.set()
+            await resume.wait()
+            yield b'ow\r\n--test--\r\n'
+        async def fast_body():
+            yield (b'--test\r\nContent-Disposition: form-data; name="file"; filename="fast.mov"\r\n'
+                   b'Content-Type: video/quicktime\r\n\r\nfast\r\n--test--\r\n')
+        slow = asyncio.create_task(streamed_upload(slow_body()))
+        try:
+            await asyncio.wait_for(paused.wait(), timeout=5)
+            fast = await asyncio.wait_for(streamed_upload(fast_body()), timeout=5)
+            assert fast[0]['status'] == 201
+            assert processed == [b'fast'] and not slow.done()
+        finally:
+            resume.set()
+            completed = await asyncio.wait_for(slow, timeout=5)
+        assert completed[0]['status'] == 201
+        assert processed == [b'fast', b'slow']
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize('failure,status', [(ValueError, 422), (RuntimeError, 503), (OSError, 503)])
+def test_processing_failure_releases_slot(tmp_path, monkeypatch, failure, status):
+    import pipeline.server as server
+    monkeypatch.setenv('GHOST_SWINGS_DIR', str(tmp_path))
+    def fail(*args):
+        raise failure('processing failed')
+    monkeypatch.setattr(server, 'process_live_clip', fail)
+    with TestClient(app) as client:
+        assert client.post('/process', files={'file': ('a.mov', b'clip')}).status_code == status
+        monkeypatch.setattr(server, 'process_live_clip', lambda *args: {'swingId': 'ready'})
+        assert client.post('/process', files={'file': ('b.mov', b'clip')}).status_code == 201
 
 
 def test_concurrent_job_is_rejected_and_slot_is_released(tmp_path, monkeypatch):

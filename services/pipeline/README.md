@@ -49,6 +49,8 @@ are mapped back to real seconds before pose extraction. `metadata.timeMapping`
 preserves those rates; `sourceContactPlaybackSeconds` maps contact back to the
 original movie. Intermediate processing is CFR, at most 120 fps; `fps`/`fpsReal`
 describe that actual processing cadence, and `captureFps` records capture evidence.
+Live `sourceContactSeconds` uses normalized real seconds even after a slowdown
+retry; it is derived from the real window start plus the saved contact frame time.
 
 Explicit numeric QuickTime extensions `com.apple.quicktime.capture.fps`,
 `com.apple.quicktime.capture-frame-rate`, and `com.apple.quicktime.video-frame-rate`
@@ -126,9 +128,11 @@ only JSON outputs remain. Failed processing publishes no manifest. Invalid
 inputs/no tracked swing return 422, oversized uploads 413, and missing model/tools
 or unavailable output storage 503. Existing outputs are never overwritten.
 POST /process admits one job at a time using a non-blocking process-local
-semaphore; concurrent uploads get 429 "A clip is already processing" before form
-parsing. Oversized Content-Length gets 413 before the body is read. The slot is
-released on success, validation errors and failures. Use the default single-worker
+semaphore, acquired only after the upload is fully received and size-checked.
+A slow uploader does not reserve the processing slot. A completed valid upload
+gets 429 "A clip is already processing" if another job is running. Oversized
+Content-Length gets 413 before the body is read. The slot is released on processing
+success or failure. Use the default single-worker
 API command when one job total is required; multiple server workers have separate
 semaphores.
 

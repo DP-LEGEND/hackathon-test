@@ -30,7 +30,7 @@ PROCESS_SEMAPHORE = threading.Semaphore(1)
 
 
 class ProcessUploadGuard:
-    """Reject before FastAPI parses multipart data; hold the slot through response."""
+    """Reject oversized declared bodies before FastAPI parses multipart data."""
     def __init__(self, app: ASGIApp):
         self.app = app
 
@@ -49,13 +49,7 @@ class ProcessUploadGuard:
         if any(length > MAX_UPLOAD_BYTES for length in lengths):
             await JSONResponse({'detail': 'Video exceeds the 250 MB upload limit'}, status_code=413)(scope, receive, send)
             return
-        if not PROCESS_SEMAPHORE.acquire(blocking=False):
-            await JSONResponse({'detail': 'A clip is already processing'}, status_code=429)(scope, receive, send)
-            return
-        try:
-            await self.app(scope, receive, send)
-        finally:
-            PROCESS_SEMAPHORE.release()
+        await self.app(scope, receive, send)
 
 
 app = FastAPI(title="Ghost local service")
@@ -240,7 +234,14 @@ def process_video(
                     stream.write(chunk)
             if not size:
                 raise HTTPException(422, 'Video upload is empty')
-            return process_live_clip(upload, root / f'live-{uuid.uuid4().hex}', options)
+            # A client still sending its body must never reserve the job slot.
+            # Admit only complete, size-checked uploads to expensive processing.
+            if not PROCESS_SEMAPHORE.acquire(blocking=False):
+                raise HTTPException(429, 'A clip is already processing')
+            try:
+                return process_live_clip(upload, root / f'live-{uuid.uuid4().hex}', options)
+            finally:
+                PROCESS_SEMAPHORE.release()
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from None
     except RuntimeError:

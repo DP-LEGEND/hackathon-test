@@ -96,7 +96,11 @@ def process_live_clip(clip: Path, output: Path, options: LiveOptions = LiveOptio
         for index, swing in enumerate(swings, 1):
             swing['id'] = f'{session}-swing-{index:04d}'
             metadata = swing['metadata']
-            seconds = metadata['sourceContactSeconds']
+            # Retry detections retain the original extraction timestamps in
+            # sourceContactSeconds. The window start and frame times already
+            # use the chosen real-time clock, including sound-timed contact.
+            seconds = metadata['realStartSeconds'] + swing['frames'][swing['contactFrame']]['t']
+            metadata['sourceContactSeconds'] = seconds
             playback_seconds, factor = timing_at(info, seconds)
             metadata.update({
                 'slowdown': options.slowdown if options.slowdown is not None else factor,
