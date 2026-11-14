@@ -162,8 +162,14 @@ def load_labels(path: Path) -> list[dict[str, str]]:
 
 
 def load_swings(folder: Path) -> dict[str, dict]:
-    """Every swing under `folder`, by id. Files may hold one swing, a list, or {"swings": [...]}."""
-    out: dict[str, dict] = {}
+    """Every swing under `folder`, keyed "<id>@<run>", plus the bare id when only one run has it.
+
+    run = the folder holding the file, i.e. the pipeline run (fh-04, fh-05, ...), the same
+    rule as pipeline/server.py. Runs share swing ids (fh-04 and fh-05 both have
+    "7178110a0b06-swing-0003"), so a bare id alone would let one run overwrite the other.
+    Files may hold one swing, a list, or {"swings": [...]}.
+    """
+    by_id: dict[str, dict[str, dict]] = {}  # id -> {run: swing}
     for path in sorted(folder.rglob("*.json")):
         try:
             data = json.loads(path.read_text())
@@ -172,8 +178,31 @@ def load_swings(folder: Path) -> dict[str, dict]:
         items = data if isinstance(data, list) else data.get("swings", [data]) if isinstance(data, dict) else []
         for s in items:
             if isinstance(s, dict) and "frames" in s and "id" in s:
-                out[str(s["id"])] = s
+                by_id.setdefault(str(s["id"]), {})[path.parent.name] = s
+    out: dict[str, dict] = {}
+    for swing_id, runs in by_id.items():
+        for run, s in runs.items():
+            out[f"{swing_id}@{run}"] = s
+        if len(runs) == 1:
+            out[swing_id] = next(iter(runs.values()))
     return out
+
+
+def find_swing(row: dict[str, str], swings: dict[str, dict], runs: frozenset[str] = frozenset()) -> Optional[dict]:
+    """The swing a label row means: row["swing"] as written (e.g. "...-0003@fh-05", or a
+    bare id unique across runs), else "<id>@<row's pipeline_run>".
+
+    runs = every pipeline_run in the labels. A bare id found only under ANOTHER labelled
+    run (e.g. an fh-04 label when only the fh-05 folder was given) is that run's swing,
+    so it's missing, never measured as this row.
+    """
+    base, run = row["swing"].split("@")[0], (row.get("pipeline_run") or "").strip()
+    qualified = swings.get(f"{base}@{run}") if run else None
+    swing = swings.get(row["swing"])
+    if (swing is not None and qualified is None and "@" not in row["swing"]
+            and any(f"{base}@{other}" in swings for other in runs - {run})):
+        return None
+    return swing if swing is not None else qualified
 
 
 def measure_labelled(labels: list[dict[str, str]], swings: dict[str, dict],
@@ -181,8 +210,9 @@ def measure_labelled(labels: list[dict[str, str]], swings: dict[str, dict],
     """{stroke: {block: [metrics, ...]}} plus which labels had no swing or failed to measure."""
     by_block: dict[str, dict[str, list[dict]]] = {s: {} for s in THRESHOLDS}
     missing, failed = [], []
+    runs = frozenset(r.strip() for row in labels if (r := row.get("pipeline_run") or "").strip())
     for row in labels:
-        swing = swings.get(row["swing"])
+        swing = find_swing(row, swings, runs)
         if swing is None:
             missing.append(row["swing"])
             continue

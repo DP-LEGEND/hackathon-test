@@ -688,3 +688,130 @@ def test_disabled_rule_never_fires(monkeypatch: pytest.MonkeyPatch, sample: dict
     assert disabled_faults("forehand") == {"early_wrist_snap": "good and early-wrist blocks overlap"}
     assert coach_swing(sample, stroke="forehand")["disabled_faults"] == disabled_faults("forehand")
     assert disabled_faults("backhand") == {}
+
+
+# ---- Never call a fault from a guessed joint ----------------------------------------
+# A measurement is skipped when it reads a joint listed in metadata.approximatedJoints,
+# marked true in frames[i].filled on a frame it uses (#39 flags), or seen at visibility
+# below 0.5 at contact. The sample is right-handed with contact at frame 59.
+
+L_HIP, R_HIP, R_ELBOW = 23, 24, 14
+
+
+def _flagged(sample: dict, frame: int, joint: int) -> dict:
+    """The sample with pipeline-style filled flags on every frame, one joint marked filled."""
+    swing = _with(sample)
+    for f in swing["frames"]:
+        f["filled"] = [False] * 33
+    swing["frames"][frame]["filled"][joint] = True
+    return swing
+
+
+def _seen(sample: dict, joint: int, vis: float, frame: int | None = None) -> dict:
+    """The sample with per-joint visibility (0.9 everywhere) and one joint at `vis`."""
+    swing = _with(sample)
+    for f in swing["frames"]:
+        f["visibility"] = [0.9] * 33
+    swing["frames"][swing["contactFrame"] if frame is None else frame]["visibility"][joint] = vis
+    return swing
+
+
+def _ids(swing: dict, stroke: str) -> set[str]:
+    return {f["id"] for f in detect_faults(swing, stroke)}
+
+
+def test_clean_flags_and_good_visibility_guess_nothing(sample: dict) -> None:
+    for swing in (sample, _flagged(sample, 0, 0), _seen(sample, 0, 0.9)):
+        for stroke in STROKES:
+            m = measure_swing(swing, stroke)
+            assert m["guessed_joints"] == {}
+    assert _ids(_flagged(sample, 0, 0), "backhand") == _ids(sample, "backhand")  # nose: no rule reads it
+
+
+@pytest.mark.parametrize("ankle", [L_ANKLE, R_ANKLE])
+def test_ankle_filled_at_contact_skips_the_stance_fault(sample: dict, ankle: int) -> None:
+    c = sample["contactFrame"]
+    swing = _flagged(sample, c, ankle)
+    m = measure_swing(swing, "backhand")
+    assert m["guessed_joints"]["stance_open_deg"] == f"joint {ankle} filled at frame {c}"
+    assert m["stance_open_deg"] is None
+    result = coach_swing(swing, stroke="backhand")
+    assert STANCE_FAULT in result["not_measured"]
+    assert STANCE_FAULT not in [result["fault"]["id"]] + result["other_faults"]
+    assert _ids(swing, "backhand") == _ids(sample, "backhand") - {STANCE_FAULT}  # the wrist still fires
+    json.dumps(result, allow_nan=False)
+
+
+def test_filled_flag_only_counts_on_frames_the_measurement_reads(sample: dict) -> None:
+    swing = _flagged(sample, 0, R_ANKLE)  # ankle filled at the start, real at contact
+    m = measure_swing(swing, "backhand")
+    assert math.isfinite(m["stance_open_deg"])  # read at contact only: still measured
+    assert STANCE_FAULT in _ids(swing, "backhand")
+    assert m["stance_width_ratio"] is None  # feet spacing reads start to contact: skipped
+    assert m["guessed_joints"]["stance_width_ratio"] == f"joint {R_ANKLE} filled at frame 0"
+
+    after = _flagged(sample, len(sample["frames"]) - 1, R_INDEX)  # index filled long after contact
+    assert math.isfinite(measure_swing(after, "forehand")["wrist_uncock_deg"])
+    assert WRIST_FAULT in _ids(after, "forehand")
+
+
+def test_filled_hip_anywhere_skips_over_rotation(sample: dict) -> None:
+    swing = _flagged(sample, len(sample["frames"]) - 1, L_HIP)  # hip range reads the whole swing
+    m = measure_swing(swing, "forehand")
+    assert m["hip_turn_range_deg"] is None and "hip_turn_range_deg" in m["guessed_joints"]
+    assert _ids(swing, "forehand") == _ids(sample, "forehand") - {"over_rotation"}
+
+
+def test_low_visibility_at_contact_skips_the_fault(sample: dict) -> None:
+    swing = _seen(sample, R_WRIST, 0.3)
+    m = measure_swing(swing, "forehand")
+    assert m["guessed_joints"]["wrist_uncock_deg"] == f"joint {R_WRIST} visibility 0.30 at contact"
+    assert m["wrist_uncock_deg"] is None and m["elbow_at_contact_deg"] is None
+    assert _ids(swing, "forehand") == _ids(sample, "forehand") - {WRIST_FAULT}
+    assert WRIST_FAULT in coach_swing(swing, stroke="forehand")["not_measured"]
+
+
+def test_visibility_rule_is_below_0_5_at_contact_only(sample: dict) -> None:
+    assert measure_swing(_seen(sample, R_WRIST, 0.5), "forehand")["guessed_joints"] == {}  # 0.5 is enough
+    assert measure_swing(_seen(sample, R_WRIST, 0.1, frame=0), "forehand")["guessed_joints"] == {}  # not contact
+    assert measure_swing(_seen(sample, 0, 0.1), "forehand")["guessed_joints"] == {}  # nose: no rule uses it
+
+
+def test_approximated_joint_skips_every_fault_that_reads_it(sample: dict) -> None:
+    swing = _with(sample, metadata={"approximatedJoints": [R_HIP]})
+    m = measure_swing(swing, "forehand")
+    assert m["guessed_joints"] == {"hip_turn_range_deg": f"joint {R_HIP} approximated"}
+    assert _ids(swing, "forehand") == _ids(sample, "forehand") - {"over_rotation"}
+
+
+def test_missing_or_malformed_flags_mean_unknown_not_guessed(sample: dict) -> None:
+    swing = _with(sample)
+    c = swing["contactFrame"]
+    swing["frames"][c]["filled"] = [True] * 5  # wrong length: ignored
+    swing["frames"][c]["visibility"] = "low"
+    assert measure_swing(swing, "backhand")["guessed_joints"] == {}
+    assert _ids(swing, "backhand") == _ids(sample, "backhand")
+
+
+def test_every_rule_measurement_knows_its_joints(sample: dict) -> None:
+    from coach.measure_extra import measurement_joints
+
+    joints = measurement_joints(sample, "R")
+    used = {rule["measurement"] for rules in THRESHOLDS.values() for rule in rules.values()}
+    used |= {rule["amount_from"]["measurement"] for rules in THRESHOLDS.values()
+             for rule in rules.values() if "amount_from" in rule}
+    assert used - {"forearm_roll_deg"} <= set(joints)  # forearm roll isn't measured yet
+
+
+@pytest.mark.parametrize("measurement", [
+    "elbow_at_contact_deg", "elbow_min_before_deg", "wrist_angle_change_pre_deg", "wrist_uncock_deg",
+    "wrist_uncock_ms", "wrist_release_ms", "shoulder_turn_deg", "hip_turn_range_deg",
+    "stance_width_ratio", "stance_open_deg"])
+def test_a_filled_joint_at_contact_nulls_each_measurement_that_reads_it(sample: dict, measurement: str) -> None:
+    from coach.measure_extra import measurement_joints
+
+    joints, _ = measurement_joints(sample, "R")[measurement]
+    for joint in joints:
+        m = measure_swing(_flagged(sample, sample["contactFrame"], joint), "forehand")
+        assert m[measurement] is None, (measurement, joint)
+        assert m["guessed_joints"][measurement] == f"joint {joint} filled at frame {sample['contactFrame']}"

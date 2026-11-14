@@ -36,7 +36,8 @@ from physics.skeleton import L_SH, R_SH, to_array
 from pipeline.features import swing_features
 
 from coach.measure_extra import (
-    STROKES, recorded_hand, stance_joints_filled, stroke_side, wrist_index_filled, wrist_uncock,
+    STROKES, guessed_measurements, recorded_hand, stance_joints_filled, stroke_side, wrist_index_filled,
+    wrist_uncock,
 )
 
 Stroke = Literal["forehand", "backhand"]
@@ -266,6 +267,13 @@ def measure_swing(swing: dict, stroke: Optional[Stroke] = None, fps_real: Option
     if m["wrist_skipped"]:
         for key in ("wrist_angle_change_pre_deg", "wrist_release_ms", "wrist_uncock_deg", "wrist_uncock_ms"):
             m[key] = None
+
+    # Never call a fault from a guessed joint: a number that reads a joint the pipeline
+    # approximated, marked filled on a frame it uses (#39 flags), or saw at visibility
+    # below 0.5 at contact is unmeasured, so its fault is skipped (see unmeasured_faults).
+    m["guessed_joints"] = guessed_measurements(swing, m["hand"], m["contact_frame"], m["fps_real"])
+    for key in m["guessed_joints"]:
+        m[key] = None
     return m
 
 

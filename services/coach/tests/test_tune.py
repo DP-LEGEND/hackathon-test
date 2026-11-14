@@ -57,7 +57,9 @@ def test_swings_load_from_single_list_and_wrapped_files(tmp_path: Path) -> None:
     (tmp_path / "wrapped.json").write_text(json.dumps({"swings": [{"id": "d", "frames": []}], "report": {}}))
     (tmp_path / "broken.json").write_text("{not json")
     (tmp_path / "other.json").write_text(json.dumps({"not": "a swing"}))
-    assert sorted(load_swings(tmp_path)) == ["a", "b", "c", "d"]
+    swings = load_swings(tmp_path)
+    assert sorted(k for k in swings if "@" not in k) == ["a", "b", "c", "d"]  # unique ids keep a bare key
+    assert swings["b"] is swings["b@sub"] and swings["a"] is swings[f"a@{tmp_path.name}"]
 
 
 def _labels(side: str, block: str, n: int, start: int = 0) -> list[dict[str, str]]:
@@ -363,3 +365,70 @@ def test_recommend_only_disables_for_the_two_reasons() -> None:
         if v["action"] == "disable":
             assert v["why"].startswith(("best separation", "fewer than 5 measured fault swings")), v
     assert recommend([])["action"] == "disable"  # no measurement at all: no fault swings
+
+
+# ---- Review fix on #38: runs share swing ids, so swings are keyed "<id>@<run>" -------
+
+from coach.tune import find_swing, measure_labelled  # noqa: E402
+
+SHARED = "7178110a0b06-swing-0003"  # in both fh-04 and fh-05, as in the real labels
+
+
+def _write(folder: Path, run: str, swing_id: str, marker: str) -> None:
+    (folder / run).mkdir(parents=True, exist_ok=True)
+    (folder / run / f"{swing_id}.json").write_text(json.dumps({"id": swing_id, "frames": [], "marker": marker}))
+
+
+def _row(swing: str, run: str, block: str = "none") -> dict[str, str]:
+    return {"swing": swing, "pipeline_run": run, "side": "forehand", "intended_fault": block}
+
+
+def _measured(labels: list[dict[str, str]], swings: dict[str, dict]) -> tuple[list[str], list[str]]:
+    seen: list[str] = []
+
+    def record(swing: dict, stroke: str) -> dict:
+        seen.append(swing["marker"])
+        return {}
+
+    return seen, measure_labelled(labels, swings, measure=record)["missing"]
+
+
+def test_two_runs_with_the_same_swing_id_measure_two_different_swings(tmp_path: Path) -> None:
+    _write(tmp_path, "fh-04", SHARED, "run 4")
+    _write(tmp_path, "fh-05", SHARED, "run 5")
+    _write(tmp_path, "fh-05", "7178110a0b06-swing-0099", "only in run 5")
+    swings = load_swings(tmp_path)
+    assert swings[f"{SHARED}@fh-04"]["marker"] == "run 4" and swings[f"{SHARED}@fh-05"]["marker"] == "run 5"
+    assert SHARED not in swings  # shared id: no bare key, so one run can't overwrite the other
+    assert swings["7178110a0b06-swing-0099"] is swings["7178110a0b06-swing-0099@fh-05"]  # unique: both keys
+
+    # labels.csv style: fh-04 rows use the bare id, fh-05 rows carry the "@fh-05" suffix.
+    labels = [_row(SHARED, "fh-04"), _row(f"{SHARED}@fh-05", "fh-05"), _row("7178110a0b06-swing-0099", "fh-05")]
+    seen, missing = _measured(labels, swings)
+    assert seen == ["run 4", "run 5", "only in run 5"] and missing == []
+
+
+def test_a_bare_id_from_another_labelled_run_is_missing_not_measured(tmp_path: Path) -> None:
+    _write(tmp_path, "fh-05", SHARED, "run 5")  # only fh-05 was given
+    labels = [_row(SHARED, "fh-04"), _row(f"{SHARED}@fh-05", "fh-05")]
+    seen, missing = _measured(labels, load_swings(tmp_path))
+    assert seen == ["run 5"] and missing == [SHARED]  # the fh-04 label never measures fh-05's swing
+
+
+def test_swings_in_one_flat_folder_still_match_bare_ids(tmp_path: Path) -> None:
+    _write(tmp_path, "raw", "swing-a", "a")  # folder name isn't a labelled run
+    swings = load_swings(tmp_path)
+    assert find_swing(_row("swing-a", "fh-04"), swings, frozenset({"fh-04", "fh-05"}))["marker"] == "a"
+    assert find_swing(_row("swing-a", ""), swings)["marker"] == "a"
+
+
+def test_every_real_label_finds_its_own_runs_swing(tmp_path: Path) -> None:
+    rows = load_labels(LABELS)
+    assert any("@" in r["swing"] for r in rows)  # the suffixed fh-05/bh-05 ids are in there
+    for r in rows:
+        base, run = r["swing"].split("@")[0], r["pipeline_run"]
+        assert "@" not in r["swing"] or r["swing"].endswith(f"@{run}"), r
+        _write(tmp_path, run, base, f"{base}@{run}")
+    seen, missing = _measured(rows, load_swings(tmp_path))
+    assert missing == [] and seen == [f"{r['swing'].split('@')[0]}@{r['pipeline_run']}" for r in rows]
+    assert len(set(seen)) == len(rows)  # no two labels share a swing
