@@ -1,0 +1,410 @@
+"""The live coach voice: a Claude-worded cue and ElevenLabs audio for one coached swing.
+Owners: aryan and Dev.
+
+voice_for_swing(swing_id, result) takes the REAL coach result (what /coach/{id} returns,
+from coach_swing) and returns {"cue", "audioUrl", "source"}:
+- cue: one spoken sentence worded by Claude (needs ANTHROPIC_API_KEY), quoting only
+  numbers the coach measured. Otherwise the plain coach caption, result["cue"].
+- audioUrl: "data:audio/mpeg;base64,..." of ElevenLabs saying exactly `cue` (needs
+  ELEVENLABS_API_KEY), else None. A data URL, so no second route serves files.
+- source: "claude" or "caption", so the page can say who worded it.
+
+Code measures, Claude explains: Claude gets only the coach's fault label, cue and tip,
+never raw metrics, and any number it writes must already be in them, or we use the
+caption instead.
+
+Optional and safe: missing keys, API errors, refusals, timeouts or an invented number
+never raise here; they fall back to the caption and/or audio None.
+
+Cached so each swing calls each API at most once. Successes are kept in memory and on
+disk (GHOST_VOICE_CACHE, default services/coach/.voice_cache/, which git-ignores itself),
+keyed by swing id plus the coach facts, so a swing re-measured with different numbers
+is worded afresh. A failed call is remembered until the server restarts, so a bad key
+or a network outage isn't retried on every request.
+
+Keys come only from .env.local (coach.env); nothing here prints them.
+"""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import json
+import logging
+import os
+import re
+import threading
+from pathlib import Path
+from typing import Any, Literal, Optional, TypedDict
+
+import anthropic
+from pydantic import BaseModel, Field
+
+from coach import voice
+from coach.agent import NO_FAULT_CUE
+from coach.avatar import _spoken
+from coach.cue import MODEL, CoachError
+from coach.env import load_env, require_env
+
+log = logging.getLogger(__name__)
+
+Source = Literal["claude", "caption"]
+
+MAX_SPOKEN_WORDS = 20
+# The web proxy (app/api/[...path]/route.ts) aborts every request except /process after
+# 30 s, so Claude plus ElevenLabs must finish well inside that: at most 10 s + 12 s, with no
+# SDK retries (a retry would double Claude's time). A timeout falls back to the caption
+# (Claude) or to no audio (ElevenLabs), never to the proxy's 502.
+CLAUDE_TIMEOUT_S = 10.0
+TTS_TIMEOUT_S = 12.0
+DEFAULT_CACHE_DIR = Path(__file__).resolve().parent / ".voice_cache"
+
+
+class LiveVoice(TypedDict):
+    cue: str
+    audioUrl: Optional[str]
+    source: Source
+
+
+class WordedCue(BaseModel):
+    cue: str = Field(description="One short spoken sentence the player can act on during the next swing")
+
+
+SYSTEM_PROMPT = f"""You are a squash coach talking to a player between swings. The code has already
+measured the swing and chosen the one fix that matters. Your job is only to say it well.
+
+Write `cue`: ONE short spoken sentence (at most {MAX_SPOKEN_WORDS} words) telling the player what
+to do on the next swing, in plain words they can act on mid-session.
+- Keep the coach's fix. Don't add a second fix or change it.
+- You may say the measured number, but only exactly as written in `measured`, as digits.
+  Never invent, round or calculate a number.
+- No lists, quotes, emoji or stage directions."""
+
+
+# ---- What Claude may use ------------------------------------------------------------
+
+def coach_facts(result: dict[str, Any]) -> Optional[dict[str, str]]:
+    """The coach facts Claude words the cue from, or None when there's no fault to fix."""
+    fault = result.get("fault")
+    if not isinstance(fault, dict) or not fault.get("label") or not fault.get("cue"):
+        return None
+    facts = {"measured": _spoken(str(fault["label"])), "coach_cue": str(fault["cue"])}
+    if result.get("stroke") in ("forehand", "backhand"):
+        facts["stroke"] = str(result["stroke"])
+    if fault.get("tip"):
+        facts["why_it_matters"] = str(fault["tip"])
+    return facts
+
+
+# Unit spellings that mean the same unit; anything else after a number means no unit.
+UNIT_ALIASES: dict[str, str] = {
+    "°": "deg", "deg": "deg", "degs": "deg", "degree": "deg", "degrees": "deg",
+    "%": "%", "percent": "%", "per cent": "%",
+    "ms": "ms", "millisecond": "ms", "milliseconds": "ms",
+    "s": "s", "sec": "s", "secs": "s", "second": "s", "seconds": "s",
+    "cm": "cm", "centimetre": "cm", "centimetres": "cm", "centimeter": "cm", "centimeters": "cm",
+    "m": "m", "metre": "m", "metres": "m", "meter": "m", "meters": "m",
+    "shoulder width": "shoulder widths", "shoulder widths": "shoulder widths",
+}
+_UNIT = "|".join(sorted(map(re.escape, UNIT_ALIASES), key=len, reverse=True))
+# A number as written: an optional sign (-, the minus sign, "minus", "negative"), the digits
+# (decimals and exponents kept as written), then an optional unit right after it ("80
+# degrees", "80-degree", "80°", "15%"). A hyphen after a letter or digit ("70-80") isn't a sign.
+_QUOTED = re.compile(
+    r"(?<![\w.])(?P<sign>[-\u2212]|(?:minus|negative)\s+)?"
+    r"(?P<num>(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?)"
+    rf"(?:(?:\s*|-)(?P<unit>{_UNIT})(?!\w))?",
+    re.IGNORECASE,
+)
+# The coach writes every number as digits, so a spelled-out number can only be invented:
+# any of these words is rejected whatever follows it ("two inches", "half a foot").
+_NUMBER_WORD = (r"(?:zero|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|"
+                r"fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|"
+                r"sixty|seventy|eighty|ninety|hundreds?|thousands?|half|halves|quarters?|dozens?)")
+_SPELLED = re.compile(rf"\b{_NUMBER_WORD}\b", re.IGNORECASE)
+# "one" is everyday English ("one more swing", "one smooth turn"), so it only counts as a
+# number before a unit-like noun, allowing one word between ("one inch", "one more inch").
+UNIT_NOUNS = sorted(set(UNIT_ALIASES) | {
+    "inch", "inches", "foot", "feet", "yard", "yards", "mm", "millimetre", "millimetres",
+    "millimeter", "millimeters", "minute", "minutes", "step", "steps", "pace", "paces",
+}, key=len, reverse=True)
+_ONE_UNIT = re.compile(
+    rf"\bone(?:[\s-]+[a-z]+)?[\s-]+(?:{'|'.join(map(re.escape, UNIT_NOUNS))})(?!\w)", re.IGNORECASE)
+
+
+def quoted_numbers(text: str) -> list[tuple[str, str, Optional[str]]]:
+    """Every number in `text` as (sign, digits as written, unit or None), e.g. ("-", "80", "deg")."""
+    out = []
+    for m in _QUOTED.finditer(text):
+        unit = m.group("unit")
+        out.append(("-" if m.group("sign") else "", m.group("num"),
+                    UNIT_ALIASES[unit.lower()] if unit else None))
+    return out
+
+
+# Opposite fix directions, each as the word forms a cue may use. Claude may reword the
+# coach's fix but never reverse it ("turn less" must not become "turn more").
+OPPOSITES: list[tuple[frozenset[str], frozenset[str]]] = [
+    (frozenset({"more", "further", "farther"}), frozenset({"less", "fewer"})),
+    (frozenset({"open", "opens", "opened", "opening", "opener"}),
+     frozenset({"close", "closes", "closed", "closing", "closer"})),
+    (frozenset({"bend", "bends", "bent", "bending"}),
+     frozenset({"straighten", "straightens", "straightened", "straightening", "straight"})),
+    (frozenset({"earlier", "sooner"}), frozenset({"later"})),
+    (frozenset({"wider", "widen", "widens", "widening"}), frozenset({"narrower", "narrow", "narrows", "narrowing"})),
+    (frozenset({"higher", "raise", "raises", "raised", "raising"}), frozenset({"lower", "lowers", "lowered", "lowering"})),
+    (frozenset({"faster", "quicker"}), frozenset({"slower"})),
+    (frozenset({"forward", "forwards"}), frozenset({"back", "backward", "backwards"})),
+]
+
+
+def _words(text: str) -> set[str]:
+    return set(re.findall(r"[a-z]+", text.lower()))
+
+
+def check_direction(cue: str, facts: dict[str, str]) -> None:
+    """Raise CoachError if the cue reverses the coach's fix direction.
+
+    For each opposite pair the coach cue uses, the fix side is the one it says ("less"
+    in "Turn a little less"). When it says both, as the stance cue does ("Your open stance
+    ... Close it"), the measured label names the fault ("Stance too open"), so the other
+    side is the fix; if the label can't tell, any word of that pair is rejected.
+    A cue may use the opposite side only to restate the fault: the word is in the measured
+    label and the cue also says the fix ("80 degrees open, so close it"). So "Open your
+    stance further" for an open stance is rejected.
+    """
+    coach, fault, said = _words(facts.get("coach_cue", "")), _words(facts.get("measured", "")), _words(cue)
+    for a, b in OPPOSITES:
+        in_a, in_b = bool(coach & a), bool(coach & b)
+        if not (in_a or in_b):
+            continue
+        if in_a and in_b:
+            if bool(fault & a) == bool(fault & b):
+                if said & (a | b):
+                    raise CoachError(f"Can't tell the coach's fix direction, so the cue may not say "
+                                     f"{sorted(said & (a | b))}")
+                continue
+            fix, opposite = (b, a) if fault & a else (a, b)
+        else:
+            fix, opposite = (a, b) if in_a else (b, a)
+        used = said & opposite
+        if used and not (fault & opposite and said & fix):
+            raise CoachError(f"Cue reverses the coach's fix: coach says {sorted(coach & fix)}, "
+                             f"cue says {sorted(used)}")
+
+
+def guarded(facts: dict[str, str]) -> bool:
+    """True if check_direction can guard Claude's rewording of this coach cue.
+
+    It can only when the coach cue uses a word from an OPPOSITES pair. Cues without one
+    (today early_wrist_snap's "Keep your wrist cocked..." and rolled_wrist's "Keep your
+    wrist firm...") have no direction to check, so Claude could reverse them unnoticed
+    ("Snap your wrist before contact."). Those are spoken verbatim instead.
+    """
+    coach = _words(facts.get("coach_cue", ""))
+    return any(coach & (a | b) for a, b in OPPOSITES)
+
+
+def check_worded_cue(cue: str, facts: dict[str, str]) -> str:
+    """The cleaned cue if it's one short sentence quoting only numbers in the facts.
+
+    Every number must match one in the coach facts EXACTLY: same sign, same digits as
+    written and same unit (80 degrees is fine; -80 degrees, 80.0 degrees, 80 percent or
+    a bare 80 aren't). It must also keep the coach's fix direction (check_direction).
+    Raises CoachError otherwise (the caller then uses the plain caption).
+    """
+    cue = " ".join(cue.split())
+    if not cue:
+        raise CoachError("Claude returned an empty cue.")
+    if re.search(r"[.!?]+\s+\S", cue):
+        raise CoachError(f"Cue must be one sentence: {cue!r}")
+    if len(cue.split()) > MAX_SPOKEN_WORDS:
+        raise CoachError(f"Cue has more than {MAX_SPOKEN_WORDS} words: {cue!r}")
+    allowed = {n for text in facts.values() for n in quoted_numbers(text)}
+    invented = [n for n in quoted_numbers(cue) if n not in allowed]
+    if invented:
+        shown = [f"{sign}{num}{' ' + unit if unit else ''}" for sign, num, unit in invented]
+        raise CoachError(f"Cue used numbers the coach didn't measure as written: {shown}")
+    spelled = _SPELLED.search(cue) or _ONE_UNIT.search(cue)
+    if spelled:
+        raise CoachError(f"Cue spelled out a number: {spelled.group(0)!r}")
+    check_direction(cue, facts)
+    return cue
+
+
+# ---- The two APIs (tests replace make_client and synthesize) -------------------------
+
+def make_client() -> anthropic.Anthropic:
+    return anthropic.Anthropic(api_key=require_env("ANTHROPIC_API_KEY"),
+                               timeout=CLAUDE_TIMEOUT_S, max_retries=0)
+
+
+def word_cue(facts: dict[str, str], client: Optional[anthropic.Anthropic] = None) -> str:
+    """Claude's one-sentence spoken cue for these coach facts. Raises on any failure."""
+    client = client or make_client()
+    response = client.beta.messages.parse(
+        model=MODEL,
+        max_tokens=4000,
+        system=SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": "The coach's result for this swing:\n"
+                                              + json.dumps(facts, indent=2, sort_keys=True)}],
+        output_format=WordedCue,
+        output_config={"effort": "low"},  # a one-sentence rewording
+        # If the main model declines, the API retries on a fallback model in the same call.
+        betas=["server-side-fallback-2026-07-01"],
+        fallbacks="default",
+    )
+    if response.stop_reason == "refusal":
+        raise CoachError("Claude declined this request.")
+    if response.parsed_output is None:
+        raise CoachError(f"Claude returned no usable JSON (stop_reason={response.stop_reason}).")
+    return check_worded_cue(response.parsed_output.cue, facts)
+
+
+def synthesize(text: str) -> bytes:
+    """MP3 bytes of ElevenLabs saying `text` (coach.voice; raises VoiceError)."""
+    return voice.synthesize(text, timeout_s=TTS_TIMEOUT_S)
+
+
+def has_key(name: str) -> bool:
+    load_env()
+    return bool(os.environ.get(name, "").strip())
+
+
+# ---- Cache ----------------------------------------------------------------------------
+
+_memory: dict[str, Any] = {}  # cache key -> cue entry, or audio bytes
+_failed: set[str] = set()  # cache keys whose API call failed in this process
+_locks: dict[str, threading.Lock] = {}
+_locks_guard = threading.Lock()
+
+
+def _cache_dir() -> Path:
+    return Path(os.environ.get("GHOST_VOICE_CACHE", "") or DEFAULT_CACHE_DIR)
+
+
+def _digest(*parts: Any) -> str:
+    return hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()[:32]
+
+
+def _lock(key: str) -> threading.Lock:
+    with _locks_guard:
+        return _locks.setdefault(key, threading.Lock())
+
+
+def _read(name: str) -> Optional[bytes]:
+    if name in _memory:
+        return _memory[name]
+    try:
+        data = (_cache_dir() / name).read_bytes()
+    except OSError:
+        return None
+    _memory[name] = data
+    return data
+
+
+def _write(name: str, data: bytes) -> None:
+    """Keep in memory always; on disk when possible (a read-only disk only loses persistence)."""
+    _memory[name] = data
+    folder = _cache_dir()
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        ignore = folder / ".gitignore"
+        if not ignore.exists():
+            ignore.write_text("# Voice cache: generated per swing, never committed.\n*\n")
+        tmp = folder / f".{name}.tmp"
+        tmp.write_bytes(data)
+        tmp.replace(folder / name)
+    except OSError as exc:
+        log.warning("Voice cache not written to disk (%s); kept in memory only.", type(exc).__name__)
+
+
+def _reset_memory() -> None:
+    """Forget the in-memory cache and failures (tests; a restarted server starts like this)."""
+    _memory.clear()
+    _failed.clear()
+
+
+# ---- The live entry point ---------------------------------------------------------------
+
+def _cached_cue(data: bytes) -> Optional[str]:
+    """The cue in a cue cache entry, or None if the entry is unreadable or the wrong shape."""
+    try:
+        entry = json.loads(data)
+    except ValueError:  # also covers bad UTF-8 (UnicodeDecodeError)
+        return None
+    cue = entry.get("cue") if isinstance(entry, dict) else None
+    return cue if isinstance(cue, str) and cue.strip() else None
+
+
+def _discard(name: str, swing_id: str, why: str) -> None:
+    """Forget a bad cache entry in memory and on disk, so it's regenerated or skipped."""
+    _memory.pop(name, None)
+    try:
+        (_cache_dir() / name).unlink(missing_ok=True)
+    except OSError:
+        pass
+    log.warning("Ignored a voice cache entry for %s: %s.", swing_id, why)
+
+
+def _cue_for(swing_id: str, facts: Optional[dict[str, str]], caption: str,
+             client: Optional[anthropic.Anthropic]) -> tuple[str, Source]:
+    if facts is None:
+        return caption, "caption"  # no fault: nothing for Claude to word
+    if not guarded(facts):
+        return caption, "caption"  # no direction to guard: speak the coach's cue verbatim
+    name = f"cue-{_digest(swing_id, facts)}.json"
+    with _lock(name):
+        cached = _read(name)
+        if cached is not None:
+            cue = _cached_cue(cached)
+            if cue is None:
+                _discard(name, swing_id, "unreadable or wrong shape")  # treat as a miss
+            else:
+                # Re-check against today's rules: a cue cached under an older, weaker check
+                # (an invented number, a reversed fix) must not be served or voiced.
+                try:
+                    return check_worded_cue(cue, facts), "claude"
+                except CoachError as exc:
+                    _discard(name, swing_id, f"fails the current checks ({exc})")  # treat as a miss
+        if name in _failed or not has_key("ANTHROPIC_API_KEY"):
+            return caption, "caption"  # no entry written: adding a key later still works
+        try:
+            cue = word_cue(facts, client)
+        except Exception as exc:  # optional feature: any failure falls back to the caption
+            _failed.add(name)
+            log.warning("Claude cue unavailable for %s, using the caption: %s", swing_id,
+                        exc if isinstance(exc, CoachError) else type(exc).__name__)
+            return caption, "caption"
+        _write(name, json.dumps({"swing_id": swing_id, "cue": cue}).encode())
+        return cue, "claude"
+
+
+def _audio_for(swing_id: str, cue: str) -> Optional[str]:
+    # Keyed by the exact text, so the audio always says the cue returned with it.
+    name = f"audio-{_digest(swing_id, cue)}.mp3"
+    with _lock(name):
+        audio = _read(name)
+        if audio is None:
+            if name in _failed or not has_key("ELEVENLABS_API_KEY"):
+                return None
+            try:
+                audio = synthesize(cue)
+            except Exception as exc:  # optional feature: the cue still shows as a caption
+                _failed.add(name)
+                log.warning("ElevenLabs audio unavailable for %s: %s", swing_id,
+                            exc if isinstance(exc, voice.VoiceError) else type(exc).__name__)
+                return None
+            if not audio:
+                _failed.add(name)
+                return None
+            _write(name, audio)
+    return "data:audio/mpeg;base64," + base64.b64encode(audio).decode("ascii")
+
+
+def voice_for_swing(swing_id: str, result: dict[str, Any],
+                    client: Optional[anthropic.Anthropic] = None) -> LiveVoice:
+    """{cue, audioUrl, source} for one coached swing. Never raises for missing keys or API failures."""
+    caption = str(result.get("cue") or NO_FAULT_CUE)
+    cue, source = _cue_for(swing_id, coach_facts(result), caption, client)
+    return LiveVoice(cue=cue, audioUrl=_audio_for(swing_id, cue), source=source)

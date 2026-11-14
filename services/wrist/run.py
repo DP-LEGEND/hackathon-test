@@ -12,13 +12,15 @@ to the impacts and the report says the error check is weaker.
 
 --swings: the pipeline swing JSONs (default: --contacts when it's a folder). With them you
 also get the camera fusion ESTIMATES: racket speed (camera wrist velocity + gyro x --lever)
-and the occlusion fill, whose rebuilt swings go to --filled-out.
+and the occlusion fill. Every camera swing is then written to --swings-out with its wrist
+entry attached as swing["wrist"] (and the fill applied where it was), ready for the coach
+and for physics' compare(), which prefers the sensor's racket speed.
 
-Outputs go to data/raw/wrist/ (git-ignored) unless --out / --series-out / --filled-out say
-otherwise.
-Then coach a swing with its wrist data:
+Outputs go to data/raw/wrist/ (git-ignored) unless --out / --series-out / --swings-out say
+otherwise. Then coach or compare a swing with its wrist data:
 
-    python -m coach.agent swing.json --wrist ../data/raw/wrist/wrist_metrics.json
+    python -m coach.agent ../data/raw/wrist/swings/<id>.json
+    python -m physics.compare ../data/raw/wrist/swings/<id>.json turn_shoulders_less 15 --no-swings
 """
 
 from __future__ import annotations
@@ -27,7 +29,7 @@ import argparse
 import json
 from pathlib import Path
 
-from wrist.fuse import LEVER_M, read_swings
+from wrist.fuse import LEVER_M, attach_wrist_entries, read_swings
 from wrist.load import load_recording
 from wrist.metrics import wrist_report
 from wrist.sync import SPIKE_K, TOLERANCE_MS, read_contacts, synchronise
@@ -43,12 +45,12 @@ def _ms(v: object) -> str:
 def _estimates(s: dict) -> list[str]:
     """One swing's ESTIMATES as short phrases for the terminal."""
     r, im, tp, fill = s["racket_speed_sensor"], s["impact"], s["tempo"], s["occlusion_fill"]
-    racket = (f"racket {r['value']} m/s ({'vectors' if 'vectors' in r['method'] else 'parallel'})"
+    racket = (f"racket {r['value']} m/s {r['label']} ({'vectors' if 'vectors' in r['method'] else 'parallel'})"
               if r["value"] is not None else f"racket rotation part {r['rotationMs']} m/s (no camera)")
-    impact = (f"impact {im['quality']} {im['score']}/100 ({im['peak_g']} g, {im['width_ms']:.0f} ms)"
-              if im["quality"] else f"impact {im['peak_g']} g, {im['width_ms']:.0f} ms (not judged)")
+    impact = (f"impact {im['peak_g']} g, ring-down {im['ring_down_ms']:.0f} ms"
+              f"{'+' if im['ring_down_capped'] else ''} (not judged)" if im else "no impact (shadow swing)")
     tempo = (f"tempo {_ms(tp['backswing_start_ms'])} / {_ms(tp['forward_start_ms'])} / 0 / "
-             f"{_ms(tp['follow_through_end_ms'])} ms")
+             f"{_ms(tp['follow_through_end_ms'])} ms, backswing to contact {_ms(tp['backswing_to_contact_ms'])} ms")
     if fill["applied"]:
         hold = fill["holdout_deg"]
         filled = (f"filled {fill['joints'][0]} on {len(fill['frames'])} frames, agreement "
@@ -72,11 +74,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--swings", type=Path,
                         help="pipeline swing JSON folder for the camera fusion (default: --contacts if a folder)")
     parser.add_argument("--lever", type=float, default=LEVER_M,
-                        help=f"ESTIMATE: wrist joint to racket head, m (default {LEVER_M})")
+                        help=f"ESTIMATE: wrist joint to the racket's sweet spot, m (default {LEVER_M:g})")
     parser.add_argument("--out", type=Path, default=OUT_DIR / "wrist_metrics.json")
     parser.add_argument("--series-out", type=Path, default=OUT_DIR / "wrist_series.json")
-    parser.add_argument("--filled-out", type=Path, default=OUT_DIR / "filled_swings",
-                        help="folder for camera swings with the occluded forearm rebuilt from the phone")
+    parser.add_argument("--swings-out", "--filled-out", dest="swings_out", type=Path, default=OUT_DIR / "swings",
+                        help="folder for every camera swing with swing['wrist'] attached and the fill applied")
     args = parser.parse_args(argv)
 
     rec = load_recording(args.export)
@@ -89,10 +91,11 @@ def main(argv: list[str] | None = None) -> int:
         path.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(metrics, indent=2, allow_nan=False))
     args.series_out.write_text(json.dumps(series, separators=(",", ":"), allow_nan=False))
-    if filled:
-        args.filled_out.mkdir(parents=True, exist_ok=True)
-        for sid, swing in filled.items():
-            (args.filled_out / f"{sid}.json").write_text(json.dumps(swing, separators=(",", ":"), allow_nan=False))
+    attached = attach_wrist_entries(swings, metrics, filled) if swings else {}
+    if attached:
+        args.swings_out.mkdir(parents=True, exist_ok=True)
+        for sid, swing in attached.items():
+            (args.swings_out / f"{sid}.json").write_text(json.dumps(swing, separators=(",", ":"), allow_nan=False))
 
     a = sync["alignment"]
     usable = sum(1 for s in metrics["swings"].values() if s["usable"])
@@ -102,15 +105,23 @@ def main(argv: list[str] | None = None) -> int:
     e = a["error_ms"]
     print(f"Alignment error: mean {e['mean_abs']} ms, max {e['max_abs']} ms; "
           f"{e['n_ok']}/{e['n_pairs']} pairs within {a['tolerance_ms']:.0f} ms.")
-    q = metrics["sensor"]["quaternion"]
-    print(f"Quaternions are {q['convention']} (gyro mismatch {q['mismatch']:.2f}).")
+    if a.get("tap_only"):
+        print(f"{len(a['tap_only'])} swing(s) with no impact, timed from the double tap.")
+    o = metrics["sensor"]["orientation_used"]
+    if o["source"] == "phone":
+        q = metrics["sensor"]["quaternion"]
+        print(f"Orientation: the phone's, quaternions {q['convention']} (gyro mismatch {q['mismatch']:.2f}).")
+    else:
+        print(f"Orientation: integrated gyro, bias {o['bias_dps']} deg/s removed {o['bias_from']}.")
     for w in metrics["warnings"]:
         print(f"WARNING: {w}")
     print(f"{usable}/{len(metrics['swings'])} swings usable.")
     for swing, s in metrics["swings"].items():
         if s["usable"]:
+            sync_note = (f"sync {s['align_error_ms']:+.0f} ms" if s["align_error_ms"] is not None
+                         else "no impact: contact from the double tap")
             print(f"  {swing}: roll {s['roll_change_deg']:+.1f} deg, roll rate {s['peak_roll_rate_dps']:+d} deg/s, "
-                  f"speed {s['peak_angular_speed_dps']} deg/s (sync {s['align_error_ms']:+.0f} ms)")
+                  f"speed {s['peak_angular_speed_dps']} deg/s ({sync_note})")
         else:
             print(f"  {swing}: skipped, {s['skip_reason']}")
         if "tempo" in s:
@@ -118,8 +129,9 @@ def main(argv: list[str] | None = None) -> int:
     if swings is not None:
         print(f"{len(swings)} camera swings read from {swings_path}.")
     print(f"Wrote {args.out} and {args.series_out}")
-    if filled:
-        print(f"Wrote {len(filled)} sensor-filled swings to {args.filled_out}")
+    if attached:
+        print(f"Wrote {len(attached)} swings with swing['wrist'] to {args.swings_out} "
+              f"({len(filled)} with the forearm filled from the sensor)")
     return 0
 
 

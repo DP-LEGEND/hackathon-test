@@ -10,7 +10,8 @@ the swing's roll amount around contact (small for a normal swing, large when the
 rolls). The gyro is the exact body-frame angular velocity of that rotation, so
 roll rate about y is psi'(t). The accelerometer has noise, the swing's centripetal pull
 along -y, two finger taps at the start, a sharp spike at each racket impact, and one
-"footstep" spike with the arm still (sync must reject it).
+"footstep" spike with the arm still (sync must reject it). A SHADOW swing (shadow=...) is
+the same swing with no ball: no impact spike, so sync can only time it from the double tap.
 
 Video side: contact times = impact time - video offset + a little marking jitter, as
 if someone noted contacts in QuickTime. Truth (exact roll change etc.) is returned.
@@ -225,6 +226,7 @@ def make_session(
     rolled_roll: tuple[float, float] = (70.0, 6.0),
     backswing: bool = True,
     mishit: Sequence[int] = (),
+    shadow: Sequence[int] = (),
     camera: bool = False,
     camera_fps: float = 120.0,
 ) -> dict[str, Any]:
@@ -233,7 +235,8 @@ def make_session(
     quat_convention: "body_to_world" (quaternion maps phone axes to world) or
     "world_to_body" (its inverse), so tests can check that metrics detect either.
     backswing: each swing starts with a backswing (for tempo). mishit: indexes of swings
-    whose impact rings like an off-centre hit. camera: also write MOCK pipeline swing JSONs
+    whose impact rings like an off-centre hit. shadow: indexes of swings with no impact at all
+    (a shadow swing: same motion, no ball, no spike). camera: also write MOCK pipeline swing JSONs
     (swings/<id>.json, filled flags over an occlusion near contact) for the fusion tests.
     """
     # Lazy import: fuse imports physics, which the sensor-only mock doesn't need.
@@ -277,8 +280,12 @@ def make_session(
 
     for tap in taps:
         spike(tap, 45.0, (0.1, 0.2, 1.0))
+    if set(mishit) & set(shadow):
+        raise ValueError("a shadow swing has no impact, so it can't be a mishit too")
     for k, c in enumerate(impacts):
-        amp = rng.uniform(140, 180)
+        amp = rng.uniform(140, 180)  # drawn even for a shadow swing, so the other swings stay identical
+        if k in shadow:
+            continue
         if k in mishit:
             spike(c, amp, (0.8, 0.3, 0.5), RING_SPIKE)  # a normal height: only the shaking gives it away
         else:
@@ -329,7 +336,7 @@ def make_session(
             "roll_change_deg": float(np.degrees(psi[-1] - psi[0])),
             "peak_roll_rate_dps": float(np.degrees(np.max(np.abs(dpsi)))),
             "peak_angular_speed_dps": float(np.degrees(speed.max())),
-            "impact": "mishit" if k in mishit else "clean",
+            "impact": "none (shadow swing)" if k in shadow else "mishit" if k in mishit else "clean",
         }
 
     swings_dir = None
@@ -357,8 +364,11 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--zip", action="store_true", help="also zip the export, like Sensor Logger does")
     parser.add_argument("--camera", action="store_true", help="also write MOCK pipeline swing JSONs (swings/)")
     parser.add_argument("--mishit", type=int, nargs="*", default=[], help="swing indexes (0-based) to mishit")
+    parser.add_argument("--shadow", type=int, nargs="*", default=[],
+                        help="swing indexes (0-based) with no ball: no impact spike (shadow swings)")
     args = parser.parse_args(argv)
-    truth = make_session(args.out_dir, seed=args.seed, zip_export=args.zip, camera=args.camera, mishit=args.mishit)
+    truth = make_session(args.out_dir, seed=args.seed, zip_export=args.zip, camera=args.camera, mishit=args.mishit,
+                         shadow=args.shadow)
     saved = {k: v for k, v in truth.items() if k not in ("motion", "base")}
     (args.out_dir / "truth.json").write_text(json.dumps(saved, indent=2))
     print(f"Mock export: {truth['export']}")

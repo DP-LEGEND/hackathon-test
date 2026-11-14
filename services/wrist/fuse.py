@@ -1,8 +1,12 @@
 """Phone + camera fusion: forearm alignment, occlusion fill and racket speed. Owner: Henoch.
 
-Everything here is an ESTIMATE, and every output says so ("label": "ESTIMATE"). Code
+Everything here is an ESTIMATE, and every output says so: "label": "ESTIMATE" for the fill,
+"ESTIMATE (sensor)" for racket speed ("MOCK (sensor)" on a synthetic recording). Code
 measures, Claude explains: the coach may quote these numbers with that label, never
 improve on them.
+
+"Orientation" below is the phone's own (Orientation.csv) when it passes the gyro check,
+else the bias-corrected integrated gyro (orient.py); fill reports say which.
 
 Time. A camera frame's sensor time is impact_s + (t_frame - t_contactFrame) + shift.
 The sensor's impact spike anchors contact. `shift` (searched within +-60 ms) absorbs a
@@ -24,21 +28,27 @@ Occlusion fill (fill_swing). On frames where the camera's hitting elbow or wrist
   the wrist, so the hand bones keep their lengths too.
 - Elbow filled, wrist seen: the elbow goes on the circle that keeps both the upper-arm and
   forearm lengths, at the point closest to wrist - forearm length x phone direction.
-The filled flags stay true (the camera still didn't see those joints). The fill is listed
-in metadata.wristSensorFill. Racket points, if a swing has them, aren't touched.
+The filled flags stay true (the camera still didn't see those joints). Every frame gets a
+parallel `sensorAssisted` list (33 booleans) that is true for each joint the phone set, so a
+reader can tell "sensor-assisted" from "guessed" (proposed for docs/interfaces.md, pending the
+team's OK). The fill is also listed in metadata.wristSensorFill. Racket points, if a swing has
+them, aren't touched.
 
 Racket speed (racket_speed). The forearm, hand and racket are treated as one rigid lever:
 locked wrist, racket along the forearm.
     v_head = v_wrist (camera) + w_forearm (gyro) x LEVER_M along the forearm
-The two parts are added as vectors when the alignment is trusted, otherwise as if
-parallel (an upper bound). The result has the same shape as physics.compare's
-estimate_racket_speed(), so a swing can carry it as the optional field
-swing["racketSpeedSensor"] (attach_racket_speed). Physics' compare() can then use it in
-place of the pose estimate. That hook is aryan's to add.
+LEVER_M is physics' RACKET_LEVER_M: RACKET_HEAD_M (0.45 m) + GRIP_OFFSET_M (0.10 m), the
+same racket the video estimate uses. The two parts are added as vectors when the alignment
+is trusted, otherwise as if parallel (an upper bound). The gyro is read at the synced
+contact (the impact spike, or the double tap's prediction for a swing with no impact). The
+result has the shape of physics.compare's estimate_racket_speed(). attach_wrist_entries()
+puts each swing's wrist entry on its swing JSON as swing["wrist"], and physics' compare()
+then prefers this speed to the video estimate (physics.compare.racket_speeds).
 """
 
 from __future__ import annotations
 
+import copy
 import json
 import warnings
 from pathlib import Path
@@ -47,13 +57,13 @@ from typing import Any, Optional
 import numpy as np
 from scipy.spatial.transform import Rotation, Slerp
 
-from physics.compare import RACKET_SPEED_RANGE_MS
+from physics.compare import RACKET_LEVER_M, RACKET_SPEED_RANGE_MS, SENSOR_LABEL, SENSOR_MOCK_LABEL
 from physics.metrics import contact_frame
 from physics.skeleton import ARM, from_array, swing_hand, to_array
 from wrist.load import Recording
 
-LEVER_M = 0.65                  # ESTIMATE: wrist joint to the racket head
-SPEED_WINDOW_MS = (-20.0, 0.0)  # "at contact": the 20 ms up to the impact spike
+LEVER_M = RACKET_LEVER_M         # ESTIMATE: wrist joint to the sweet spot, 0.45 m + grip offset
+SPEED_WINDOW_MS = (-20.0, 0.0)  # "at contact": the 20 ms up to the synced contact
 SHIFT_MAX_MS, SHIFT_STEP_MS = 60.0, 5.0   # camera contact-frame error searched, then refined to 1 ms
 AGREE_OK_DEG = 12.0             # median agreement must be below this to fill or to add vectors
 MIN_VISIBLE = 12                # visible forearm frames needed for a fit
@@ -248,13 +258,14 @@ def _median_length(P: np.ndarray, a: int, b: int, mask: np.ndarray) -> float:
 
 
 def fill_swing(swing: dict[str, Any], al: dict[str, Any], slerp: Slerp, impact_s: float,
-               mock: bool = False) -> tuple[dict[str, Any], dict[str, Any]]:
+               mock: bool = False, orientation_source: str = "phone") -> tuple[dict[str, Any], dict[str, Any]]:
     """(copy of swing with the occluded forearm rebuilt from the phone, fill report).
 
     The swing comes back unchanged (a copy) whenever nothing is filled; the report's
-    "reason" says why.
+    "reason" says why. orientation_source: "phone" or "integrated gyro" (orient.py).
     """
     info: dict[str, Any] = {**ESTIMATE, "applied": False, "reason": None, "frames": [], "joints": [],
+                            "orientation_source": orientation_source,
                             "visible_frames": int(al["seen"].sum()),
                             "agreement_deg": None if al["err"] is None else _summary(al["err"]),
                             "holdout_deg": None if al["holdout"] is None else _summary(al["holdout"]),
@@ -283,15 +294,18 @@ def fill_swing(swing: dict[str, Any], al: dict[str, Any], slerp: Slerp, impact_s
     frames = np.flatnonzero(need)
     dirs = al["R"].apply(slerp(ts_all[frames]).apply(al["a"]))
     moved, joints, kept_both = [], set(), True
+    assisted = np.zeros((len(P), 33), bool)
     for i, d in zip(frames, dirs):
         if filled[i, j["wr"]] or not np.isfinite(P[i, j["wr"]]).all():
             # Anchor at the elbow (seen, or the pipeline's own estimate); the hand moves with the wrist.
             new = P[i, j["el"]] + l_fore * d
             delta = new - P[i, j["wr"]]
             P[i, j["wr"]] = new
+            assisted[i, j["wr"]] = True
             for key in HAND_KEYS:
                 if np.isfinite(P[i, j[key]]).all():
                     P[i, j[key]] += delta
+                    assisted[i, j[key]] = True
             moved.append(float(np.linalg.norm(delta)))
             joints.update(["wrist", "hand"])
         else:
@@ -299,8 +313,11 @@ def fill_swing(swing: dict[str, Any], al: dict[str, Any], slerp: Slerp, impact_s
             kept_both &= both
             moved.append(float(np.linalg.norm(new - P[i, j["el"]])))
             P[i, j["el"]] = new
+            assisted[i, j["el"]] = True
             joints.add("elbow")
     out = from_array(swing, P)
+    for f, row in zip(out["frames"], assisted):
+        f["sensorAssisted"] = row.tolist()  # filled stays true: the camera still didn't see these
     order = [k for k in ("elbow", "wrist", "hand") if k in joints]
     info.update(applied=True, frames=frames.tolist(), joints=order,
                 forearm_m=round(l_fore, 3), upper_arm_m=None if not np.isfinite(l_up) else round(l_up, 3),
@@ -309,17 +326,18 @@ def fill_swing(swing: dict[str, Any], al: dict[str, Any], slerp: Slerp, impact_s
         info["note"] = "on some elbow frames the shoulder was missing or out of reach: only the forearm length was kept"
     out["metadata"] = {**(out.get("metadata") or {}), "wristSensorFill": {
         **ESTIMATE, "source": "forearm phone orientation, aligned to the camera on the visible frames",
-        "frames": info["frames"], "joints": order, "agreementDeg": info["agreement_deg"]["median"],
-        "mock": bool(mock)}}
+        "orientationSource": orientation_source, "frames": info["frames"], "joints": order,
+        "agreementDeg": info["agreement_deg"]["median"], "mock": bool(mock)}}
     return out, info
 
 
 def racket_speed(rec: Recording, slerp: Slerp, impact_s: float, axis: np.ndarray, lever_m: float = LEVER_M,
                  swing: Optional[dict[str, Any]] = None, al: Optional[dict[str, Any]] = None,
                  fill_frames: Optional[list[int]] = None) -> dict[str, Any]:
-    """ESTIMATED racket-head speed at contact (see the module docstring).
+    """ESTIMATED racket-head speed at the synced contact `impact_s` (see the module docstring).
 
     Without a camera swing, value is None. rotationMs (the gyro x lever part) is still given.
+    Labelled "ESTIMATE (sensor)", or "MOCK (sensor)" for a synthetic recording.
     """
     ts = impact_s + np.linspace(*SPEED_WINDOW_MS, 5) / 1000
     w = np.column_stack([np.interp(ts, rec.t, rec.gyro[:, k]) for k in range(3)])  # rad/s, phone axes
@@ -328,7 +346,8 @@ def racket_speed(rec: Recording, slerp: Slerp, impact_s: float, axis: np.ndarray
     w_perp = w - (w @ a)[:, None] * a   # spin about the forearm itself doesn't move a head on its axis
     rot_ms = float(np.linalg.norm(w_perp, axis=1).mean() * lever_m)
     out: dict[str, Any] = {
-        "value": None, "unit": "m/s", **ESTIMATE, "source": "wrist sensor", "method": None,
+        "value": None, "unit": "m/s", "estimate": True, "label": SENSOR_MOCK_LABEL if rec.mock else SENSOR_LABEL,
+        "source": "wrist sensor", "method": None,
         "gyroDps": round(float(np.degrees(np.linalg.norm(w_perp, axis=1).mean()))), "leverM": lever_m,
         "rotationMs": round(rot_ms, 1), "wristSpeedMs": None, "windowMs": list(SPEED_WINDOW_MS),
         "clamped": False, "rawValue": None, "reason": None, "mock": rec.mock,
@@ -361,15 +380,18 @@ def racket_speed(rec: Recording, slerp: Slerp, impact_s: float, axis: np.ndarray
     return out
 
 
-def attach_racket_speed(swing: dict[str, Any], wrist_metrics: dict[str, Any]) -> dict[str, Any]:
-    """A copy of swing with the optional field racketSpeedSensor when the wrist file has one.
+def attach_wrist_entries(swings: dict[str, dict[str, Any]], wrist_metrics: dict[str, Any],
+                         filled: Optional[dict[str, dict[str, Any]]] = None) -> dict[str, dict[str, Any]]:
+    """Every camera swing with its wrist entry as swing["wrist"] (and the fill, where applied).
 
-    The field has estimate_racket_speed()'s shape (value, unit, estimate, label, method, ...),
-    so physics.compare can use it in place of the pose estimate. A swing without one comes
-    back unchanged.
+    swing["wrist"] is what the coach (rolled_wrist) and physics' compare() (racket speed)
+    read; docs/interfaces.md has the contract. A swing the wrist file has no entry for gets
+    an unusable one saying so, so the skip stays visible. The inputs are never mutated.
     """
-    entry = (wrist_metrics.get("swings") or {}).get(str(swing.get("id"))) or {}
-    rs = entry.get("racket_speed_sensor")
-    if not isinstance(rs, dict) or rs.get("value") is None:
-        return dict(swing)
-    return {**swing, "racketSpeedSensor": rs}
+    entries = wrist_metrics.get("swings") or {}
+    out: dict[str, dict[str, Any]] = {}
+    for sid, swing in swings.items():
+        entry = entries.get(sid) or {"usable": False, "mock": bool(wrist_metrics.get("mock")),
+                                     "skip_reason": f"swing {sid!r} has no video contact time in the wrist run"}
+        out[sid] = {**copy.deepcopy((filled or {}).get(sid, swing)), "wrist": copy.deepcopy(entry)}
+    return out
