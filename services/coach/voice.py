@@ -21,13 +21,46 @@ from typing import Optional
 from coach.env import require_env
 
 API_URL = "https://api.elevenlabs.io/v1/text-to-speech/{voice_id}?output_format=mp3_44100_128"
-DEFAULT_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"  # ElevenLabs premade voice "Rachel"; override with ELEVENLABS_VOICE_ID
+# ElevenLabs default voice "George". Works on the free plan; "library" voices (e.g. the
+# old default "Rachel") return HTTP 402 for free accounts. Override with ELEVENLABS_VOICE_ID.
+DEFAULT_VOICE_ID = "JBFqnCBsd6RMkjVDRZzb"
 MODEL_ID = "eleven_turbo_v2_5"  # low latency
 TIMEOUT_S = 20
 
 
 class VoiceError(RuntimeError):
     """ElevenLabs could not produce audio."""
+
+
+def _explain_http_error(exc: urllib.error.HTTPError) -> str:
+    """Turn an ElevenLabs error into one plain sentence, using its own reason when given.
+
+    The error body holds a status code and message, never the API key.
+    """
+    try:
+        detail = json.loads(exc.read() or b"{}").get("detail")
+    except (ValueError, AttributeError, OSError):
+        detail = None
+    reason, message = None, ""
+    if isinstance(detail, dict):
+        reason = detail.get("code") or detail.get("status")
+        message = detail.get("message") or ""
+    elif isinstance(detail, str):
+        message = detail
+    hints = {
+        "paid_plan_required": " Pick a voice your plan allows and set ELEVENLABS_VOICE_ID in .env.local.",
+        "quota_exceeded": " The account is out of characters this month.",
+        "missing_permissions": " The key lacks text-to-speech permission; make a new key that has it.",
+    }
+    hint = hints.get(reason or "", " Check ELEVENLABS_API_KEY." if exc.code in (401, 403) else "")
+    text = f"ElevenLabs returned HTTP {exc.code}"
+    if reason:
+        text += f" ({reason})"
+    if message:
+        text += f": {message}"
+    if not text.endswith("."):
+        text += "."
+    return text + hint
 
 
 def synthesize(text: str) -> bytes:
@@ -49,8 +82,7 @@ def synthesize(text: str) -> bytes:
         with urllib.request.urlopen(request, timeout=TIMEOUT_S) as response:
             audio = response.read()
     except urllib.error.HTTPError as exc:
-        hint = " Check ELEVENLABS_API_KEY." if exc.code in (401, 403) else ""
-        raise VoiceError(f"ElevenLabs returned HTTP {exc.code}.{hint}") from exc
+        raise VoiceError(_explain_http_error(exc)) from exc
     except (urllib.error.URLError, TimeoutError) as exc:
         raise VoiceError("Could not reach ElevenLabs. Check the internet connection.") from exc
 
