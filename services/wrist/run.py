@@ -10,7 +10,12 @@ of pipeline swing JSONs (metadata.sourceContactSeconds). --video-tap: the video 
 the FIRST tap, on the same clock as the contact times. Without it the offset is fitted
 to the impacts and the report says the error check is weaker.
 
-Outputs go to data/raw/wrist/ (git-ignored) unless --out / --series-out say otherwise.
+--swings: the pipeline swing JSONs (default: --contacts when it's a folder). With them you
+also get the camera fusion ESTIMATES: racket speed (camera wrist velocity + gyro x --lever)
+and the occlusion fill, whose rebuilt swings go to --filled-out.
+
+Outputs go to data/raw/wrist/ (git-ignored) unless --out / --series-out / --filled-out say
+otherwise.
 Then coach a swing with its wrist data:
 
     python -m coach.agent swing.json --wrist ../data/raw/wrist/wrist_metrics.json
@@ -22,12 +27,35 @@ import argparse
 import json
 from pathlib import Path
 
+from wrist.fuse import LEVER_M, read_swings
 from wrist.load import load_recording
-from wrist.metrics import wrist_metrics
+from wrist.metrics import wrist_report
 from wrist.sync import SPIKE_K, TOLERANCE_MS, read_contacts, synchronise
 
 # Real-data outputs stay out of git by default (data/raw/ is git-ignored).
 OUT_DIR = Path(__file__).resolve().parents[2] / "data" / "raw" / "wrist"
+
+
+def _ms(v: object) -> str:
+    return "?" if v is None else f"{v:+.0f}"
+
+
+def _estimates(s: dict) -> list[str]:
+    """One swing's ESTIMATES as short phrases for the terminal."""
+    r, im, tp, fill = s["racket_speed_sensor"], s["impact"], s["tempo"], s["occlusion_fill"]
+    racket = (f"racket {r['value']} m/s ({'vectors' if 'vectors' in r['method'] else 'parallel'})"
+              if r["value"] is not None else f"racket rotation part {r['rotationMs']} m/s (no camera)")
+    impact = (f"impact {im['quality']} {im['score']}/100 ({im['peak_g']} g, {im['width_ms']:.0f} ms)"
+              if im["quality"] else f"impact {im['peak_g']} g, {im['width_ms']:.0f} ms (not judged)")
+    tempo = (f"tempo {_ms(tp['backswing_start_ms'])} / {_ms(tp['forward_start_ms'])} / 0 / "
+             f"{_ms(tp['follow_through_end_ms'])} ms")
+    if fill["applied"]:
+        hold = fill["holdout_deg"]
+        filled = (f"filled {fill['joints'][0]} on {len(fill['frames'])} frames, agreement "
+                  f"{fill['agreement_deg']['median']} deg" + (f", holdout {hold['median']} deg" if hold else ""))
+    else:
+        filled = f"no fill: {fill['reason']}"
+    return [racket, impact, tempo, filled]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -41,18 +69,30 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--axis", default="y", help="phone axis along the forearm: x, y or z (default y)")
     parser.add_argument("--spike-k", type=float, default=SPIKE_K, help="spike threshold in MADs (default 8)")
     parser.add_argument("--tolerance-ms", type=float, default=TOLERANCE_MS, help="max alignment error (default 100)")
+    parser.add_argument("--swings", type=Path,
+                        help="pipeline swing JSON folder for the camera fusion (default: --contacts if a folder)")
+    parser.add_argument("--lever", type=float, default=LEVER_M,
+                        help=f"ESTIMATE: wrist joint to racket head, m (default {LEVER_M})")
     parser.add_argument("--out", type=Path, default=OUT_DIR / "wrist_metrics.json")
     parser.add_argument("--series-out", type=Path, default=OUT_DIR / "wrist_series.json")
+    parser.add_argument("--filled-out", type=Path, default=OUT_DIR / "filled_swings",
+                        help="folder for camera swings with the occluded forearm rebuilt from the phone")
     args = parser.parse_args(argv)
 
     rec = load_recording(args.export)
     contacts = read_contacts(args.contacts, args.run)
     sync = synchronise(rec, contacts, args.video_tap, args.video_scale, args.spike_k, args.tolerance_ms)
-    metrics, series = wrist_metrics(rec, sync, args.axis)
+    swings_path = args.swings or (args.contacts if args.contacts.is_dir() else None)
+    swings = read_swings(swings_path) if swings_path else None
+    metrics, series, filled = wrist_report(rec, sync, args.axis, swings, args.lever)
     for path in (args.out, args.series_out):
         path.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(metrics, indent=2, allow_nan=False))
     args.series_out.write_text(json.dumps(series, separators=(",", ":"), allow_nan=False))
+    if filled:
+        args.filled_out.mkdir(parents=True, exist_ok=True)
+        for sid, swing in filled.items():
+            (args.filled_out / f"{sid}.json").write_text(json.dumps(swing, separators=(",", ":"), allow_nan=False))
 
     a = sync["alignment"]
     usable = sum(1 for s in metrics["swings"].values() if s["usable"])
@@ -73,7 +113,13 @@ def main(argv: list[str] | None = None) -> int:
                   f"speed {s['peak_angular_speed_dps']} deg/s (sync {s['align_error_ms']:+.0f} ms)")
         else:
             print(f"  {swing}: skipped, {s['skip_reason']}")
+        if "tempo" in s:
+            print("      ESTIMATES: " + "; ".join(_estimates(s)))
+    if swings is not None:
+        print(f"{len(swings)} camera swings read from {swings_path}.")
     print(f"Wrote {args.out} and {args.series_out}")
+    if filled:
+        print(f"Wrote {len(filled)} sensor-filled swings to {args.filled_out}")
     return 0
 
 

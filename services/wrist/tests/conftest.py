@@ -7,8 +7,9 @@ from typing import Any
 
 import pytest
 
+from wrist.fuse import read_swings
 from wrist.load import Recording, load_recording
-from wrist.metrics import wrist_metrics
+from wrist.metrics import wrist_report
 from wrist.sync import read_contacts, synchronise
 from wrist.synth import make_session
 
@@ -20,7 +21,8 @@ class Session:
         self.rec: Recording = load_recording(self.truth["export"])
         self.contacts = read_contacts(self.truth["contacts"])
         self.sync = synchronise(self.rec, self.contacts, video_tap_s=self.truth["video_tap_s"])
-        self.metrics, self.series = wrist_metrics(self.rec, self.sync)
+        self.swings = read_swings(self.truth["swings_dir"]) if self.truth["swings_dir"] else None
+        self.metrics, self.series, self.filled = wrist_report(self.rec, self.sync, swings=self.swings)
 
 
 @pytest.fixture(scope="session")
@@ -33,3 +35,9 @@ def session(tmp_path_factory: pytest.TempPathFactory) -> Session:
 def session_inverse(tmp_path_factory: pytest.TempPathFactory) -> Session:
     """Same swings, but the quaternions point world-to-phone."""
     return Session(tmp_path_factory.mktemp("wrist-inverse"), quat_convention="world_to_body", seed=1)
+
+
+@pytest.fixture(scope="session")
+def fused(tmp_path_factory: pytest.TempPathFactory) -> Session:
+    """Default swings plus MOCK camera swings (occluded wrist or elbow near contact); swing 4 is a mishit."""
+    return Session(tmp_path_factory.mktemp("wrist-fused"), camera=True, mishit=(3,))

@@ -23,6 +23,14 @@ Quaternion convention: Sensor Logger doesn't document whether its quaternion map
 to world or world to phone. gyro_convention() picks the one whose frame-to-frame
 rotation matches the gyro, and reports the mismatch; if neither matches, swings are
 marked unusable.
+
+ESTIMATES added per swing (each block says "label": "ESTIMATE"):
+- tempo (tempo.py): backswing start, top of backswing, follow-through end, from |gyro|.
+- impact (impact.py): spike height and width at impact -> clean / mishit, relative to the
+  session's other impacts.
+- racket_speed_sensor and occlusion_fill (fuse.py): need the camera's pipeline swing JSON.
+  Racket speed = camera wrist velocity + gyro x lever. The fill rebuilds the camera's
+  occluded hitting forearm from the phone and reports the camera/phone agreement error.
 """
 
 from __future__ import annotations
@@ -33,7 +41,12 @@ import numpy as np
 from scipy.integrate import trapezoid
 from scipy.spatial.transform import Rotation, Slerp
 
+from physics.skeleton import ARM, to_array
+from wrist.fuse import LEVER_M, align_swing, fill_swing, racket_speed
+from wrist.impact import clip_levels, impact_shape, judge
 from wrist.load import Recording
+from wrist.sync import spike_signal
+from wrist.tempo import series_grid_ms, speed_dps, speed_series, tempo
 
 WINDOW_MS = (-150, 100)
 SERIES_MS = (-300, 200)     # the exported graph spans a bit more than the window
@@ -143,37 +156,97 @@ def roll_series(rec: Recording, slerp: Slerp, impact_s: float, axis: np.ndarray)
     return {"t_ms": t_ms[keep].astype(int).tolist(), "roll_deg": [round(float(v), 1) + 0.0 for v in roll]}
 
 
-def wrist_metrics(rec: Recording, sync: dict[str, Any], axis: str = "y") -> tuple[dict[str, Any], dict[str, Any]]:
-    """(metrics JSON keyed by swing, small roll-angle series JSON keyed by swing).
+def wrist_metrics(rec: Recording, sync: dict[str, Any], axis: str = "y",
+                  swings: Optional[dict[str, dict[str, Any]]] = None,
+                  lever_m: float = LEVER_M) -> tuple[dict[str, Any], dict[str, Any]]:
+    """(metrics JSON keyed by swing, small series JSON keyed by swing). See wrist_report."""
+    metrics, series, _ = wrist_report(rec, sync, axis, swings, lever_m)
+    return metrics, series
+
+
+def _fill_points(al: dict[str, Any], info: dict[str, Any], filled: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """The rebuilt joints on the filled frames, small enough for the graph file."""
+    if not info.get("applied"):
+        return None
+    P, j, frames = to_array(filled), ARM[al["hand"]], info["frames"]
+    t_ms = [round(float(al["rel"][i] + al["shift_s"]) * 1000) for i in frames]
+    pts = {name: [[round(float(v), 4) for v in P[i, j[key]]] for i in frames]
+           for name, key in (("elbow", "el"), ("wrist", "wr"))}
+    return {"estimate": True, "label": "ESTIMATE", "frames": frames, "t_ms": t_ms, **pts,
+            "agreement_deg": info["agreement_deg"]["median"]}
+
+
+def wrist_report(rec: Recording, sync: dict[str, Any], axis: str = "y",
+                 swings: Optional[dict[str, dict[str, Any]]] = None,
+                 lever_m: float = LEVER_M) -> tuple[dict[str, Any], dict[str, Any], dict[str, dict[str, Any]]]:
+    """(metrics JSON keyed by swing, small series JSON keyed by swing, filled camera swings).
 
     Every swing the video has gets an entry. "usable": false (with skip_reason) when its
     impact isn't trusted (alignment off, unpaired) or the orientation fails the gyro check;
     the coach then skips rolled_wrist for it instead of guessing.
+
+    swings: the camera's pipeline swing JSONs by id. Without them racket speed has no value
+    and occlusion_fill isn't applied (both say why). Filled swings come back only for swings
+    whose fill was applied.
     """
     conv = gyro_convention(rec)
     slerp = Slerp(rec.t, body_rotations(rec, conv["convention"]))
     ax = axis_vector(axis)
     alignment = sync["alignment"]
-    swings: dict[str, Any] = {}
+    hp, clip, speed = spike_signal(rec), clip_levels(rec), speed_dps(rec)
+    out: dict[str, Any] = {}
     series: dict[str, Any] = {}
+    shapes: dict[str, Optional[dict[str, Any]]] = {}
+    filled_swings: dict[str, dict[str, Any]] = {}
     for p in alignment["pairs"]:
+        sid = p["swing"]
         base = {"usable": False, "mock": rec.mock, "align_error_ms": p["error_ms"]}
         if not p["ok"]:
-            swings[p["swing"]] = {**base, "skip_reason": (
+            out[sid] = {**base, "skip_reason": (
                 f"alignment error {p['error_ms']:.0f} ms > {alignment['tolerance_ms']:.0f} ms")}
             continue
-        m = swing_metrics(rec, slerp, p["impact_s"], ax)
+        impact = p["impact_s"]
+        m = swing_metrics(rec, slerp, impact, ax)
         if m is None:
-            swings[p["swing"]] = {**base, "skip_reason": "the window runs off the recording"}
+            out[sid] = {**base, "skip_reason": "the window runs off the recording"}
             continue
         reason = None if conv["ok"] else (
             f"orientation doesn't match the gyro (mismatch {conv['mismatch']:.2f} >= {GYRO_MATCH_OK})")
-        swings[p["swing"]] = {**base, **m, "usable": conv["ok"], "skip_reason": reason}
-        series[p["swing"]] = {**roll_series(rec, slerp, p["impact_s"], ax),
-                              "roll_change_deg": m["roll_change_deg"], "usable": conv["ok"]}
+
+        tempo_block = tempo(rec, impact, speed)
+        shapes[sid] = impact_shape(rec, hp, impact, clip)
+        camera = (swings or {}).get(sid)
+        fill_pts = None
+        if camera is None:
+            racket = racket_speed(rec, slerp, impact, ax, lever_m)
+            fill_info = {"estimate": True, "label": "ESTIMATE", "applied": False,
+                         "reason": "no camera swing with this id" if swings else "no camera swings given (--swings)"}
+        else:
+            al = align_swing(rec, slerp, camera, impact, ax, orientation_ok=conv["ok"])
+            filled, fill_info = fill_swing(camera, al, slerp, impact, rec.mock)
+            racket = racket_speed(rec, slerp, impact, ax, lever_m, filled, al, fill_info["frames"])
+            fill_info["warnings"] = al["warnings"]
+            fill_pts = _fill_points(al, fill_info, filled)
+            if fill_info["applied"]:
+                filled_swings[sid] = filled
+
+        out[sid] = {**base, **m, "usable": conv["ok"], "skip_reason": reason, "tempo": tempo_block,
+                    "racket_speed_sensor": racket, "occlusion_fill": fill_info}
+        series[sid] = {**roll_series(rec, slerp, impact, ax), "roll_change_deg": m["roll_change_deg"],
+                       "usable": conv["ok"],
+                       "tempo": {k: tempo_block[k] for k in ("estimate", "label", "backswing_start_ms",
+                                                              "forward_start_ms", "contact_ms",
+                                                              "follow_through_end_ms")},
+                       "angular_speed_dps": speed_series(rec, impact, speed),
+                       "racket_speed_sensor": {k: racket[k] for k in ("value", "unit", "estimate", "label")},
+                       "forearm_fill": fill_pts}
+    for sid, verdict in judge(shapes, rec.rate_hz).items():
+        out[sid]["impact"] = verdict
+        series[sid]["impact"] = {k: verdict[k] for k in ("estimate", "label", "peak_g", "width_ms",
+                                                         "quality", "score")}
     for s in alignment["unpaired_swings"]:
-        swings[s] = {"usable": False, "mock": rec.mock, "align_error_ms": None,
-                     "skip_reason": "no impact paired with this swing"}
+        out[s] = {"usable": False, "mock": rec.mock, "align_error_ms": None,
+                  "skip_reason": "no impact paired with this swing"}
 
     impacts = [p["impact_s"] for p in alignment["pairs"] if p["ok"]]
     hint = axis_hint(rec, impacts, axis)
@@ -183,6 +256,8 @@ def wrist_metrics(rec: Recording, sync: dict[str, Any], axis: str = "y") -> tupl
     if hint["agrees"] is False:
         warnings.append(f"forearm axis is {axis} but the {hint['dominant_accel_axis']} axis carries the most "
                         "acceleration through contact: check how the phone was strapped (--axis)")
+    if swings and not set(swings) & set(out):
+        warnings.append(f"none of the {len(swings)} camera swings match a sensor swing id")
     sync_out = {k: v for k, v in sync.items() if k not in ("impacts", "warnings")}
     sync_out["rejected_spikes"] = sync_out.get("rejected_spikes", [])[:20]
     metrics = {
@@ -191,17 +266,24 @@ def wrist_metrics(rec: Recording, sync: dict[str, Any], axis: str = "y") -> tupl
         "sensor": {"rate_hz": rec.rate_hz, "orientation": rec.orientation, "forearm_axis": axis,
                    "quaternion": conv, "axis_hint": hint},
         "window_ms": list(WINDOW_MS),
+        "estimates": {"label": "ESTIMATE", "lever_m": lever_m, "camera_swings": len(swings or {}),
+                      "note": "tempo, impact, racket_speed_sensor and occlusion_fill are ESTIMATES: "
+                              "show them labelled ESTIMATE"},
         "warnings": warnings,
         "sync": sync_out,
-        "swings": swings,
+        "swings": out,
     }
     series_json = {
         "mock": rec.mock,
         "about": ("Forearm roll (deg) from the wrist sensor, every 10 ms. t_ms is ms from contact "
                   "(the sensor's impact spike); roll_deg is zero at the window start (-150 ms), so "
-                  "its value at +100 ms is roll_change_deg, the number the coach quotes."),
+                  "its value at +100 ms is roll_change_deg, the number the coach quotes. "
+                  "angular_speed_dps is the forearm's turn rate on angular_speed_t_ms (ms from contact); "
+                  "tempo marks its events. tempo, impact, racket_speed_sensor and forearm_fill are "
+                  "ESTIMATES: label them so."),
         "window_ms": list(WINDOW_MS),
         "forearm_axis": axis,
+        "angular_speed_t_ms": series_grid_ms(),
         "swings": series,
     }
-    return metrics, series_json
+    return metrics, series_json, filled_swings
