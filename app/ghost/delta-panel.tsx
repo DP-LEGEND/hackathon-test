@@ -1,5 +1,5 @@
-// What the fix changes: body measurements and the PREDICTED ball, you vs ghost.
-// Every number is read from the compare file (services/physics/compare.py). Nothing is computed here.
+// What the fix changes, you vs ghost: body measurements and the PREDICTED ball.
+// Every number is read from compare output (services/physics/compare.py). Nothing is computed here.
 
 import type { ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -28,25 +28,35 @@ function changeRow(key: string, name: string, c: Change, unit: string): Row {
   };
 }
 
-export function DeltaPanel({
+export function BodyChanges({
   compare,
   flagged,
-  coachLoaded,
+  coached,
 }: {
   compare: CompareResult;
-  /** The coach found the fault this fix addresses on this swing. */
+  /** The coach found the fault this fix addresses. */
   flagged: boolean;
-  coachLoaded: boolean;
+  /** False when no coach has looked at this swing. */
+  coached: boolean;
 }) {
+  const why = !coached
+    ? "Demo size: no coach has looked at this swing."
+    : flagged
+      ? "The coach flagged this fault."
+      : "Demo size: the coach didn't flag this fault.";
+  return (
+    <DeltaCard
+      id="delta-body"
+      title="What the fix changes"
+      note={`${fixName(compare.fix.id)} by ${formatValue(compare.fix.amount, compare.fix.unit)}, measured by code on both skeletons. ${why}`}
+      rows={compare.metrics.map((m) => changeRow(m.key, metricName(m.key), m, m.unit))}
+    />
+  );
+}
+
+export function BallChanges({ compare }: { compare: CompareResult }) {
   const { ball, you, ghost } = compare;
-  const fixText = `${fixName(compare.fix.id)} by ${formatValue(compare.fix.amount, compare.fix.unit)}, measured by code on both skeletons.`;
-  const why = !coachLoaded ? "" : flagged ? " The coach flagged this fault." : " The coach didn't flag this fault, so it's shown for comparison.";
-  const ballNote =
-    ball.speedKmh.change === 0
-      ? "There is no real ball in this demo. This fix doesn't change the estimated racket speed, so both PREDICTED paths are the same."
-      : "There is no real ball in this demo. Both paths come from the ball model.";
-  const bodyRows = compare.metrics.map((m) => changeRow(m.key, metricName(m.key), m, m.unit));
-  const ballRows: Row[] = [
+  const rows: Row[] = [
     {
       key: "outcome",
       name: "Outcome",
@@ -67,28 +77,23 @@ export function DeltaPanel({
       changed: false,
     },
   ];
-
+  const note =
+    ball.speedKmh.change === 0
+      ? "There is no real ball in this demo. This fix doesn't change the estimated racket speed, so both PREDICTED paths are the same."
+      : "There is no real ball in this demo. Both paths come from the ball model.";
   return (
-    <div className="grid gap-3 lg:grid-cols-2">
-      <DeltaCard
-        id="delta-body"
-        title="What the fix changes"
-        note={fixText + why}
-        rows={bodyRows}
-      />
-      <DeltaCard
-        id="delta-ball"
-        title={
-          <>
-            Ball
-            <Badge variant="outline">PREDICTED</Badge>
-          </>
-        }
-        note={ballNote}
-        rows={ballRows}
-        footnote={compare.assumptions.note}
-      />
-    </div>
+    <DeltaCard
+      id="delta-ball"
+      title={
+        <>
+          Ball
+          <Badge variant="outline">PREDICTED</Badge>
+        </>
+      }
+      note={note}
+      rows={rows}
+      footnote={compare.assumptions.note}
+    />
   );
 }
 
@@ -108,9 +113,9 @@ function DeltaCard({
   return (
     <section aria-labelledby={id} className="flex flex-col gap-2 rounded-xl border bg-card p-3 sm:p-4">
       <div className="flex flex-col gap-0.5">
-        <h2 id={id} className="flex items-center gap-2 text-sm font-medium">
+        <h3 id={id} className="flex items-center gap-2 text-sm font-medium">
           {title}
-        </h2>
+        </h3>
         <p className="text-xs text-muted-foreground">{note}</p>
       </div>
       <table className="w-full text-sm tabular-nums">

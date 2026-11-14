@@ -47,7 +47,18 @@ export type CompareResult = {
   assumptions: { contactSpot: Vec3; note: string };
 };
 
-export type CoachFault = { id: string; label: string; confidence: string; fix: string; ghostReady: boolean };
+export type CoachFault = {
+  id: string;
+  label: string;
+  confidence: string;
+  fix: string;
+  ghostReady: boolean;
+  /** What code measured, and where the fault starts. Null if the file leaves it out. */
+  value: number | null;
+  threshold: number | null;
+  unit: string;
+  severity: number | null;
+};
 
 /** Output of `coach.agent.coach_swing`: the top fault and its cue, decided by the fault library. */
 export type CoachCaption = {
@@ -79,6 +90,7 @@ const METRIC_NAMES: Record<string, string> = {
   shoulder_turn_deg: "Shoulder turn",
   wrist_at_contact_deg: "Wrist angle at contact",
   wrist_release_ms: "Wrist release before contact",
+  stance_open_deg: "Stance open to the shot",
 };
 
 function humanise(id: string): string {
@@ -253,6 +265,82 @@ export function parseCompare(value: unknown): CompareResult {
   };
 }
 
+/** One fix a sample swing can show, from public/swings/catalogue.json. */
+export type CatalogueFix = {
+  amount: number;
+  /** The coach found the fault this fixes on this swing (else a demo size). */
+  flagged: boolean;
+  /** Compare file name, or null when physics couldn't apply the fix. */
+  file: string | null;
+  /** Why physics couldn't apply it. */
+  error: string | null;
+};
+
+export type CatalogueSwing = {
+  id: string;
+  label: string;
+  swing: string;
+  coach: string;
+  fixes: Record<string, CatalogueFix>;
+};
+
+/** public/swings/catalogue.json: the saved samples plus the fix list and demo sizes. */
+export type Catalogue = {
+  /** physics.ghost.FIXES, in its order. */
+  fixes: string[];
+  units: Record<string, string>;
+  /** Fix sizes used when no coach has looked at the swing (live swings from the API). */
+  demoAmounts: Record<string, number>;
+  swings: CatalogueSwing[];
+};
+
+/** A plain file name in public/swings, never a path or URL. */
+function fileName(value: unknown, where: string): string {
+  const name = text(value, where);
+  if (!/^[\w.-]+\.json$/.test(name)) throw new CompareDataError(`${where} must be a .json file name`);
+  return name;
+}
+
+function numberMap(value: unknown, where: string): Record<string, number> {
+  return Object.fromEntries(Object.entries(record(value, where)).map(([k, v]) => [k, num(v, `${where}.${k}`)]));
+}
+
+/** Checks an untrusted catalogue JSON value. Throws CompareDataError. */
+export function parseCatalogue(value: unknown): Catalogue {
+  const c = record(value, "file");
+  if (!Array.isArray(c.fixes) || !Array.isArray(c.swings)) throw new CompareDataError("fixes and swings must be lists");
+  const fixes = c.fixes.map((f: unknown, i: number) => text(f, `fixes[${i}]`));
+  const units = Object.fromEntries(Object.entries(record(c.units, "units")).map(([k, v]) => [k, text(v, `units.${k}`)]));
+  return {
+    fixes,
+    units,
+    demoAmounts: numberMap(c.demoAmounts, "demoAmounts"),
+    swings: c.swings.map((s: unknown, i: number): CatalogueSwing => {
+      const where = `swings[${i}]`;
+      const entry = record(s, where);
+      const swingFixes = Object.entries(record(entry.fixes, `${where}.fixes`)).map(([id, f]): [string, CatalogueFix] => {
+        const fix = record(f, `${where}.fixes.${id}`);
+        return [
+          id,
+          {
+            amount: num(fix.amount, `${where}.fixes.${id}.amount`),
+            flagged: fix.flagged === true,
+            file: fix.file === undefined ? null : fileName(fix.file, `${where}.fixes.${id}.file`),
+            error: typeof fix.error === "string" ? fix.error : null,
+          },
+        ];
+      });
+      return {
+        id: text(entry.id, `${where}.id`),
+        label: text(entry.label, `${where}.label`),
+        swing: fileName(entry.swing, `${where}.swing`),
+        coach: fileName(entry.coach, `${where}.coach`),
+        fixes: Object.fromEntries(swingFixes),
+      };
+    }),
+  };
+}
+
 function parseFault(value: unknown, where: string): CoachFault {
   const f = record(value, where);
   return {
@@ -261,6 +349,10 @@ function parseFault(value: unknown, where: string): CoachFault {
     confidence: typeof f.confidence === "string" ? f.confidence : "unknown",
     fix: text(f.fix, `${where}.fix`),
     ghostReady: f.ghost_ready === true,
+    value: numOrNull(f.value, `${where}.value`),
+    threshold: numOrNull(f.threshold, `${where}.threshold`),
+    unit: typeof f.unit === "string" ? f.unit : "",
+    severity: numOrNull(f.severity, `${where}.severity`),
   };
 }
 
