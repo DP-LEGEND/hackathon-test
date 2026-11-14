@@ -74,7 +74,7 @@ Same clicks as the runbook's beats 1–3, faster. The wrist sensor (beat 4) move
 
 | OPERATOR clicks | On screen | PRESENTER says |
 |---|---|---|
-| Switch to browser tab 2 | The new swing at the coach's call: *"Reading the coach's call…"*, then the call, or *"No fault found"* (see below) | This one we filmed today on one phone, in slow motion. Slow motion, hitting hand, and forehand or backhand are all detected automatically. The coach measures it live. *(Read the caption exactly as shown.)* |
+| Switch to browser tab 2 | The new swing at the coach's call: *"Reading the coach's call…"*, then the call, or *"No fault found"* (see below) | This one we filmed today on one phone. Slow motion, hitting hand, and forehand or backhand are all detected automatically. The coach measures it live. *(Read the caption exactly as shown.)* |
 | Only if the coach named a fault: **Show the ghost**, then **Show the court** | The ghost (*Coach's pick*), then both *PREDICTED* paths | And there's their ghost, computed just now. |
 
 **If the caption says "No fault found":** read it as shown. Then do one of these:
@@ -119,8 +119,5 @@ The measuring and the choice of fix are plain code, so the live coach can never 
 **3. How do you know the coaching is right?**
 We filmed blocks of swings where the player acted one fault, labelled them, and tuned four of the twelve rules on the gap between good and faulty swings. The other eight use coaching defaults until we have more data, and the code marks every rule as tuned or default.
 
-**4. Why didn't the backhand ghost change the ball?**
-Closing the stance changes the body position but not the estimated racket speed at contact, so physics predicts the same ball. We show that honestly instead of inventing a difference.
-
-**5. Is the wrist sensor real?**
+**4. Is the wrist sensor real?**
 The code is merged: it reads a phone strapped to the forearm, syncs it to the video, and measures forearm roll and racket speed. So far it's tested on mock data only, and a real recording is next.
