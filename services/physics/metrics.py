@@ -12,7 +12,7 @@ from __future__ import annotations
 import numpy as np
 
 from physics.skeleton import (
-    ARM, L_ANKLE, L_SH, R_ANKLE, R_SH, RACKET_TIP, floor_basis, hitting_hand, mid, speed, to_array,
+    ARM, L_ANKLE, L_SH, R_ANKLE, R_SH, RACKET_TIP, floor_basis, mid, speed, swing_hand, to_array,
     up_vector, L_HIP, R_HIP,
 )
 
@@ -61,7 +61,7 @@ def contact_frame(swing: dict, P: np.ndarray | None = None, hand: str | None = N
     if np.isfinite(tip).all(axis=1).mean() > 0.8:
         v = speed(tip, 1.0)
     else:
-        hand = hand or hitting_hand(P)
+        hand = hand or swing_hand(swing, P)
         v = speed(P[:, ARM[hand]["wr"]] - mid(P, L_HIP, R_HIP), 1.0)
     if not np.isfinite(v).any():
         return n // 2
@@ -165,7 +165,7 @@ def measure(swing: dict, fps_real: float | None = None, hand: str | None = None)
     """The numbers the coach is allowed to quote for one swing."""
     P = to_array(swing)
     fps = real_fps(swing, fps_real)
-    hand = hand or hitting_hand(P)
+    hand = hand or swing_hand(swing, P)
     c = contact_frame(swing, P, hand)
     up = up_vector(P)
     _, turn = shoulder_coil(shoulder_yaw(P, up), c)
