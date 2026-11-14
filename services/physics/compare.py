@@ -37,7 +37,7 @@ import numpy as np
 from physics.ball import COURT_WIDTH_M, DEFAULT_CONTACT, predict_ball_path
 from physics.ghost import EDITS, FIXES, apply_fix
 from physics.metrics import contact_frame, measure, real_fps
-from physics.skeleton import ARM, hitting_hand, to_array
+from physics.skeleton import ARM, swing_hand, to_array
 
 # ---- Racket speed estimate ----
 RACKET_LEVER_M = 0.55          # estimate: wrist to the sweet spot of a 686 mm (WSF maximum) racket
@@ -75,7 +75,7 @@ def estimate_racket_speed(swing: dict, fps_real: float | None = None, hand: str 
     if len(P) < 2:
         raise ValueError("need at least two frames to measure a speed")
     fps = real_fps(swing, fps_real)
-    hand = hand or hitting_hand(P)
+    hand = hand or swing_hand(swing, P)
     c = contact_frame(swing, P, hand)
     j = ARM[hand]
     half = max(1, round(SPEED_WINDOW_MS / 2 * fps / 1000))
@@ -163,7 +163,7 @@ def compare(swing: dict, fix_name: str, amount: float, fps_real: float | None = 
 
     fix_name: one of physics.ghost.FIXES, e.g. compare(swing, "straighten_elbow", 12).
     fps_real: real capture rate (120 for a 4x slow-mo clip stored at 30 fps). Default: swing["fps"].
-    hand: "R" or "L". Default: whichever wrist moves fastest.
+    hand: "R" or "L". Default: the hand the pipeline recorded, else whichever wrist moves fastest.
     elevation_deg, azimuth_deg: the ASSUMED launch direction for both PREDICTED ball paths.
     """
     if fix_name not in FIXES:
@@ -175,7 +175,7 @@ def compare(swing: dict, fix_name: str, amount: float, fps_real: float | None = 
     if not swing.get("frames"):
         raise ValueError("swing has no frames")
     P = to_array(swing)
-    hand = hand or hitting_hand(P)
+    hand = hand or swing_hand(swing, P)
     played = {**swing, "contactFrame": contact_frame(swing, P, hand)}
     ghost_swing = apply_fix(played, fix_name, amount, fps_real, hand)
 

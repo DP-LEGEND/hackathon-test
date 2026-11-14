@@ -26,8 +26,8 @@ from physics.metrics import (
     RELEASE_WINDOW_MS, contact_frame, real_fps, shoulder_coil, shoulder_yaw, stance_angle, wrist_angle,
 )
 from physics.skeleton import (
-    ARM, L_HIP, R_HIP, RACKET_THROAT, RACKET_TIP, UPPER_BODY, from_array, hitting_hand, mid,
-    rotate, to_array, up_vector,
+    ARM, L_HIP, R_HIP, RACKET_THROAT, RACKET_TIP, UPPER_BODY, from_array, mid,
+    rotate, swing_hand, to_array, up_vector,
 )
 
 # Hips, legs and feet: what turns when the stance opens or closes. The upper body stays put.
@@ -221,7 +221,7 @@ def edit_swing(swing: dict, edits: Mapping[str, float], fps_real: float | None =
 
     edits: e.g. {"elbow_bend": 12, "shoulder_turn": -15, "wrist_early": 40, "stance_open": -20}
     fps_real: real capture rate (frames per real second). Default: swing["fps"].
-    hand: "R" or "L". Default: whichever wrist moves fastest.
+    hand: "R" or "L". Default: the hand the pipeline recorded, else whichever wrist moves fastest.
 
     The result carries `contactFrame` (filled in if the input lacked it),
     `synthetic: true`, and an `edits` list saying what was changed.
@@ -235,7 +235,7 @@ def edit_swing(swing: dict, edits: Mapping[str, float], fps_real: float | None =
             raise ValueError(f"{k} must be within +/-{EDITS[k]['max_abs']:g} {EDITS[k]['unit']}, got {v}")
     P = to_array(swing)
     fps = real_fps(swing, fps_real)
-    hand = hand or hitting_hand(P)
+    hand = hand or swing_hand(swing, P)
     contact = contact_frame(swing, P, hand)
     up = up_vector(P)
     for k, v in edits.items():
