@@ -12,8 +12,11 @@ $fail = $false
 function Step([string]$Name, [scriptblock]$Cmd) {
   Write-Host ""
   Write-Host "=== $Name ==="
-  & $Cmd
-  if ($LASTEXITCODE -eq 0) { $script:results += "PASS  $Name" }
+  $global:LASTEXITCODE = $null
+  $ok = $true
+  try { & $Cmd } catch { Write-Host $_; $ok = $false }
+  # A command that could not start (e.g. Python missing) leaves no exit code: count it as a failure.
+  if ($ok -and $LASTEXITCODE -eq 0) { $script:results += "PASS  $Name" }
   else { $script:results += "FAIL  $Name"; $script:fail = $true }
 }
 

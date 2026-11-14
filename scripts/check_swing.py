@@ -57,7 +57,7 @@ def check(swing) -> tuple[list[str], list[str]]:
             errors.append(f"frame {i}: must be an object")
             break
         t = f.get("t")
-        if not isinstance(t, (int, float)) or not math.isfinite(t):
+        if not isinstance(t, (int, float)) or isinstance(t, bool) or not math.isfinite(t):
             errors.append(f'frame {i}: "t" must be a number (seconds)')
             break
         if t <= last_t:
