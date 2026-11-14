@@ -1,5 +1,7 @@
 # Team playbook
 
+**Start with [WORKFLOW.md](WORKFLOW.md)**: the exact steps for starting a task, testing, opening a PR, merging and what to run after a merge.
+
 Roles, the git loop, and prompts you can paste straight into Claude Code. Claude Code reads `CLAUDE.md` automatically, so it already knows the project and who owns which folder.
 
 ## Roles
