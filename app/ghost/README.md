@@ -14,6 +14,10 @@ The demo flow has four steps: **pick a swing**, **the coach's call**, **the ghos
 1. **Live, from Dev's Python service** (`services/pipeline/server.py`), reached through the same-origin Next.js proxy (`app/api/[...path]/route.ts`), so the browser never calls another origin. The page uses `GET /api/swings` (with each swing's label), `GET /api/swings/{id}`, `POST /api/coach/{id}` for the coach's call and `POST /api/compare/{id}` for each ghost. A 502 from `/api` means the service isn't running, and the page falls back to the saved samples.
 2. **Saved samples in `public/swings/`.** These always work, including offline and on the deployed site. The demo opens on `defaultSwing` in `catalogue.json`: the real forehand over-rotation swing.
 
+### Opening a swing by link
+
+`/ghost?swing=<id>` opens on that swing at the coach's call. `/upload` ("Try your own swing", linked from the header) sends a clip to the pipeline and then opens the new swing this way. The page waits for both lists before it decides, and a live swing wins over a saved sample with the same ID, so the swing on screen never switches. If neither list has the ID, the page says so and offers **Check again** (re-reads the live list) instead of showing a different swing. The demo reads the query in the browser, so `page.tsx` wraps it in `<Suspense>` (required by `useSearchParams` when the page is prerendered). It is keyed by the ID, so a new `?swing=` starts fresh even when Next has kept the page alive in the background.
+
 The ghost starts on the coach's `ghost_fix` with `ghost_fix_amount`, and the caption shows `ghost_note` when the ghost shows a different fix from the top fault. Older coach files without those fields fall back to the worst fault physics can fix. Fixes the coach didn't flag use a small fixed demo size (`demoAmounts` in the catalogue). A fix physics can't apply to a swing shows its reason. When a fix leaves both PREDICTED paths identical, the court step draws one path and says so.
 
 ## Where the player stands (display only)
