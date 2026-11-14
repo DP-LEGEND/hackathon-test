@@ -1,6 +1,8 @@
 // Step 2 detail: every fault the coach found, with the number code measured and the
 // threshold it crossed. The fault library decides; nothing here is computed.
 
+import { RotateCcw } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { YOU_COLOUR } from "./colours";
 import { tidyLabel, type CaptionState } from "./coach-caption";
 import { fixName, formatValue } from "./compare";
@@ -12,12 +14,14 @@ export function CoachDetails({ state }: { state: CaptionState }) {
         How the coach decided
       </h3>
       {state.kind === "loading" && <p className="text-sm text-muted-foreground">Loading…</p>}
-      {state.kind === "error" && <p className="text-sm text-muted-foreground">{state.message}</p>}
-      {state.kind === "none" && (
-        <p className="text-sm text-muted-foreground">
-          This swing came from the swing API, which has no coach endpoint yet. Next, you can pick any fix and see its
-          ghost at a small fixed demo size.
-        </p>
+      {state.kind === "error" && (
+        <div role="alert" className="flex flex-wrap items-center gap-3">
+          <p className="text-sm text-muted-foreground">The coach&apos;s call didn&apos;t load: {state.message}</p>
+          <Button variant="outline" size="sm" onClick={state.onRetry}>
+            <RotateCcw data-icon="inline-start" />
+            Try again
+          </Button>
+        </div>
       )}
       {state.kind === "ready" && (
         <>
@@ -40,11 +44,13 @@ export function CoachDetails({ state }: { state: CaptionState }) {
                     {fault.threshold !== null && <>, fault past {formatValue(fault.threshold, fault.unit)}</>}
                     {fault.severity !== null && <> · severity {fault.severity}</>} · {fault.confidence} confidence · fix:{" "}
                     {fixName(fault.fix).toLowerCase()}
+                    {fault.fix === state.caption.ghostFix && " · the ghost shows this"}
                   </span>
                 </li>
               ))}
             </ol>
           )}
+          {state.caption.ghostNote && <p className="text-xs text-muted-foreground">{state.caption.ghostNote}</p>}
         </>
       )}
     </section>
