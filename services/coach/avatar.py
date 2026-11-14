@@ -35,6 +35,9 @@ MAX_LINES = 3
 
 NO_FAULT_LINES = ["Nice swing: there's nothing to fix this time.", "Hit the next one exactly the same way."]
 GHOST_LINE = "Watch your ghost beside you: it makes that change."
+# NOT SPOKEN YET: the live ghost (/compare route, web page, physics compare()) applies only
+# ghost_fix, one edit, so claiming both would describe a change the screen doesn't show.
+# Switch it back on once the live path applies coach_swing's ghost_edits.
 GHOST_PAIR_LINE = "Watch your ghost beside you: it closes the stance and turns the shoulders a little less."
 # When the ghost can't animate the fault just spoken and shows a fallback fix instead.
 GHOST_OTHER_LINE = "Your ghost can't show that fix yet, so it shows another one: {fix}."
@@ -92,14 +95,15 @@ def script_from_result(result: dict[str, Any], voice: Optional[Voice] = None) ->
         lines = [_spoken(fault["label"]) + "."]
         # Line 2: the cue.
         lines.append(fault["cue"])
-        # Line 3: the tip if there is one, else what the ghost REALLY shows. "It makes that
-        # change" only when the ghost animates the fault just spoken; a fallback ghost is
-        # named as a different fix (or ghost_note), never passed off as this one.
+        # Line 3: the tip if there is one, else what the ghost REALLY shows: only ghost_fix,
+        # the one fix the live ghost animates (a paired second fix isn't rendered yet).
+        # "It makes that change" only when that fix is for the fault just spoken; a
+        # fallback ghost is named as a different fix (or ghost_note), never passed off.
         ghost = result.get("ghost_fault")
         if fault.get("tip"):
             lines.append(fault["tip"])
         elif ghost is not None and ghost.get("id") == fault["id"]:
-            lines.append(GHOST_PAIR_LINE if len(result.get("ghost_fixes") or []) > 1 else GHOST_LINE)
+            lines.append(GHOST_LINE)
         elif ghost is not None and ghost.get("fix") in FIX_PHRASES:
             lines.append(GHOST_OTHER_LINE.format(fix=FIX_PHRASES[ghost["fix"]]))
         elif ghost is not None and result.get("ghost_note"):

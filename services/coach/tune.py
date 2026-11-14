@@ -5,7 +5,9 @@ and a folder of pipeline swing JSONs, measures every labelled swing with the coa
 for each fault compares the good block ("none") with that fault's block. For every
 candidate measurement it reports the threshold that best separates them (balanced
 accuracy = average of "fault swings flagged" and "good swings not flagged"), and how
-the CURRENT rule does. If nothing separates well, it says to disable the fault.
+the CURRENT rule does. Verdicts: "set" a new rule; "disable" only if fewer than 5 fault
+swings were measured or nothing reaches 0.7 balanced accuracy; "keep" (review by hand)
+when it can't place a correctly directed threshold.
 
 It never edits THRESHOLDS: read the report, then change faults.py by hand.
 
@@ -46,8 +48,8 @@ CANDIDATES: dict[str, list[str]] = {
     "rolling_wrist": ["forearm_roll_deg"],
 }
 
-MIN_SWINGS = 5  # per side; fewer and we can't tell
-MIN_SEPARATION = 0.75  # balanced accuracy needed to keep a fault
+MIN_SWINGS = 5  # measured FAULT swings; fewer and the fault is disabled
+MIN_SEPARATION = 0.7  # balanced accuracy below this and the fault is disabled
 DECIMALS = 3  # thresholds and medians are reported (and scored) at this precision
 
 
@@ -110,6 +112,39 @@ def rule_problem(best: dict[str, Any]) -> Optional[str]:
         return None
     return (f"fault median {f} and good median {g} aren't on opposite sides of threshold {t} "
             f"(fires {best['fires']}), so the rule would read backwards or have no span")
+
+
+def recommend(options: list[dict[str, Any]]) -> dict[str, Any]:
+    """One verdict for a fault from its candidate measurements.
+
+    - "disable" ONLY when fewer than MIN_SWINGS fault swings were measured, or the best
+      balanced accuracy of any candidate is below MIN_SEPARATION.
+    - "set" the best correctly directed rule (rule_problem() is None) that reaches
+      MIN_SEPARATION.
+    - "keep" otherwise (the current rule stays; review by hand): no good swings to
+      compare against, or the data separates but no threshold forms a rule that
+      severity() would read the right way round.
+    """
+    if max((o["n_fault_measured"] for o in options), default=0) < MIN_SWINGS:
+        return {"action": "disable", "why": f"fewer than {MIN_SWINGS} measured fault swings"}
+    eligible = [o for o in options if o["best"] and o["best"]["n_fault"] >= MIN_SWINGS]
+    if not eligible:
+        return {"action": "keep", "why": "no good swings measured to compare against"}
+    strongest = max(eligible, key=lambda o: o["best"]["balanced_accuracy"])
+    score = strongest["best"]["balanced_accuracy"]
+    if score < MIN_SEPARATION:
+        return {"action": "disable",
+                "why": f"best separation {score:.2f} < {MIN_SEPARATION} ({strongest['measurement']})"}
+    usable = [o for o in eligible
+              if o["rule_problem"] is None and o["best"]["balanced_accuracy"] >= MIN_SEPARATION]
+    if not usable:
+        return {"action": "keep", "why": f"separates (score {score:.2f}, {strongest['measurement']}) but "
+                                         f"no threshold forms a rule in the right direction: "
+                                         f"{strongest['rule_problem']}"}
+    top = max(usable, key=lambda o: o["best"]["balanced_accuracy"])
+    b = top["best"]
+    return {"action": "set", "rule": {"measurement": top["measurement"], "threshold": b["threshold"],
+                                      "severe_at": b["fault_median"], "target": b["good_median"]}}
 
 
 def current_rule_score(rule: dict[str, Any], good: list[float], fault: list[float]) -> dict[str, Any]:
@@ -179,29 +214,12 @@ def tune(labels: list[dict[str, str]], swings: dict[str, dict],
                 fault = [r.get(name) for r in fault_rows]
                 best = best_threshold(good, fault)
                 entry: dict[str, Any] = {"measurement": name, "best": best,
+                                         "n_fault_measured": sum(_finite(v) for v in fault),
                                          "rule_problem": rule_problem(best) if best else None}
                 if name == rule["measurement"]:
                     entry["current"] = current_rule_score(rule, good, fault)
                 options.append(entry)
-            enough = [o for o in options if o["best"]
-                      and o["best"]["n_good"] >= MIN_SWINGS and o["best"]["n_fault"] >= MIN_SWINGS]
-            # Only a threshold that becomes a correctly-directed rule may be recommended.
-            usable = [o for o in enough if o["rule_problem"] is None]
-            top = max(usable, key=lambda o: o["best"]["balanced_accuracy"], default=None)
-            if not enough:
-                verdict = {"action": "disable", "why": f"fewer than {MIN_SWINGS} measured good or fault swings"}
-            elif top is None:
-                verdict = {"action": "disable", "why": "no measurement gives a rule in the right direction: "
-                                                        + enough[0]["rule_problem"]}
-            elif top["best"]["balanced_accuracy"] < MIN_SEPARATION:
-                verdict = {"action": "disable",
-                           "why": f"best separation {top['best']['balanced_accuracy']:.2f} < {MIN_SEPARATION} "
-                                  f"({top['measurement']})"}
-            else:
-                b = top["best"]
-                verdict = {"action": "set", "rule": {
-                    "measurement": top["measurement"], "threshold": b["threshold"],
-                    "severe_at": b["fault_median"], "target": b["good_median"]}}
+            verdict = recommend(options)
             report["faults"][f"{stroke}/{fault_id}"] = {
                 "label": label, "n_good": len(good_rows), "n_fault": len(fault_rows),
                 "options": options, "verdict": verdict}
@@ -229,7 +247,7 @@ def _print(report: dict[str, Any]) -> None:
                          f"{c['good_flagged']:.0%} of good")
             print(line)
         v = item["verdict"]
-        print(f"  => {v['action'].upper()}: " + (v["why"] if v["action"] == "disable" else json.dumps(v["rule"])))
+        print(f"  => {v['action'].upper()}: " + (json.dumps(v["rule"]) if v["action"] == "set" else v["why"]))
 
 
 def main() -> None:

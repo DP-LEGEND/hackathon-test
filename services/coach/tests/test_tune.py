@@ -93,10 +93,10 @@ def test_report_sets_separable_faults_and_disables_the_rest() -> None:
     assert current["good_flagged"] == 0.0
 
     wrist = report["faults"]["forehand/early_wrist_snap"]
-    assert wrist["verdict"] == {"action": "disable", "why": f"fewer than {MIN_SWINGS} measured good or fault swings"}
+    assert wrist["verdict"] == {"action": "disable", "why": f"fewer than {MIN_SWINGS} measured fault swings"}
 
     over = report["faults"]["forehand/over_rotation"]
-    assert over["verdict"]["action"] == "disable" and "right direction" in over["verdict"]["why"]  # identical blocks
+    assert over["verdict"]["action"] == "disable" and "separation" in over["verdict"]["why"]  # identical blocks: 0.5
 
 
 def test_report_counts_missing_and_failed_swings() -> None:
@@ -191,7 +191,7 @@ def test_codex_borderline_case_is_never_recommended_backwards(monkeypatch: pytes
 
     report = tune(labels, {r["swing"]: {"id": r["swing"]} for r in labels}, measure=measure)
     verdict = report["faults"]["forehand/over_rotation"]["verdict"]
-    assert verdict["action"] == "disable" and "right direction" in verdict["why"]
+    assert verdict["action"] == "keep" and "right direction" in verdict["why"]  # separates (0.75), never "set" backwards
 
 
 def test_direction_flips_when_the_fault_block_reads_lower() -> None:
@@ -291,3 +291,75 @@ def test_two_usable_tied_cuts_keep_the_lower_one() -> None:
     assert rule_problem(other) is None
     assert _applied_rates(_rule(other), good, fault)[0] < b["fault_flagged"] or \
         _applied_rates(_rule(other), good, fault)[1] < b["good_flagged"]  # a genuinely different cut, same score
+
+
+# ---- Disable only below 0.7 balanced accuracy or with fewer than 5 fault swings -----
+
+from coach.tune import MIN_SEPARATION, recommend  # noqa: E402
+
+
+def _verdict(good: list[float], fault: list[float], with_good: bool = True) -> dict:
+    """tune() verdict for backhand straight_arm with these elbow values per block."""
+    labels = (_labels("backhand", "none", len(good)) if with_good else []) + \
+        _labels("backhand", "straight_arm", len(fault))
+    values = {"none": good, "straight_arm": fault}
+
+    def measure(swing: dict, stroke: str) -> dict:
+        block, i = swing["id"].rsplit("-", 1)
+        return {"elbow_min_before_deg": values[block][int(i)]}
+
+    report = tune(labels, {r["swing"]: {"id": r["swing"]} for r in labels}, measure=measure)
+    return report["faults"]["backhand/straight_arm"]["verdict"]
+
+
+def test_disable_rule_constants() -> None:
+    assert (MIN_SEPARATION, MIN_SWINGS) == (0.7, 5)
+
+
+def test_exactly_0_7_is_kept_as_a_rule_not_disabled() -> None:
+    v = _verdict([0, 0, 2, 2, 3], [2, 2, 3, 3, 3])  # best cut 2.5 scores exactly 0.7
+    assert v == {"action": "set", "rule": {"measurement": "elbow_min_before_deg", "threshold": 2.5,
+                                           "severe_at": 3, "target": 2}}
+
+
+def test_between_0_7_and_the_old_0_75_is_now_set() -> None:
+    v = _verdict([0, 0, 2, 2, 2, 3], [2, 2, 3, 3, 3])  # 0.717: disabled before, a rule now
+    assert v["action"] == "set" and v["rule"]["threshold"] == 2.5
+
+
+def test_below_0_7_is_disabled() -> None:
+    v = _verdict([0, 0, 3, 3, 3], [2, 2, 2, 3, 3])  # best 0.6
+    assert v["action"] == "disable" and v["why"].startswith("best separation 0.60 < 0.7")
+
+
+def test_fewer_than_5_fault_swings_is_disabled_even_if_perfectly_separable() -> None:
+    v = _verdict([0, 1, 2, 3, 4, 5, 6, 7], [20, 21, 22, 23])
+    assert v == {"action": "disable", "why": "fewer than 5 measured fault swings"}
+
+
+def test_few_good_swings_no_longer_disable_a_separable_fault() -> None:
+    v = _verdict([0, 1], [20, 21, 22, 23, 24])  # 2 good, 5 fault: the old rule needed 5 of each
+    assert v["action"] == "set" and 1 < v["rule"]["threshold"] < 20
+
+
+def test_fault_swings_without_any_good_ones_are_kept_not_disabled() -> None:
+    v = _verdict([], [20, 21, 22, 23, 24], with_good=False)
+    assert v == {"action": "keep", "why": "no good swings measured to compare against"}
+
+
+def test_unmeasured_fault_swings_do_not_count() -> None:
+    # 6 fault swings labelled, but only 4 have the measurement: fewer than 5 measured.
+    v = _verdict([0, 1, 2, 3, 4], [20, 21, float("nan"), 23, None, 25])  # type: ignore[list-item]
+    assert v == {"action": "disable", "why": "fewer than 5 measured fault swings"}
+
+
+def test_recommend_only_disables_for_the_two_reasons() -> None:
+    # Every "disable" says one of the two allowed reasons; anything else is set or keep.
+    cases = [([0, 0, 2, 2, 3], [2, 2, 3, 3, 3]), ([0, 0, 3, 3, 3], [2, 2, 2, 3, 3]), ([5] * 5, [0, 0, 10, 10, 10]),
+             ([0, 1, 2, 3, 4], [20, 21, 22]), ([1, 2, 3, 4, 5], [1, 2, 3, 4, 5])]
+    for good, fault in cases:
+        v = _verdict(good, fault)
+        assert v["action"] in ("set", "keep", "disable")
+        if v["action"] == "disable":
+            assert v["why"].startswith(("best separation", "fewer than 5 measured fault swings")), v
+    assert recommend([])["action"] == "disable"  # no measurement at all: no fault swings

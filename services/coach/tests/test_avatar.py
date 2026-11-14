@@ -71,14 +71,15 @@ def test_every_fault_fits_the_avatar_limits(stroke: str, fault_id: str) -> None:
     assert script["lines"][1] == FAULTS[fault_id]["cue"]
 
 
-def test_third_line_is_tip_then_ghost_pair_then_ghost() -> None:
+def test_third_line_is_tip_then_ghost_then_nothing() -> None:
     with_tip = script_from_result(_fault_result("forehand", "stance_too_open"))
     assert with_tip["lines"][2] == FAULTS["stance_too_open"]["tip"]
 
     pair = script_from_result(_fault_result(
         "forehand", "over_rotation", ghost_fault={"id": "over_rotation"},
         ghost_fixes=[{"fix": "turn_shoulders_less", "amount": 15}, {"fix": "close_stance", "amount": 45}]))
-    assert pair["lines"][2] == GHOST_PAIR_LINE
+    assert pair["lines"][2] == GHOST_LINE  # the live ghost shows only ghost_fix, not the pair
+    assert "closes the stance" not in " ".join(pair["lines"])
 
     single = script_from_result(_fault_result("forehand", "over_rotation", ghost_fault={"id": "over_rotation"}))
     assert single["lines"][2] == GHOST_LINE

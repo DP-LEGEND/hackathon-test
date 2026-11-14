@@ -73,8 +73,10 @@ def coach_swing(swing: dict, stroke: Optional[Stroke] = None, fps_real: Optional
     ghost_edits (the same as physics.ghost.edit_swing edits). Also tip (a second
     coaching point, or None) and disabled_faults ({id: why} switched off for this stroke).
 
-    `fault` stays the overall worst one for the caption; the ghost animates `ghost_fault`
-    (and its pair, when one applies). ghost_fix stays a single fix for one-fix callers.
+    `fault` stays the overall worst one for the caption; the ghost animates `ghost_fault`.
+    ghost_fixes / ghost_edits describe the pair the ghost SHOULD show, but the live path
+    (/compare route, web page, physics compare()) applies only ghost_fix today, so the
+    avatar describes ghost_fix alone. Use ghost_edits once /compare accepts several edits.
     """
     metrics = measure_swing(swing, stroke, fps_real)
     faults: list[Fault] = detect_faults(swing, metrics=metrics)
