@@ -166,9 +166,13 @@ def main() -> None:
     print(result.model_dump_json(indent=2))
 
     if args.speak:
-        from coach.voice import play, speak_cue
+        from coach.voice import VoiceError, play, speak_cue
 
-        path = speak_cue(result.cue)
+        # If speech fails, the cue above still stands: report why and stop cleanly.
+        try:
+            path = speak_cue(result.cue)
+        except (VoiceError, RuntimeError) as exc:
+            raise SystemExit(f"Voice failed, cue shown above only. {exc}") from None
         print(f"Saved audio to {path}")
         play(path)
 
