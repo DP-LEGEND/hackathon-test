@@ -9,10 +9,10 @@ def test_angle_right_angle():
     assert abs(_angle(a, b, c)[0] - 90) < 1e-6
 
 
-def test_smooth_ignores_nan():
+def test_smoothing_leaves_gaps_for_articulated_repair():
     x = np.array([1.0, np.nan, 3.0, 3.0, 3.0])
     y = smooth(x, 3)
-    assert np.isfinite(y).all()
+    np.testing.assert_allclose(y, x, equal_nan=True)
 
 
 def test_swing_features_runs_on_synthetic_pose():

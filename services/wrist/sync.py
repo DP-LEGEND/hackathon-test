@@ -8,8 +8,10 @@ accelerometer.
    pull and gravity drop out), then peaks above median + K * MAD of that signal.
 2. Taps: the first two spikes 0.1 to 1.5 s apart, with the arm still.
 3. Impacts: spikes after the taps that happen MID-SWING (forearm turning faster than
-   MIN_SWING_DPS within 100 ms). Spikes within 1 s of each other are one swing (the
-   biggest wins). A spike with the arm still (a footstep, a knock) is rejected and listed.
+   MIN_SWING_DPS within 100 ms) and stand at least MIN_IMPACT_G high. Spikes within 1 s of
+   each other are one swing (the biggest wins). A spike with the arm still (a footstep, a
+   knock) is rejected and listed, and so is a small one: a fast swing's own centripetal
+   pull leaves a ~1 g bump after the high-pass even with no ball (a shadow swing).
 4. Alignment: video time + offset = sensor time. The offset comes from the FIRST TAP
    (sensor tap time - the video time you read off for that tap). Impacts are paired with
    the video's contact times IN ORDER (each contact takes the nearest unused impact after
@@ -18,9 +20,17 @@ accelerometer.
    trusted, and metrics.py skips them. Without a video tap time, the offset is fitted to
    the impacts (median) and the k-th impact pairs with the k-th contact, so the errors
    are only residuals of that fit, a weaker check; the report says so.
+5. Swings with no impact (a shadow swing, or a hit too soft to spike): with the tap
+   offset, a video contact that has NO impact within TAP_ONLY_CLEAR_MS of its predicted
+   sensor time, while the forearm IS swinging there (faster than MIN_SWING_DPS within
+   the tolerance), is timed from the double tap alone: alignment["tap_only"]. It never
+   takes an impact, so it spoils no other pair. A contact where the arm is still (a typo,
+   a swing the phone never felt) stays untrusted as before.
 
 Metrics use the sensor's own impact time as contact, so a small sync error moves no
-number; sync only decides WHICH swing each impact belongs to.
+number; sync only decides WHICH swing each impact belongs to. Tap-only swings are the
+exception: their contact IS the tap prediction, so the sync error (the video tap and
+contact marks, up to the tolerance) moves their window.
 """
 
 from __future__ import annotations
@@ -29,12 +39,13 @@ import csv
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import numpy as np
 from scipy.ndimage import median_filter
 from scipy.signal import find_peaks
 
+from wrist.impact import G
 from wrist.load import Recording
 
 SPIKE_WINDOW_S = 0.07     # high-pass = accel minus its running median over this window
@@ -45,8 +56,10 @@ TAP_SEARCH_S = 60.0       # and both within the first minute
 IMPACT_GUARD_S = 0.5      # impacts start this long after the second tap
 SWING_GAP_S = 1.0         # spikes closer than this belong to the same swing
 MIN_SWING_DPS = 360.0     # an impact happens mid-swing: forearm turning at least this fast...
+MIN_IMPACT_G = 2.0        # ...and knocks at least this hard (tune on real hits: the mock's are ~10 g)
 SWING_SPEED_WINDOW_S = 0.1  # ...within this long of the spike
 TOLERANCE_MS = 100.0      # pairs with a bigger alignment error are not trusted
+TAP_ONLY_CLEAR_MS = 300.0  # a contact with no impact this close to its tap-predicted time has none
 
 CONTACT_COLUMNS = ("contact_s", "contact_video_s", "contact_playback_s")
 
@@ -99,6 +112,9 @@ def find_impacts(spikes: list[Spike], after_t: float) -> tuple[list[Spike], list
             continue
         if s.gyro_dps < MIN_SWING_DPS:
             rejected.append({**_r(s), "why": f"arm still ({s.gyro_dps:.0f} deg/s < {MIN_SWING_DPS:.0f})"})
+        elif s.height < MIN_IMPACT_G * G:
+            rejected.append({**_r(s), "why": f"too small for a hit ({s.height / G:.1f} g < {MIN_IMPACT_G:g} g): "
+                                             "the swing's own pull, or a shadow swing"})
         else:
             mid_swing.append(s)
     groups: list[list[Spike]] = []
@@ -116,11 +132,14 @@ def _r(s: Spike) -> dict[str, Any]:
 
 def align(impacts_s: list[float], contacts: list[tuple[str, float]], tap_s: Optional[float] = None,
           video_tap_s: Optional[float] = None, video_scale: float = 1.0,
-          tolerance_ms: float = TOLERANCE_MS) -> dict[str, Any]:
+          tolerance_ms: float = TOLERANCE_MS,
+          swinging: Optional[Callable[[float], bool]] = None) -> dict[str, Any]:
     """Pair impacts with video contacts in order and report each pair's alignment error.
 
     contacts: [(swing id, video seconds)]. video_scale: real seconds per video second
-    (1.0 unless contact times were read off a slowed-down playback).
+    (1.0 unless contact times were read off a slowed-down playback). swinging(sensor s):
+    whether the forearm is swinging then; with it and the tap offset, contacts with no
+    impact nearby go to "tap_only" (module doc, step 5).
 
     With the first-tap offset, each contact (in time order) takes the nearest impact
     after the last one used, and only uses it up if it's within tolerance: an extra or
@@ -148,9 +167,16 @@ def align(impacts_s: list[float], contacts: list[tuple[str, float]], tap_s: Opti
 
     pairs: list[dict[str, Any]] = []
     unpaired_swings: list[str] = []
+    tap_only: list[dict[str, Any]] = []
     if from_tap:
         j = 0  # impacts before j are used up
         for swing, video_t in contacts:
+            predicted = video_t * video_scale + offset
+            clear = all(abs(t - predicted) * 1000 > TAP_ONLY_CLEAR_MS for t in impacts)
+            if clear and swinging is not None and swinging(predicted):
+                tap_only.append({"swing": swing, "contact_s": round(predicted, 3),
+                                 "contact_video_s": round(video_t, 3)})
+                continue
             if j >= len(impacts):
                 unpaired_swings.append(swing)
                 continue
@@ -168,8 +194,9 @@ def align(impacts_s: list[float], contacts: list[tuple[str, float]], tap_s: Opti
         "tolerance_ms": tolerance_ms,
         "paired_by": "order, nearest impact to the tap-predicted time" if from_tap else "order (k-th with k-th)",
         "n_impacts": len(impacts), "n_contacts": len(contacts),
-        "count_mismatch": len(impacts) != len(contacts),
+        "count_mismatch": len(impacts) != len(contacts) - len(tap_only),
         "unpaired_swings": unpaired_swings,
+        "tap_only": tap_only,
         "unpaired_impacts_s": [round(t, 3) for t in impacts if round(t, 3) not in used],
         "error_ms": {"mean_abs": round(float(errs.mean()), 1) if errs.size else None,
                      "max_abs": round(float(errs.max()), 1) if errs.size else None,
@@ -181,7 +208,8 @@ def align(impacts_s: list[float], contacts: list[tuple[str, float]], tap_s: Opti
 def synchronise(rec: Recording, contacts: list[tuple[str, float]], video_tap_s: Optional[float] = None,
                 video_scale: float = 1.0, k: float = SPIKE_K, tolerance_ms: float = TOLERANCE_MS
                 ) -> dict[str, Any]:
-    """Taps, impacts and alignment in one report. report["impacts"] = {swing: sensor s} (ok pairs only)."""
+    """Taps, impacts and alignment in one report. report["impacts"] = {swing: sensor s} (ok pairs only);
+    report["tap_only"] = {swing: sensor s} for swings timed from the double tap (no impact)."""
     spikes = find_spikes(rec, k)
     taps = find_taps(spikes, float(rec.t[0]))
     after = taps[1].t + IMPACT_GUARD_S if taps else float(rec.t[0])
@@ -191,8 +219,14 @@ def synchronise(rec: Recording, contacts: list[tuple[str, float]], video_tap_s: 
         warnings.append("couldn't find the two start taps; offset fitted to the impacts instead")
     elif video_tap_s is None:
         warnings.append("no video tap time given (--video-tap); offset fitted to the impacts instead")
+    speed = np.degrees(np.linalg.norm(rec.gyro, axis=1))
+
+    def swinging(t_s: float) -> bool:
+        near = np.abs(rec.t - t_s) <= tolerance_ms / 1000
+        return bool(rec.t[0] <= t_s <= rec.t[-1] and near.any() and speed[near].max() >= MIN_SWING_DPS)
+
     alignment = align([s.t for s in impacts], contacts, taps[0].t if taps else None,
-                      video_tap_s, video_scale, tolerance_ms)
+                      video_tap_s, video_scale, tolerance_ms, swinging)
     if alignment["count_mismatch"]:
         how = ("each contact took the nearest impact in order; unmatched ones are listed"
                if alignment["offset_from"] == "first tap" else
@@ -201,11 +235,16 @@ def synchronise(rec: Recording, contacts: list[tuple[str, float]], video_tap_s: 
     bad = alignment["error_ms"]["n_pairs"] - alignment["error_ms"]["n_ok"]
     if bad:
         warnings.append(f"{bad} pair(s) off by more than {tolerance_ms:.0f} ms: their wrist metrics are skipped")
+    if alignment["tap_only"]:
+        names = ", ".join(t["swing"] for t in alignment["tap_only"])
+        warnings.append(f"no impact for {names} (shadow swing?): contact timed from the double tap alone, "
+                        "so its window can be off by the sync error; impact fields are null")
     return {
         "taps_s": [round(s.t, 3) for s in taps] if taps else None,
         "video_tap_s": video_tap_s,
         "spike_threshold_k": k,
         "impacts": {p["swing"]: p["impact_s"] for p in alignment["pairs"] if p["ok"]},
+        "tap_only": {t["swing"]: t["contact_s"] for t in alignment["tap_only"]},
         "rejected_spikes": rejected,
         "alignment": alignment,
         "warnings": warnings,

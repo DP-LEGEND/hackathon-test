@@ -25,6 +25,7 @@ import {
 import { BallChanges, BodyChanges } from "./delta-panel";
 import { FixPicker } from "./fix-picker";
 import { GhostStage, type StageStatus } from "./ghost-stage";
+import { PredictionPanel } from "./prediction-panel";
 import { SceneLegend } from "./scene-legend";
 import type { BallPathView, CameraView } from "./skeleton-scene";
 import {
@@ -209,7 +210,7 @@ export function GhostDemo({ requestedSwing }: { requestedSwing: string | null })
   );
   const balls = useMemo(() => {
     if (!onCourt || !compare) return null;
-    // Identical paths: draw one, and the legend says the fix changes the body, not the ball.
+    // Identical paths: draw one, and the legend says why (the fix moved only the body, or no correction).
     return samePath
       ? { you: ballView(compare.you.ball, "you and ghost"), ghost: null }
       : { you: ballView(compare.you.ball, "you"), ghost: ballView(compare.ghost.ball, "ghost") };
@@ -369,12 +370,18 @@ export function GhostDemo({ requestedSwing }: { requestedSwing: string | null })
               ghost={
                 showGhost && compare
                   ? {
-                      label: `${fixName(compare.fix.id).toLowerCase()} ${formatValue(compare.fix.amount, compare.fix.unit)}`,
+                      label: compare.noCorrection
+                        ? "no correction: your swing unchanged"
+                        : `${fixName(compare.fix.id).toLowerCase()} ${formatValue(compare.fix.amount, compare.fix.unit)}`,
                       mock: !compare.ghostIsReal,
                     }
                   : null
               }
-              balls={onCourt && compare ? { you: compare.you.ball, ghost: compare.ghost.ball, same: samePath } : null}
+              balls={
+                onCourt && compare
+                  ? { you: compare.you.ball, ghost: compare.ghost.ball, same: samePath, noCorrection: compare.noCorrection }
+                  : null
+              }
               monoDepth={you?.source === "mono"}
             />
             {onCourt && (
@@ -403,9 +410,11 @@ export function GhostDemo({ requestedSwing }: { requestedSwing: string | null })
                 compare={compare}
                 flagged={faults.some((f) => f.fix === compare.fix.id)}
                 coached={coachCaption !== null}
+                notJudged={coachCaption?.notJudged ?? []}
               />
             </div>
           )}
+          {you && <PredictionPanel you={you} compare={compare} />}
         </>
       )}
     </div>

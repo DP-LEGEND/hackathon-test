@@ -106,16 +106,21 @@ def extract_raw(
 
 
 def smooth(x: np.ndarray, win: int = 5) -> np.ndarray:
-    """Centred moving average over time (axis 0), ignoring NaNs."""
+    """Centred average within finite runs; never bridge a missing interval."""
+    from pipeline.kinematics import runs
+
     win = min(win, len(x))
     if win <= 1:
         return x
-    k = np.ones(win)
-    valid = ~np.isnan(x)
-    num = np.apply_along_axis(lambda a: np.convolve(a, k, "same"), 0, np.where(valid, x, 0.0))
-    den = np.apply_along_axis(lambda a: np.convolve(a, k, "same"), 0, valid.astype(float))
-    with np.errstate(invalid="ignore", divide="ignore"):
-        return num / den
+    result = np.full_like(x, np.nan, dtype=float)
+    source = x.reshape(len(x), -1)
+    target = result.reshape(len(x), -1)
+    for column in range(source.shape[1]):
+        for start, end in runs(np.isfinite(source[:, column])):
+            kernel = np.ones(min(win, end - start))
+            target[start:end, column] = (np.convolve(source[start:end, column], kernel, 'same')
+                                         / np.convolve(np.ones(end - start), kernel, 'same'))
+    return result
 
 
 def to_swing(raw: dict, f0: int = 0, f1: int | None = None, smooth_win: int = 3,
@@ -125,7 +130,7 @@ def to_swing(raw: dict, f0: int = 0, f1: int | None = None, smooth_win: int = 3,
     contact_frame is relative to the selected window. Without a measured contact,
     the fastest right-wrist frame is an explicitly approximate contact proxy.
     Each frame includes 33 boolean filled flags, preserving upstream provenance
-    and marking missing input joints reconstructed by smoothing.
+    and marking missing input joints reconstructed by bounded angle filling.
     """
     original = np.asarray(raw["world"])
     if original.ndim != 3 or original.shape[1:] != (33, 3):
@@ -136,8 +141,21 @@ def to_swing(raw: dict, f0: int = 0, f1: int | None = None, smooth_win: int = 3,
         if provided.shape != original.shape[:2] or provided.dtype != np.bool_:
             raise ValueError("filled must be a boolean array of shape (frames, 33)")
         filled |= provided
+    visibility = np.asarray(raw.get('vis', np.where(filled, 0., 1.)), dtype=float)
+    if 'vis' in raw:
+        if visibility.shape != original.shape[:2] or not np.isfinite(visibility).all() or np.any((visibility < 0) | (visibility > 1)):
+            raise ValueError('vis must contain 33 finite confidence values in [0, 1] per frame')
+        original = original.copy()
+        original[(visibility <= .1) & ~filled] = np.nan
+        filled |= ~np.isfinite(original).all(axis=2) | (visibility < .5)
+    visibility = visibility[f0:f1]
     filled = filled[f0:f1]
-    world = smooth(original[f0:f1], smooth_win)
+    from pipeline.kinematics import gap_limit, repair_pose
+    if smooth_win > 1:
+        world, filled = repair_pose(original[f0:f1], max_gap=gap_limit(float(raw['fps'])),
+                                    win=smooth_win, filled=filled, provenance=True)
+    else:
+        world = original[f0:f1].copy()
     t = raw["t"][f0:f1]
     if len(t) < 2 or world.shape != (len(t), 33, 3):
         raise ValueError("A swing needs at least two frames of 33 joints")
@@ -149,8 +167,9 @@ def to_swing(raw: dict, f0: int = 0, f1: int | None = None, smooth_win: int = 3,
     if not 0 <= contact_frame < len(t):
         raise ValueError("Contact frame is outside the swing")
     frames = [
-        {"t": float(ti - t[0]), "joints": wj.round(6).tolist(), "filled": mask.tolist()}
-        for ti, wj, mask in zip(t, world, filled)
+        {"t": float(ti - t[0]), "joints": wj.round(6).tolist(), "filled": mask.tolist(),
+         "visibility": confidence.tolist()}
+        for ti, wj, mask, confidence in zip(t, world, filled, visibility)
     ]
     return {"id": swing_id, "fps": float(raw["fps"]),
             "contactFrame": int(contact_frame), "frames": frames}

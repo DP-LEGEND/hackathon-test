@@ -1,11 +1,13 @@
 // Step 2 detail: every fault the coach found, with the number code measured and the
-// threshold it crossed. The fault library decides; nothing here is computed.
+// threshold it crossed, then what it didn't judge and why. The fault library decides;
+// nothing here is computed.
 
 import { RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { YOU_COLOUR } from "./colours";
-import { tidyLabel, type CaptionState } from "./coach-caption";
-import { fixName, formatValue } from "./compare";
+import { checkedEverything, tidyLabel, type CaptionState } from "./coach-caption";
+import { fixName, formatValue, listWords, notCheckedFaults, type CoachCaption } from "./compare";
+import { ReasonList } from "./reason-list";
 
 export function CoachDetails({ state }: { state: CaptionState }) {
   return (
@@ -30,7 +32,11 @@ export function CoachDetails({ state }: { state: CaptionState }) {
             worst first, and the top one is the call.
           </p>
           {state.caption.faults.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Every measurement is inside its threshold.</p>
+            <p className="text-sm text-muted-foreground">
+              {checkedEverything(state.caption)
+                ? "Every measurement is inside its threshold."
+                : "No fault found in what was checked: every measurement the coach could make is inside its threshold. What it couldn't check is below."}
+            </p>
           ) : (
             <ol className="flex flex-col divide-y">
               {state.caption.faults.map((fault, i) => (
@@ -51,8 +57,28 @@ export function CoachDetails({ state }: { state: CaptionState }) {
             </ol>
           )}
           {state.caption.ghostNote && <p className="text-xs text-muted-foreground">{state.caption.ghostNote}</p>}
+          <NotJudgedList caption={state.caption} />
         </>
       )}
     </section>
+  );
+}
+
+/**
+ * Checks the coach skipped instead of judging them from a guessed joint, then every fault it
+ * couldn't check (e.g. rolled_wrist without a wrist sensor), both as the coach listed them.
+ * Shown, never hidden.
+ */
+function NotJudgedList({ caption }: { caption: CoachCaption }) {
+  if (checkedEverything(caption)) return null;
+  return (
+    <div className="flex flex-col gap-1.5 border-t pt-2">
+      <ReasonList label="Not judged" items={caption.notJudged} />
+      {caption.notMeasured.length > 0 && (
+        <p className="text-xs text-muted-foreground">
+          Not checked on this swing (a measurement it needs is missing): {listWords(notCheckedFaults(caption))}.
+        </p>
+      )}
+    </div>
   );
 }

@@ -15,8 +15,11 @@ export function SceneLegend({
 }: {
   /** What the ghost shows, e.g. "close stance 64.9°", and whether it's a real fix. Null = hidden. */
   ghost: { label: string; mock: boolean } | null;
-  /** `same`: both PREDICTED paths are identical. */
-  balls: { you: BallPath; ghost: BallPath; same: boolean } | null;
+  /**
+   * `same`: both PREDICTED paths are identical. `noCorrection`: physics made no correction, so
+   * they match because the ghost is your swing unchanged, not because a fix moved only the body.
+   */
+  balls: { you: BallPath; ghost: BallPath; same: boolean; noCorrection: boolean } | null;
   /** The swing's depth is estimated from one camera, not measured by stereo. */
   monoDepth: boolean;
 }) {
@@ -38,9 +41,13 @@ export function SceneLegend({
           <p className="text-xs text-muted-foreground">No real ball: from the ball model.</p>
           {balls.same ? (
             <>
-              <p className="text-sm font-medium text-balance" style={{ color: GHOST_COLOUR }}>
-                {SAME_PATH_MESSAGE}.
-              </p>
+              {balls.noCorrection ? (
+                <p className="text-xs text-balance text-muted-foreground">No correction on this swing, so one path.</p>
+              ) : (
+                <p className="text-sm font-medium text-balance" style={{ color: GHOST_COLOUR }}>
+                  {SAME_PATH_MESSAGE}.
+                </p>
+              )}
               <BallRow colour={YOU_COLOUR} who="You and ghost" ball={balls.you} />
             </>
           ) : (

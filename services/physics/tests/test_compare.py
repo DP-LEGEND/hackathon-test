@@ -27,7 +27,7 @@ def test_result_is_plain_json_and_every_ball_path_is_predicted(elbow):
     assert set(back) >= {"fix", "you", "ghost", "delta", "assumptions"}
     for side in ("you", "ghost"):
         assert back[side]["ball"]["predicted"] is True and back[side]["ball"]["label"] == "PREDICTED"
-        assert back[side]["racketSpeed"]["estimate"] is True and back[side]["racketSpeed"]["label"] == "ESTIMATE"
+        assert back[side]["racketSpeed"]["estimate"] is True and back[side]["racketSpeed"]["label"] == "ESTIMATE (video)"
     assert back["delta"]["ball"]["predicted"] is True and back["delta"]["ball"]["label"] == "PREDICTED"
     assert any(line.startswith("PREDICTED ball") for line in back["delta"]["summary"])
     # The coach measures for itself (coach/faults.py measure_swing); compare() doesn't speak its schema.

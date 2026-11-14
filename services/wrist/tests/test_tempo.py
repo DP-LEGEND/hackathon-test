@@ -37,6 +37,7 @@ def test_tempo_matches_the_noise_free_swing(session) -> None:
         assert tp["forward_swing_ms"] == -tp["forward_start_ms"] and tp["follow_through_ms"] == tp["follow_through_end_ms"]
         assert tp["tempo_ratio"] == pytest.approx(tp["backswing_ms"] / tp["forward_swing_ms"], abs=0.01)
         assert tp["tempo_ratio"] > 1
+        assert tp["backswing_to_contact_ms"] == -tp["backswing_start_ms"] > 0
 
 
 def test_a_looped_swing_turns_around_at_the_dip() -> None:
@@ -57,6 +58,7 @@ def test_no_turn_around_leaves_the_top_unknown() -> None:
     speed = 1500 * np.exp(-((t - 3.0) / 0.1) ** 2)  # the forearm only moves forward
     tp = tempo(_rec_from_speed(speed), 3.0)
     assert tp["backswing_start_ms"] is not None and tp["forward_start_ms"] is None and tp["backswing_ms"] is None
+    assert tp["backswing_to_contact_ms"] == -tp["backswing_start_ms"], "needs only the backswing start"
     assert "turn-around" in tp["reasons"][0]
 
 
@@ -65,6 +67,7 @@ def test_an_arm_that_never_settles_gives_no_backswing_start() -> None:
     speed = 300 + 1500 * np.exp(-((t - 3.0) / 0.1) ** 2)  # fidgeting at 300 deg/s throughout
     tp = tempo(_rec_from_speed(speed), 3.0)
     assert tp["backswing_start_ms"] is None and tp["follow_through_end_ms"] is None
+    assert tp["backswing_to_contact_ms"] is None
     assert any("never settled" in r for r in tp["reasons"]) and any("still moving" in r for r in tp["reasons"])
 
 

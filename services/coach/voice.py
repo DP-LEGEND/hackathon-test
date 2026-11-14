@@ -63,8 +63,8 @@ def _explain_http_error(exc: urllib.error.HTTPError) -> str:
     return text + hint
 
 
-def synthesize(text: str) -> bytes:
-    """Return MP3 bytes for `text`."""
+def synthesize(text: str, timeout_s: float = TIMEOUT_S) -> bytes:
+    """Return MP3 bytes for `text`. timeout_s: per-request socket timeout (live callers pass less)."""
     text = text.strip()
     if not text:
         raise VoiceError("Nothing to say: the cue is empty.")
@@ -79,7 +79,7 @@ def synthesize(text: str) -> bytes:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=TIMEOUT_S) as response:
+        with urllib.request.urlopen(request, timeout=timeout_s) as response:
             audio = response.read()
     except urllib.error.HTTPError as exc:
         raise VoiceError(_explain_http_error(exc)) from exc
