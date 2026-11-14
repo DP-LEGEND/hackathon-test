@@ -122,3 +122,67 @@ def test_too_long_lines_are_rejected() -> None:
         avatar._check(["one two three.", " ".join(["word"] * (MAX_WORDS + 1))])
     with pytest.raises(ValueError, match="lines"):
         avatar._check(["only one line."])
+
+
+# ---- Review fix on #38: a fallback ghost is never passed off as the spoken fix -----
+
+def test_fallback_ghost_is_named_not_claimed() -> None:
+    # Codex P2: top fault not animatable (rolling wrist) + an animatable stance ghost.
+    result = _fault_result(
+        "forehand", "rolling_wrist",
+        ghost_fault={"id": "stance_too_open", "fix": "close_stance"},
+        ghost_fixes=[{"fix": "close_stance", "amount": 45}],
+        ghost_note="The ghost shows the next fix, because the top one isn't animated yet.")
+    lines = script_from_result(result)["lines"]
+    assert lines[1] == FAULTS["rolling_wrist"]["cue"]
+    assert lines[2] == "Your ghost can't show that fix yet, so it shows another one: closing the stance."
+    assert GHOST_LINE not in lines and GHOST_PAIR_LINE not in lines
+    assert "makes that change" not in " ".join(lines)
+
+
+def test_fallback_pair_is_named_by_its_primary_fix_not_the_pair_line() -> None:
+    result = _fault_result(
+        "forehand", "rolling_wrist", ghost_fault={"id": "over_rotation", "fix": "turn_shoulders_less"},
+        ghost_fixes=[{"fix": "turn_shoulders_less", "amount": 15}, {"fix": "close_stance", "amount": 45}])
+    line = script_from_result(result)["lines"][2]
+    assert line.endswith("turning the shoulders a little less.") and line != GHOST_PAIR_LINE
+
+
+def test_unknown_fallback_fix_uses_ghost_note_or_drops_the_line() -> None:
+    note = "The ghost shows the next fix, because the top one isn't animated yet."
+    unknown = {"id": "stance_too_open", "fix": "some_new_fix"}
+    with_note = script_from_result(_fault_result("forehand", "rolling_wrist", ghost_fault=unknown, ghost_note=note))
+    assert with_note["lines"][2] == note
+    without = script_from_result(_fault_result("forehand", "rolling_wrist", ghost_fault=unknown))
+    assert len(without["lines"]) == 2
+
+
+def test_every_fix_phrase_fits_the_line_limit() -> None:
+    from coach.avatar import FIX_PHRASES, GHOST_OTHER_LINE
+    from physics.ghost import FIXES
+
+    assert set(FIXES) <= set(FIX_PHRASES), "every physics fix needs a spoken phrase"
+    for phrase in FIX_PHRASES.values():
+        assert len(GHOST_OTHER_LINE.format(fix=phrase).split()) <= MAX_WORDS
+
+
+def test_real_coach_result_with_a_fallback_ghost(monkeypatch: pytest.MonkeyPatch, sample: dict) -> None:
+    """End to end through coach_swing: top fault can't be animated, the next one can."""
+    from coach.agent import GHOST_SHOWS_NEXT
+    from physics.ghost import FIXES
+
+    monkeypatch.delitem(FIXES, "bend_elbow", raising=False)  # straight arm: no ghost
+    rules = THRESHOLDS["backhand"]
+    m: dict = {"stroke": "backhand", "stroke_source": "given"}
+    for rule in rules.values():
+        m.setdefault(rule["measurement"], rule["target"])
+    m["elbow_min_before_deg"] = rules["straight_arm"]["severe_at"]  # priority 1, not animatable
+    m["wrist_uncock_ms"] = rules["early_wrist_snap"]["severe_at"]  # priority 4, animatable
+    monkeypatch.setattr("coach.agent.measure_swing", lambda swing, stroke, fps_real: m)
+
+    script = avatar_script(sample, stroke="backhand")
+    assert script["fault"] == "straight_arm"
+    assert script["lines"][1] == FAULTS["straight_arm"]["cue"]
+    assert script["lines"][2] == "Your ghost can't show that fix yet, so it shows another one: holding the wrist cock longer."
+    from coach.agent import coach_swing
+    assert coach_swing(sample, stroke="backhand")["ghost_note"] == GHOST_SHOWS_NEXT

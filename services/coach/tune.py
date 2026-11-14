@@ -48,6 +48,7 @@ CANDIDATES: dict[str, list[str]] = {
 
 MIN_SWINGS = 5  # per side; fewer and we can't tell
 MIN_SEPARATION = 0.75  # balanced accuracy needed to keep a fault
+DECIMALS = 3  # thresholds and medians are reported (and scored) at this precision
 
 
 def _finite(x: Any) -> bool:
@@ -57,8 +58,10 @@ def _finite(x: Any) -> bool:
 def best_threshold(good: list[float], fault: list[float]) -> Optional[dict[str, Any]]:
     """Threshold that best separates fault values from good ones, or None if either is empty.
 
-    Direction comes from the medians (fault higher -> "fires above"). Candidates are the
-    midpoints between neighbouring values; ties keep the one nearest the middle.
+    Direction comes from the data: the fault block's median vs the good block's ("fires
+    above" when faults read higher, "fires below" when lower). Candidate cuts are the
+    midpoints between neighbouring values, ROUNDED FIRST to DECIMALS (duplicates dropped)
+    and scored as rounded, so the hit rates reported are those of the threshold applied.
     """
     good = [v for v in good if _finite(v)]
     fault = [v for v in fault if _finite(v)]
@@ -66,7 +69,8 @@ def best_threshold(good: list[float], fault: list[float]) -> Optional[dict[str, 
         return None
     above = statistics.median(fault) >= statistics.median(good)
     values = sorted(set(good + fault))
-    cuts = [(a + b) / 2 for a, b in zip(values, values[1:])] or [values[0]]
+    mids = [(a + b) / 2 for a, b in zip(values, values[1:])] or [values[0]]
+    cuts = sorted({round(m, DECIMALS) for m in mids})
     best: Optional[dict[str, Any]] = None
     for cut in cuts:
         flags: Callable[[float], bool] = (lambda v: v > cut) if above else (lambda v: v < cut)
@@ -74,13 +78,30 @@ def best_threshold(good: list[float], fault: list[float]) -> Optional[dict[str, 
         fpr = sum(map(flags, good)) / len(good)
         score = (tpr + (1 - fpr)) / 2
         if best is None or score > best["balanced_accuracy"] + 1e-12:
-            best = {"threshold": round(cut, 3), "fires": "above" if above else "below",
+            best = {"threshold": cut, "fires": "above" if above else "below",
                     "fault_flagged": round(tpr, 3), "good_flagged": round(fpr, 3),
                     "balanced_accuracy": round(score, 3)}
     assert best is not None
-    best.update(good_median=round(statistics.median(good), 3), fault_median=round(statistics.median(fault), 3),
+    best.update(good_median=round(statistics.median(good), DECIMALS),
+                fault_median=round(statistics.median(fault), DECIMALS),
                 n_good=len(good), n_fault=len(fault))
     return best
+
+
+def rule_problem(best: dict[str, Any]) -> Optional[str]:
+    """Why best's threshold can't become a faults.py rule as-is, or None if it can.
+
+    The rule is {threshold, severe_at: fault median, target: good median}, and
+    severity() reads its direction from severe_at vs threshold. So the fault median
+    must be strictly on the firing side and the good median strictly on the other side;
+    otherwise the rule fires backwards (flagging good swings) or has zero span (raises).
+    """
+    t, f, g = best["threshold"], best["fault_median"], best["good_median"]
+    ok = (g < t < f) if best["fires"] == "above" else (f < t < g)
+    if ok:
+        return None
+    return (f"fault median {f} and good median {g} aren't on opposite sides of threshold {t} "
+            f"(fires {best['fires']}), so the rule would read backwards or have no span")
 
 
 def current_rule_score(rule: dict[str, Any], good: list[float], fault: list[float]) -> dict[str, Any]:
@@ -149,15 +170,21 @@ def tune(labels: list[dict[str, str]], swings: dict[str, dict],
                 good = [r.get(name) for r in good_rows]
                 fault = [r.get(name) for r in fault_rows]
                 best = best_threshold(good, fault)
-                entry: dict[str, Any] = {"measurement": name, "best": best}
+                entry: dict[str, Any] = {"measurement": name, "best": best,
+                                         "rule_problem": rule_problem(best) if best else None}
                 if name == rule["measurement"]:
                     entry["current"] = current_rule_score(rule, good, fault)
                 options.append(entry)
-            usable = [o for o in options if o["best"]
+            enough = [o for o in options if o["best"]
                       and o["best"]["n_good"] >= MIN_SWINGS and o["best"]["n_fault"] >= MIN_SWINGS]
+            # Only a threshold that becomes a correctly-directed rule may be recommended.
+            usable = [o for o in enough if o["rule_problem"] is None]
             top = max(usable, key=lambda o: o["best"]["balanced_accuracy"], default=None)
-            if top is None:
+            if not enough:
                 verdict = {"action": "disable", "why": f"fewer than {MIN_SWINGS} measured good or fault swings"}
+            elif top is None:
+                verdict = {"action": "disable", "why": "no measurement gives a rule in the right direction: "
+                                                        + enough[0]["rule_problem"]}
             elif top["best"]["balanced_accuracy"] < MIN_SEPARATION:
                 verdict = {"action": "disable",
                            "why": f"best separation {top['best']['balanced_accuracy']:.2f} < {MIN_SEPARATION} "
@@ -186,6 +213,8 @@ def _print(report: dict[str, Any]) -> None:
             line = (f"  {o['measurement']:<28} good~{b['good_median']:<8} fault~{b['fault_median']:<8} "
                     f"best: fires {b['fires']} {b['threshold']} -> flags {b['fault_flagged']:.0%} of faults, "
                     f"{b['good_flagged']:.0%} of good (score {b['balanced_accuracy']:.2f})")
+            if o.get("rule_problem"):
+                line += f"\n  {'':<28} not usable as a rule: {o['rule_problem']}"
             if "current" in o and o["current"]["good_flagged"] is not None:
                 c = o["current"]
                 line += (f"\n  {'':<28} current {c['threshold']}: flags {c['fault_flagged']:.0%} of faults, "
