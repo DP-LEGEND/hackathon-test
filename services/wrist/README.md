@@ -5,15 +5,20 @@ strapped to the forearm can. This folder turns a Sensor Logger recording into pe
 forearm-roll numbers that the coach's `rolled_wrist` fault reads. It also exports a small
 roll-angle graph for the ghost page.
 
-It also produces four **ESTIMATES**, each labelled `"label": "ESTIMATE"`:
-- **Tempo:** backswing start, top of backswing, contact and follow-through end.
-- **Impact quality:** clean or mishit.
-- **Racket speed** (needs the camera): camera wrist velocity + gyro x lever. Physics can use it.
-- **Occlusion fill** (needs the camera): the camera's hidden forearm rebuilt from the phone.
-  Comes with the camera/phone agreement error.
+It also produces four **ESTIMATES**, each labelled:
+- **Tempo:** backswing start, top of backswing, contact, follow-through end, and backswing
+  start to contact.
+- **Impact:** peak g and ring-down time. **Reported, not judged**: nothing says clean or mishit.
+- **Racket speed** (needs the camera): camera wrist velocity + gyro x lever, labelled
+  `ESTIMATE (sensor)` (`MOCK (sensor)` on mock data). Physics' `compare()` prefers it to the
+  video estimate.
+- **Occlusion fill** (needs the camera): the camera's hidden forearm rebuilt from the phone,
+  marked `sensorAssisted`. Comes with the camera/phone agreement error.
 
 Code measures, Claude explains: the coach only quotes these numbers. Swings without
 usable sensor data skip `rolled_wrist` (it shows under `not_measured`). Nothing is guessed.
+A **shadow swing** (no ball, so no impact) is timed from the double tap; its impact fields
+are null. Without the phone's own orientation, the integrated gyro takes over.
 
 **Everything here so far is tested on MOCK data** (`synth.py`). The threshold in
 `coach/faults.py` comes from mock swings and must be retuned on real ones.
@@ -37,12 +42,13 @@ usable sensor data skip `rolled_wrist` (it shows under `not_measured`). Nothing 
 From inside `services/` with the venv active:
 
 ```
-python -m wrist.synth /tmp/wrist-mock --camera --mishit 3
+python -m wrist.synth /tmp/wrist-mock --camera --mishit 3 --shadow 4
 ```
 Writes a mock export, `contacts.csv` and `labels.csv`, then prints the next command.
 `--camera` also writes MOCK pipeline swing JSONs (`swings/`): an occluded wrist or elbow
 near contact, and a video contact frame a frame or two off. `--mishit 3` makes the 4th
-swing ring like an off-centre hit.
+swing ring like an off-centre hit. `--shadow 4` makes the 5th a shadow swing: same motion,
+no impact.
 
 ```
 python -m wrist.run ../data/raw/wrist/<export>.zip --contacts ../data/labels/labels.csv --run <pipeline_run> --video-tap <seconds>
@@ -52,9 +58,10 @@ impacts, alignment errors and every swing's numbers and ESTIMATES. `--contacts` 
 a folder of pipeline swing JSONs.
 
 Add `--swings <folder of pipeline swing JSONs>` for racket speed and the occlusion fill. If
-`--contacts` is already that folder, you don't need it. Swings whose forearm was rebuilt go
-to `data/raw/wrist/filled_swings/` (`--filled-out`). `--lever` sets the wrist-to-racket-head
-lever (default 0.65 m).
+`--contacts` is already that folder, you don't need it. Every camera swing is then written to
+`data/raw/wrist/swings/` (`--swings-out`; the old `--filled-out` still works) with its wrist
+entry attached as `swing["wrist"]` and the forearm rebuilt where it was occluded. `--lever`
+sets the wrist-to-sweet-spot lever (default 0.55 m, physics' `RACKET_LEVER_M`).
 
 ```
 python -m wrist.tune ../data/raw/wrist/wrist_metrics.json ../data/labels/labels.csv --run <pipeline_run>
@@ -63,9 +70,11 @@ Picks the threshold from the normal and rolled swings and reports how well they 
 Copy its rule into `THRESHOLDS` in `coach/faults.py` by hand.
 
 ```
-python -m coach.agent <swing>.json --wrist ../data/raw/wrist/wrist_metrics.json
+python -m coach.agent ../data/raw/wrist/swings/<id>.json
+python -m physics.compare ../data/raw/wrist/swings/<id>.json straighten_elbow 12 --no-swings
 ```
-Coaches one swing with its wrist data.
+Coaches one swing with its wrist data, and compares it with its ghost using the sensor's
+racket speed. (`coach.agent <swing>.json --wrist wrist_metrics.json` attaches the entry itself.)
 
 Windows: same commands, `python` inside the activated venv.
 
@@ -73,25 +82,38 @@ Windows: same commands, `python` inside the activated venv.
 
 | Key in `wrist_metrics.json` | Coach measurement | Meaning |
 |---|---|---|
-| `roll_change_deg` / `roll_change_abs_deg` | `forearm_roll_deg` (the size) | Forearm roll over the window, from the orientation quaternions: the twist about the forearm axis, so the swing itself doesn't count |
-| `roll_change_gyro_deg` | (cross-check) | The same roll, from integrating the gyro. It should agree with the quaternion number. |
+| `roll_change_deg` / `roll_change_abs_deg` | `forearm_roll_deg` (the size) | Forearm roll over the window. With the phone's orientation: the twist about the forearm axis, so the swing itself doesn't count. With the integrated-gyro fallback: the gyro integrated about the forearm axis. `roll_method` says which. |
+| `roll_change_gyro_deg` | (cross-check) | The same roll, from integrating the gyro about the forearm axis. It should agree with the orientation number. |
 | `peak_roll_rate_dps` / `_abs_dps` | `forearm_roll_rate_dps` | Fastest gyro rate about the forearm axis |
 | `peak_angular_speed_dps` | `forearm_speed_dps` | Fastest total turn rate of the forearm (context only) |
 
 Contact = the sensor's own impact spike, so sync error doesn't move these numbers.
-Sync only decides which swing each impact belongs to.
+Sync only decides which swing each impact belongs to. The exception is a swing with no
+impact (`contact_source: "double tap"`): its contact is the double tap's prediction, so the
+sync error does move its window.
 
 Built-in checks, all reported in the output:
-- **Quaternion direction.** Sensor Logger doesn't document it, so the code picks the one
-  that matches the gyro. If neither matches, every swing is marked unusable.
+- **Orientation.** Sensor Logger doesn't document its quaternion's direction, so the code
+  picks the one that matches the gyro. If neither matches, or the export has no
+  `Orientation.csv`, it falls back to the **integrated gyro** (`orient.py`): the gyro's
+  offset is measured on the still stretch around the two taps and removed, then the gyro is
+  integrated. `sensor.orientation_used` and each swing's `orientation_source` say which, and
+  there's a warning. The taps are at the start, so they can't bound drift for later swings;
+  the camera fit is redone for every swing, which cancels slow drift.
 - **Forearm axis.** Default is `y` (long edge along the forearm). If another axis carries
   more acceleration through contact, there's a warning: rerun with `--axis x` or `--axis z`.
 - **Sync.** Two taps, then impacts. A spike only counts as an impact when the forearm is
-  turning fast (more than 360 deg/s); footsteps and knocks are listed as rejected. The
-  first tap gives the video-to-sensor offset. Contacts pair with impacts in order, and each
-  pair reports its **alignment error in ms**. Pairs off by more than 100 ms are skipped.
-  Without `--video-tap` the offset is fitted to the impacts, and the report says this
-  is a weaker check.
+  turning fast (more than 360 deg/s) and it's at least 2 g high; footsteps, knocks and a fast
+  swing's own ~1 g centripetal bump are listed as rejected. The first tap gives the
+  video-to-sensor offset. Contacts pair with impacts in order, and each pair reports its
+  **alignment error in ms**. Pairs off by more than 100 ms are skipped. Without
+  `--video-tap` the offset is fitted to the impacts, and the report says this is a weaker
+  check.
+- **Shadow swings.** With `--video-tap`, a video contact with no impact within 300 ms of its
+  tap-predicted time, while the forearm is swinging there, is timed from the double tap
+  alone: every number except the impact, with `impact`, `impact_s` and `align_error_ms` null.
+  If the arm isn't swinging at that time (a typo, a swing the phone never felt), it stays
+  untrusted.
 
 ## The ESTIMATES (tempo, impact, racket speed, occlusion fill)
 
@@ -105,22 +127,23 @@ smoothed over 30 ms. "Rest" = 50 deg/s or 5% of the swing's peak, whichever is h
   the dip where a looped swing turns forward.
 - `follow_through_end_ms`: the speed is back under rest after contact.
 
-All times are ms from contact (the sensor's impact spike). Also given: `backswing_ms`,
-`forward_swing_ms`, `follow_through_ms`, and `tempo_ratio` (backswing / forward swing).
+All times are ms from contact (the sensor's impact spike, or the double tap's prediction).
+Also given: `backswing_ms`, `forward_swing_ms`, `follow_through_ms`, `tempo_ratio` (backswing /
+forward swing), and `backswing_to_contact_ms`, the whole swing from backswing start to contact.
 An event it can't find is `null`, with a reason: the arm never settled, or the gyro shows no
 turn-around because the backswing was all shoulders.
 
-**Impact quality** (`impact.py`, per swing `impact`).
+**Impact** (`impact.py`, per swing `impact`; null for a shadow swing). **Reported, not
+judged** (`"judged": false`): nobody has labelled real clean hits and mishits yet.
 - `peak_g`: the spike's height after the high-pass that sync uses.
 - `width_ms`: how long it stays above half that height.
-- `clipped`: true when the accelerometer hit its limit.
+- `ring_down_ms`: from the peak until the shaking dies away, i.e. the last sample above
+  `threshold_g` (10% of the peak, or the noise floor if higher) before 50 ms of quiet.
+  `ring_down_capped` means it was still shaking 300 ms later.
+- `clipped`: true when the accelerometer hit its limit. `resolution_ms`: 10 at 100 Hz.
 
-A clean hit is one sharp knock. An off-centre hit keeps the racket and arm shaking, so its
-spike lasts longer. Each impact is judged against **the session's other impacts** (robust
-z-scores), because nobody has labelled real mishits yet. It's a mishit when its height is
-3 robust SDs from your usual (either way) or its width is 3 SDs longer. `score` goes from
-100 (your usual) through 50 (on the line) to 0. Mock run: the ringing swing measured 69 ms
-wide against the usual 12 ms, so it was flagged. The nine clean swings scored 78 to 99.
+A clean hit is one sharp knock; an off-centre hit keeps the racket and arm shaking. Mock
+run: the ringing swing rang down in 73-75 ms, the nine clean ones in 27-34 ms.
 
 **Camera alignment** (`fuse.py`). On the frames where the camera saw the hitting elbow and
 wrist (not `filled`), the camera's forearm direction should equal the phone's forearm axis,
@@ -135,7 +158,7 @@ for a contact frame that's a frame or two off). Reported in `occlusion_fill`:
 
 The fill only runs when the median agreement is under 12 deg.
 
-**Occlusion fill** (per swing `occlusion_fill`, and the swing JSONs in `filled_swings/`).
+**Occlusion fill** (per swing `occlusion_fill`, and the swing JSONs in `swings/`).
 Frames where the hitting wrist or elbow is marked `filled` get their forearm direction from
 the phone:
 - **Wrist filled:** wrist = elbow + forearm length x phone direction. The hand points move
@@ -144,76 +167,89 @@ the phone:
 - **Elbow filled, wrist seen:** the elbow goes on the circle that keeps both arm bones'
   lengths, nearest the phone's direction.
 
-`filled` flags stay true, because the camera still didn't see those joints.
-`metadata.wristSensorFill` lists the frames. Mock run: rebuilt joints are within 1 cm of
-the truth, against 1.5–15 cm for the pipeline's straight-line interpolation. Agreement and
-holdout are both about 0.1 deg (the mock camera has no noise; real ones will be worse).
+`filled` flags stay true, because the camera still didn't see those joints. Instead, every
+frame gets a `sensorAssisted` list (33 booleans, parallel to `joints`), true for each joint
+the phone set: the wrist and the hand it carried, or the elbow. That's how a reader tells
+"sensor-assisted" from "guessed" (proposed for `docs/interfaces.md`, pending the team's OK).
+`metadata.wristSensorFill` lists the frames and the `orientationSource`. Mock run: rebuilt
+joints are within 1 cm of the truth (0.3-2 cm with the integrated gyro), against 1.5–15 cm
+for the pipeline's straight-line interpolation. Agreement and holdout are both about 0.1 deg
+(the mock camera has no noise; real ones will be worse).
 
-**Racket speed** (per swing `racket_speed_sensor`). This treats the forearm, hand and racket
-as one rigid lever: locked wrist, racket along the forearm, 0.65 m from the wrist joint to
-the head.
+**Racket speed** (per swing `racket_speed_sensor`, labelled `ESTIMATE (sensor)`, or
+`MOCK (sensor)` on mock data). This treats the forearm, hand and racket as one rigid lever:
+locked wrist, racket along the forearm, 0.55 m from the wrist joint to the sweet spot. That's
+physics' `RACKET_LEVER_M` = `RACKET_HEAD_M` (0.45 m) + `GRIP_OFFSET_M` (0.10 m), the same
+lever the video estimate uses.
 `v_head = v_wrist (camera) + w_forearm (gyro) x lever`.
 - With a trusted alignment, the two parts are added as vectors.
 - Otherwise they're added as if parallel, which is an upper bound; `method` says which.
 - With no camera, `value` is null and `rotationMs` gives the gyro part alone.
 
-The gyro is averaged over the 20 ms up to the impact. The camera wrist is the sensor-filled
-one when the occlusion covers contact (`wristFromSensorFill`). Mock run: within 4% of the
-truth.
+The gyro is averaged over the 20 ms up to the synced contact. The camera wrist is the
+sensor-filled one when the occlusion covers contact (`wristFromSensorFill`). Mock run:
+within 4% of the truth.
 
-### The physics hook (aryan)
+### In physics' compare()
 
-`wrist.fuse.attach_racket_speed(swing, wrist_metrics)` returns a copy of the swing with
-the optional field `swing["racketSpeedSensor"]`. It has the same shape as
-`physics.compare.estimate_racket_speed()`: `value`, `unit`, `estimate`, `label`, `method`,
-`clamped`, `rawValue`, plus sensor details. It's clamped to the same 1–80 m/s range. Physics
-isn't edited here. A suggested hook in `compare()` / `_side()`:
-use `racketSpeedSensor` for **your** side when `value` isn't null. For the **ghost**, scale it by
-ghost pose estimate / your pose estimate, so the fix's effect is kept. The ghost swing is a
-copy, so it carries the field too, and it mustn't reuse the measured value as is. The new
-optional field needs the team's OK before it goes into `docs/interfaces.md`.
+`compare()` reads `swing["wrist"]` (`wrist.fuse.attach_wrist_entries` puts it there; `wrist.run
+--swings-out` writes the swings). When the entry is usable and its `racket_speed_sensor` has a
+value, **your** racket speed is the sensor's, labelled `ESTIMATE (sensor)` / `MOCK (sensor)`.
+The **ghost** has no sensor, so its speed is yours x (ghost / you) video estimates: only the
+fix changes it. Otherwise both sides use the video estimate (`ESTIMATE (video)`).
+`assumptions.racketSpeed` says which source was used and why. The ghost's output swing never
+carries your `wrist` entry.
 
 ## Outputs
 
 `wrist_metrics.json` (one entry per swing, keyed by swing id):
 
 ```json
-{"mock": false, "sensor": {...}, "sync": {...}, "warnings": [],
- "estimates": {"label": "ESTIMATE", "lever_m": 0.65, "camera_swings": 10, "note": "..."},
+{"mock": false, "sensor": {"orientation_used": {"source": "phone", ...}, ...}, "sync": {...}, "warnings": [],
+ "estimates": {"label": "ESTIMATE", "lever_m": 0.55, "camera_swings": 10, "note": "..."},
  "swings": {"<swing id>": {"usable": true, "skip_reason": null, "mock": false,
-   "align_error_ms": 7.0, "impact_s": 41.406, "roll_change_deg": 58.5,
-   "roll_change_abs_deg": 58.5, "roll_change_gyro_deg": 58.6,
+   "contact_source": "impact spike", "align_error_ms": 7.0, "impact_s": 41.406, "contact_s": 41.406,
+   "roll_change_deg": 58.5, "roll_change_abs_deg": 58.5, "roll_change_gyro_deg": 58.6,
+   "roll_method": "twist of the phone's orientation over the window",
    "peak_roll_rate_dps": 460, "peak_roll_rate_abs_dps": 460,
-   "peak_angular_speed_dps": 1321, "window_ms": [-150, 100],
+   "peak_angular_speed_dps": 1321, "window_ms": [-150, 100], "orientation_source": "phone",
    "tempo": {"label": "ESTIMATE", "backswing_start_ms": -719, "forward_start_ms": -163,
              "contact_ms": 0, "follow_through_end_ms": 174, "backswing_ms": 556,
-             "forward_swing_ms": 163, "follow_through_ms": 174, "tempo_ratio": 3.41, ...},
-   "impact": {"label": "ESTIMATE", "peak_g": 9.31, "width_ms": 12.2, "clipped": false,
-              "quality": "clean", "score": 99, "z_peak": 0.0, "z_width": 0.0, "reasons": [], ...},
-   "racket_speed_sensor": {"value": 18.9, "unit": "m/s", "estimate": true, "label": "ESTIMATE",
+             "forward_swing_ms": 163, "follow_through_ms": 174, "tempo_ratio": 3.41,
+             "backswing_to_contact_ms": 719, ...},
+   "impact": {"label": "ESTIMATE", "peak_g": 9.31, "width_ms": 12.2, "ring_down_ms": 32.9,
+              "ring_down_capped": false, "threshold_g": 0.93, "clipped": false,
+              "resolution_ms": 10.0, "judged": false, "note": "..."},
+   "racket_speed_sensor": {"value": 17.0, "unit": "m/s", "estimate": true, "label": "ESTIMATE (sensor)",
                            "method": "camera wrist velocity + gyro x lever, added as vectors",
-                           "gyroDps": 1139, "leverM": 0.65, "rotationMs": 12.9, "wristSpeedMs": 6.09, ...},
-   "occlusion_fill": {"label": "ESTIMATE", "applied": true, "frames": [109, ...], "joints": ["wrist", "hand"],
+                           "gyroDps": 1139, "leverM": 0.55, "rotationMs": 10.9, "wristSpeedMs": 6.09, ...},
+   "occlusion_fill": {"label": "ESTIMATE", "applied": true, "orientation_source": "phone",
+                      "frames": [109, ...], "joints": ["wrist", "hand"],
                       "agreement_deg": {"median": 0.1, "p90": 0.1, "max": 0.4, "n": 179},
                       "holdout_deg": {"median": 0.1, ...}, "time_shift_ms": 23.0,
                       "strap_axis_offset_deg": 5.2, "forearm_m": 0.26, "moved_m": {...}, ...}}}}
 ```
 
+A shadow swing's entry has `"contact_source": "double tap"`, `contact_s` (the tap
+prediction), and `impact`, `impact_s` and `align_error_ms` null. Everything else is there.
+
 `wrist_series.json`, **for Sammy's "wrist rotation" graph** (about 22 KB for 10 swings
-with camera swings). Mock example, with every field and one mishit (`synth-04`):
+with camera swings). Mock example, with every field, one mishit (`synth-04`) and one shadow
+swing (`synth-05`, impact null):
 [examples/wrist_series.mock.json](examples/wrist_series.mock.json).
 
 ```json
 {"mock": true, "window_ms": [-150, 100], "forearm_axis": "y",
  "angular_speed_t_ms": [-1500, -1480, ..., 1000],
  "swings": {"<swing id>": {"t_ms": [-300, -290, ..., 200], "roll_deg": [...],
-                           "roll_change_deg": 58.5, "usable": true,
+                           "roll_change_deg": 58.5, "usable": true, "contact_source": "impact spike",
                            "angular_speed_dps": [3, 4, ..., null],
                            "tempo": {"label": "ESTIMATE", "backswing_start_ms": -719,
-                                     "forward_start_ms": -163, "contact_ms": 0, "follow_through_end_ms": 174},
+                                     "forward_start_ms": -163, "contact_ms": 0, "follow_through_end_ms": 174,
+                                     "backswing_to_contact_ms": 719},
                            "impact": {"label": "ESTIMATE", "peak_g": 9.31, "width_ms": 12.2,
-                                      "quality": "clean", "score": 99},
-                           "racket_speed_sensor": {"value": 18.9, "unit": "m/s", "label": "ESTIMATE"},
+                                      "ring_down_ms": 32.9, "judged": false},
+                           "racket_speed_sensor": {"value": 17.0, "unit": "m/s", "label": "ESTIMATE (sensor)"},
                            "forearm_fill": {"label": "ESTIMATE", "frames": [...], "t_ms": [...],
                                             "elbow": [[x, y, z], ...], "wrist": [[x, y, z], ...],
                                             "agreement_deg": 0.1}}}}
@@ -229,18 +265,19 @@ The new parts:
   off the recording), with the `tempo` events as markers.
 - **`forearm_fill`:** the rebuilt elbow and wrist (camera axes, metres) on the swing's
   filled frames, at `t_ms` from contact. It's `null` when nothing was filled.
-- **Labels:** anything carrying `"label": "ESTIMATE"` should show ESTIMATE on screen.
+- **Labels:** show each block's own `label` on screen (ESTIMATE, ESTIMATE (sensor), MOCK
+  (sensor)). `impact` is `null` for a shadow swing: say "no impact" rather than a number.
 
 ## How the coach uses it
 
 Each swing can carry its own entry as an optional field: `swing["wrist"]`
-(`coach.wrist_sensor.attach_wrist` adds it). `measure_swing` reads it, and `rolled_wrist`
-fires when `forearm_roll_deg` is past the threshold. Its fix is `firm_wrist`, which the
-ghost can't animate yet, so it's never `ghost_ready`; the ghost shows the next fix instead.
-Labels say `(wrist sensor)`, plus `(MOCK sensor data)` when the data is synthetic.
-
-The optional `swing["wrist"]` field is new. It needs the team's OK before it goes into
-`docs/interfaces.md`.
+(`wrist.run --swings-out` writes the swings with it; `coach.wrist_sensor.attach_wrist` adds
+it too). `measure_swing` reads it, and `rolled_wrist` fires when `forearm_roll_deg` is past
+the threshold. Its fix is `firm_wrist`, which the ghost can't animate yet, so it's never
+`ghost_ready`; the ghost shows the next fix instead. Labels say `(wrist sensor)`, plus
+`(MOCK sensor data)` when the data is synthetic. The field's contract is in
+`docs/interfaces.md`. The coach still treats `sensorAssisted` joints as guessed (it reads
+`filled`); trusting them is a coach change for later.
 
 ## Threshold, honestly
 
@@ -266,15 +303,29 @@ The mock run gives normal 16.5 deg vs rolled 62.1 deg, threshold 39.3 deg, leave
 - **Strap.** A strap that slips or rotates on the arm reads as forearm roll.
 - **Threshold.** One threshold is used for forehand and backhand until real swings of each exist.
 - **Lever and locked wrist.** Racket speed assumes the racket points along the forearm and
-  the wrist doesn't snap. 0.65 m is a guess (physics uses 0.55 m to the sweet spot). The
-  camera's wrist speed carries the pipeline's assumed-torso scale.
+  the wrist doesn't snap. 0.55 m (0.45 m + a 0.10 m grip offset) is an estimate, shared with
+  the video estimate. The camera's wrist speed carries the pipeline's assumed-torso scale.
+- **Roll near a half-turn.** The forearm turns about 180 deg about another axis in the roll
+  window (178.7 deg on the mock). There the twist of the window's rotation is
+  ill-conditioned: on the mock, a 0.5 deg error in the rotation moved it 20-30 deg. The
+  phone path still uses the twist, and only matches the truth because the mock's
+  quaternions are exact; real ones are about a degree off. The gyro fallback uses the axial
+  gyro integral (`roll_change_gyro_deg`) instead, which matches the truth. Compare the two
+  on the first real recording before trusting `roll_change_deg`.
+- **Integrated gyro.** Its offset is measured on the still stretch around the taps, so any
+  arm sway there leaks in (on the mock, 2.3 deg/s on one axis). That moves roll over 250 ms
+  by about 0.5 deg, and the per-swing camera fit absorbs most of the drift (fill within 2 cm).
+- **Shadow swings and soft hits.** A swing timed from the double tap carries the sync error
+  (the video tap and contact marks, up to 100 ms), so its window can sit tens of ms off. An
+  impact under 2 g is treated as no impact: a genuinely soft hit would look like a shadow
+  swing. The 2 g floor is from the mock (impacts ~10 g, swing bumps ~1 g): tune it on real hits.
 - **Alignment.** The fit assumes the camera's axes stay fixed during the swing (true for
   hip-centred pipeline output). It also assumes the strap doesn't slip, and that the
   camera's forearm is right where the camera saw it. A median agreement above 12 deg skips
   the fill.
-- **Impact quality is relative.** It compares you with yourself in the same session, and
-  needs 4 other impacts to compare with. At 100 Hz the phone only sees the arm's echo of
-  the racket's vibration.
+- **Impact isn't judged.** At 100 Hz the phone only sees the arm's echo of the racket's
+  vibration, 10 ms at a time. Peak g and ring-down are reported; a clean/mishit rule needs
+  labelled real hits first.
 - **Mishit timing.** A ringing mishit's tallest spike can come a sample or two after the
   first knock. Its contact time, and so every window around it, can then sit about 20 ms
   late (19.5 ms in the mock).

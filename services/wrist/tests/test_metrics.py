@@ -77,14 +77,54 @@ def test_wrong_forearm_axis_is_flagged(session) -> None:
     assert session.metrics["sensor"]["axis_hint"]["agrees"] is True
 
 
-def test_orientation_that_disagrees_with_the_gyro_makes_swings_unusable(session) -> None:
+def test_orientation_that_disagrees_with_the_gyro_falls_back_to_the_integrated_gyro(session) -> None:
     rec = copy.copy(session.rec)
     rng = np.random.default_rng(3)
     rec.quat = Rotation.random(rec.t.size, random_state=rng).as_quat()  # nonsense attitude
     assert gyro_convention(rec)["ok"] is False
     metrics, series = wrist_metrics(rec, session.sync)
-    assert all(not m["usable"] and "gyro" in m["skip_reason"] for m in metrics["swings"].values())
-    assert all(s["usable"] is False for s in series["swings"].values())
+    used = metrics["sensor"]["orientation_used"]
+    assert used["source"] == "integrated gyro" and "doesn't match its gyro" in used["why_not_phone"]
+    assert any("integrated gyro" in w for w in metrics["warnings"])
+    for sid, m in metrics["swings"].items():
+        assert m["usable"] and m["orientation_source"] == "integrated gyro" and "gyro integrated" in m["roll_method"]
+        assert m["roll_change_deg"] == pytest.approx(session.truth["swings"][sid]["roll_change_deg"], abs=1.5)
+        assert series["swings"][sid]["roll_deg"][series["swings"][sid]["t_ms"].index(WINDOW_MS[1])] == \
+            pytest.approx(m["roll_change_deg"], abs=0.1), "the graph still ends on the quoted number"
+
+
+def test_no_orientation_file_uses_the_biased_gyro_and_still_matches_the_truth(no_orientation) -> None:
+    s = no_orientation
+    assert s.rec.quat is None and s.rec.orientation == "none"
+    used = s.metrics["sensor"]["orientation_used"]
+    assert used["source"] == "integrated gyro" and used["why_not_phone"] == "the export has no Orientation.csv"
+    assert used["bias_from"] == "around the sync taps" and used["warning"] is None
+    for sid, m in s.metrics["swings"].items():
+        assert m["usable"] and m["roll_change_deg"] == pytest.approx(s.truth["swings"][sid]["roll_change_deg"], abs=1.5)
+    json.dumps(s.metrics, allow_nan=False)
+
+
+def test_a_shadow_swing_gets_every_number_but_the_impact(shadow, fused) -> None:
+    m = shadow.metrics["swings"]["synth-05"]
+    truth = shadow.truth["swings"]["synth-05"]
+    assert m["contact_source"] == "double tap" and m["usable"] is True and m["skip_reason"] is None
+    assert m["impact"] is None and m["impact_s"] is None and m["align_error_ms"] is None
+    assert m["roll_change_deg"] == pytest.approx(truth["roll_change_deg"], abs=2.0)
+    assert m["tempo"]["backswing_to_contact_ms"] > 0 and m["tempo"]["reasons"] == []
+    assert m["racket_speed_sensor"]["value"] == pytest.approx(truth["camera"]["racket_speed_ms"], rel=0.08)
+    assert m["occlusion_fill"]["applied"] is True
+    ser = shadow.series["swings"]["synth-05"]
+    assert ser["impact"] is None and ser["contact_source"] == "double tap"
+    assert list(shadow.metrics["swings"]) == list(fused.metrics["swings"]), "still in contact order"
+    for sid, other in shadow.metrics["swings"].items():  # the other nine are exactly the fused session's
+        if sid != "synth-05":
+            want = fused.metrics["swings"][sid]
+            assert other["contact_source"] == "impact spike" and other["impact_s"] == want["impact_s"]
+            for k in ("roll_change_deg", "peak_roll_rate_dps", "tempo", "racket_speed_sensor"):
+                assert other[k] == want[k], (sid, k)
+            assert other["impact"]["ring_down_ms"] == pytest.approx(want["impact"]["ring_down_ms"], abs=1)
+    json.dumps(shadow.metrics, allow_nan=False)
+    json.dumps(shadow.series, allow_nan=False)
 
 
 def test_misaligned_and_unpaired_swings_are_skipped_with_a_reason(session) -> None:
