@@ -193,21 +193,60 @@ Audio confirmation runs before spacing, including spacing across rate switches.
 Without tap mode the existing speed threshold and .5 s spacing remain available.
 Audio transients are candidate hits, not a semantic classifier of ball sounds.
 
-## Swing API
+## Swing and coach API
 
-From `services/`, set `GHOST_SWINGS_DIR` to a processed session folder or its
-parent, then run `python -m uvicorn pipeline.server:app --port 8000`.
-PowerShell example: `$env:GHOST_SWINGS_DIR = '../data/processed'`.
-Only manifest-listed JSON files are served; IDs are filename stems.
+With the services Python environment active, start the API from the repository
+root with one command (same command on Windows and Mac):
 
-- `GET /swings` ? `{"swings":[{"id":"<session>-swing-0001"}]}`.
-- `GET /swings/{id}` ? the stored Swing JSON; unknown ID ? 404.
-- `POST /swings/{id}/ghost`, JSON `{"fix":"straighten_elbow","amount":12}`
-  ? `physics.compare.compare` output (`you`, `ghost`, `delta`, `assumptions`).
-  Invalid fixes/amounts or unusable swing data ? 422. Missing/broken catalogue
-  entries ? 503; an absent processed directory lists no swings.
+```sh
+python -m uvicorn pipeline.server:app --app-dir services --port 8000
+```
 
-`GET /docs` exposes the request schema. CORS permits `http://localhost:3000` by
-default; set `GHOST_WEB_ORIGIN` before server startup for another web origin.
-The web app can call this local API directly; no Next.js proxy is required.
-PREDICTED ball labels and physics assumptions are preserved in compare responses.
+Set `GHOST_SWINGS_DIR` to an absolute processed-session folder or its parent.
+The default processed directory is resolved relative to this source file.
+Only manifest-listed files are served. When two runs contain the same swing ID,
+list IDs are disambiguated as `<id>@<run-folder>`; use that ID for subsequent calls.
+Missing output lists no swings. Unknown IDs return 404; corrupt catalogue data
+returns 503; invalid measurement inputs return 422.
+
+- `GET /swings` returns `{"swings":[{"id":"...","label":"early_wrist"}]}`.
+  Labels come from `data/labels/labels.csv` (`swing`, `intended_fault` columns).
+  `none` maps to `good`; accepted labels are good, early_wrist, over_rotation,
+  straight_arm, open_stance and rolled_wrist. Missing/unlabelled rows return null.
+  A matching `<id>@<run-folder>` row takes precedence over an unsuffixed row.
+  Override the CSV location with `GHOST_LABELS_CSV`. Bad columns or duplicate IDs
+  return 503. Labels describe the intended filming block, not measured faults.
+- `GET /swings/{id}` returns the saved skeleton JSON.
+- `POST /coach/{id}` runs deterministic `coach_swing` (which calls `detect_faults`).
+  Returns `fault` (top fault or null), `cue`, `fix`, `amount`, `ghost_ready`,
+  measured `metrics`, and the other coach fields. `fix` and `amount` can be sent
+  directly to compare. No detected fault or an unsupported ghost edit returns
+  null fix/amount; it never substitutes an unrelated correction. No AI key needed.
+- `POST /compare/{id}`, JSON `{"fix":"bend_elbow","amount":12}`, returns the
+  physics comparison: `you.swing`, `ghost.swing`, each side's metrics and `ball`,
+  plus `delta` and `assumptions`. Both ball paths retain `label: "PREDICTED"` and
+  `predicted: true`. Ball points are court metres: origin at front-left floor,
+  x across the court, y up, z towards the back wall. Skeletons retain their
+  original hip-centred coordinates; assumed ball launch/contact and estimated
+  racket speed are disclosed in `assumptions` and the physics result.
+  The previous `POST /swings/{id}/ghost` remains an alias.
+
+Every measurement uses the saved pipeline `contactFrame` and `fpsReal` when
+present. Missing/out-of-range contact frames return 422, never a newly inferred
+wrist peak. Sound-timed pipeline outputs retain their audio-transient contact;
+legacy/sample contacts remain estimates, as disclosed by `contactMethod`.
+
+FastAPI CORS always permits `http://localhost:3000`; `GHOST_WEB_ORIGIN` adds an
+optional second origin. Open `http://localhost:8000/docs` for endpoint schemas.
+The Next.js catch-all forwards `/api/<path>` to the same FastAPI `<path>`.
+`GHOST_API_URL` is server-only and defaults to `http://localhost:8000`; a configured
+base path is preserved. For example, the web app calls `POST /api/coach/{id}` and
+`POST /api/compare/{id}`. Upstream status/body are preserved; connection failure
+or a 30-second timeout returns a clear 502. Responses are not cached.
+
+Sample-based API tests run with `python -m pytest pipeline/tests/test_coach_api.py`
+from services/. Proxy tests (Node 26) run from the repository root:
+
+```sh
+node --experimental-strip-types "app/api/[...path]/route.test.mjs"
+```

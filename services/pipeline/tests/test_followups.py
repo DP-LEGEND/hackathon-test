@@ -81,7 +81,7 @@ def api(tmp_path,monkeypatch):
 
 def test_api(api):
     client,_=api
-    assert client.get('/swings').json()=={'swings':[{'id':'test-swing'}]}
+    assert client.get('/swings').json()=={'swings':[{'id':'test-swing','label':None}]}
     assert client.get('/swings/test-swing').json()['id']=='test-swing'
     response=client.post('/swings/test-swing/ghost',json={'fix':'straighten_elbow','amount':12})
     assert response.status_code==200,response.text
