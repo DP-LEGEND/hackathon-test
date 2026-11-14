@@ -638,3 +638,59 @@ def test_opposite_side_near_number_rejected() -> None:
     # isn't a restatement: open and close are separate change families.
     with pytest.raises(CoachError, match="next to a change"):
         check_worded_cue("Close your stance 80 degrees.", STANCE_FACTS)
+
+
+# ---- Review fix on #65: target words (to / until / reach) and a 5-word window ------------
+# A measured number must not become a target: "Bend your elbow to 109 degrees" put "bend"
+# 4 words from 109, just outside the old 3-word window, and "to" wasn't a change word.
+
+ARM_FACTS = coach_facts({"stroke": "backhand", "fault": {
+    "label": "Straight arm, no elbow lead: elbow never bends past 109 deg before contact",
+    "cue": FAULTS["straight_arm"]["cue"]}})
+
+
+def test_target_words_and_window_size() -> None:
+    assert live_voice.CHANGE_WINDOW == 5
+    assert {"to", "until", "reach"} <= live_voice.TARGET_WORDS
+    assert live_voice.TARGET_WORDS in live_voice._CHANGE_FAMILIES
+
+
+@pytest.mark.parametrize("cue", [
+    "Raise your elbow to shoulder height.",  # to
+    "Keep the elbow bent until it is level with your shoulder.",  # until
+    "Reach higher with a bent elbow.",  # reach
+])
+def test_each_target_word_passes_when_no_number_is_the_target(cue: str) -> None:
+    assert check_worded_cue(cue, ARM_FACTS) == cue
+
+
+@pytest.mark.parametrize("facts, cue", [
+    (ARM_FACTS, "Bend your elbow to 109 degrees."),  # Codex's case: "bend" was 4 words away
+    (ARM_FACTS, "Bend your elbow, to 109 degrees."),  # a comma before the number doesn't hide it
+    (ARM_FACTS, "Bend your elbow until it reaches 109 degrees."),
+    (ARM_FACTS, "Reach 109 degrees with your elbow bent."),
+    (STANCE_FACTS, "Close your stance to 80 degrees."),
+    (STANCE_FACTS, "Get your stance to 80 degrees."),  # the label's "open to the shot" doesn't excuse it
+])
+def test_a_measured_number_as_a_target_is_rejected(facts: dict, cue: str) -> None:
+    with pytest.raises(CoachError, match="next to a change"):
+        check_worded_cue(cue, facts)
+
+
+@pytest.mark.parametrize("cue", [
+    "Your stance is 80 degrees open to the shot, so close it.",  # "to" after the number restates the label
+    "Your stance is 80 degrees open, so close it and hold the turn.",  # the fix is in the next clause
+    LIVE_CUE,
+])
+def test_restating_the_measurement_still_passes_with_the_wider_window(cue: str) -> None:
+    assert check_worded_cue(cue, STANCE_LIVE_FACTS) == cue
+
+
+def test_a_measured_target_falls_back_to_the_caption_end_to_end(env) -> None:
+    env.keys("ANTHROPIC_API_KEY")
+    env.claude.cue = "Bend your elbow to 109 degrees."
+    result = {"stroke": "backhand", "cue": FAULTS["straight_arm"]["cue"], "fault": {
+        "label": "Straight arm, no elbow lead: elbow never bends past 109 deg before contact",
+        "cue": FAULTS["straight_arm"]["cue"]}}
+    assert voice_for_swing("arm", result) == {"cue": FAULTS["straight_arm"]["cue"], "audioUrl": None,
+                                             "source": "caption"}

@@ -210,39 +210,60 @@ def guarded(facts: dict[str, str]) -> bool:
 # A cue must say the coach's fix, never countermand it.
 _NEGATION = re.compile(r"\b(?:don[\'\u2019]?t|do\s+not|never|stop|avoid|no\s+longer)\b", re.IGNORECASE)
 # Words that turn a quoted number into an amount to change by ("Turn 95 degrees less",
-# "close it by 80"): the coach only measured the number, it never set a target.
-_CHANGE_FAMILIES: list[frozenset[str]] = [*(side for pair in OPPOSITES[:3] for side in pair), frozenset({"by"})]
-CHANGE_WINDOW = 3  # words either side of a quoted number
+# "close it by 80") or a target to reach ("Bend your elbow to 109 degrees", "until it
+# reaches 109"): the coach only measured the number, it never set an amount or a target.
+TARGET_WORDS = frozenset({"to", "until", "reach", "reaches", "reaching"})
+_CHANGE_FAMILIES: list[frozenset[str]] = [*(side for pair in OPPOSITES[:3] for side in pair),
+                                          frozenset({"by"}), TARGET_WORDS]
+CHANGE_WINDOW = 5  # words either side of a quoted number
+_CLAUSE_BREAK = {",", ";", ":"}
 
 
 def _tokens(text: str) -> list[str]:
-    return re.findall(r"[a-z]+|\d+(?:\.\d+)?(?:e[-+]?\d+)?", text.lower())
+    """Lower-case words, numbers and clause breaks (, ; :) in order."""
+    return re.findall(r"[a-z]+|\d+(?:\.\d+)?(?:e[-+]?\d+)?|[,;:]", text.lower())
 
 
 def _change_words_near(tokens: list[str], number: str) -> set[frozenset[str]]:
-    """The change-word families within CHANGE_WINDOW words of each `number` in tokens."""
+    """The change-word families near each `number` in tokens.
+
+    Before the number: up to CHANGE_WINDOW words, across clause breaks, so the verb and a
+    target word count ("Bend your elbow, to 109 degrees"). After it: up to CHANGE_WINDOW
+    words, stopping at a clause break, so a fix in the next clause doesn't count ("80
+    degrees open, so close it"). Target words count only before the number, where a
+    target sits ("to 109"); after it they're ordinary words ("80 degrees open to the shot").
+    """
     near: set[frozenset[str]] = set()
     for i, tok in enumerate(tokens):
         if tok != number:
             continue
-        for word in tokens[max(0, i - CHANGE_WINDOW): i + CHANGE_WINDOW + 1]:
+        before = [w for w in reversed(tokens[:i]) if w not in _CLAUSE_BREAK][:CHANGE_WINDOW]
+        after: list[str] = []
+        for w in tokens[i + 1:]:
+            if w in _CLAUSE_BREAK or len(after) == CHANGE_WINDOW:
+                break
+            after.append(w)
+        for word in before:
             near.update(f for f in _CHANGE_FAMILIES if word in f)
+        for word in after:
+            near.update(f for f in _CHANGE_FAMILIES if word in f and f is not TARGET_WORDS)
     return near
 
 
 def check_number_context(cue: str, facts: dict[str, str]) -> None:
-    """Raise CoachError if a quoted number sits within 3 words of a change word.
+    """Raise CoachError if a quoted number sits near a change or target word.
 
-    Change words: more/less/further, open/close, bend/straighten (any form) and "by".
-    Allowed only when the measured label has the same word that close to the same
-    number, i.e. the cue restates the measurement ("80 degrees open" from "stance 80
-    degrees open to the shot"), so the live cue stays valid.
+    Change words: more/less/further, open/close, bend/straighten (any form) and "by";
+    target words: to, until, reach (see _change_words_near for the window). Allowed only
+    when the measured label has the same kind of word that close to the same number,
+    i.e. the cue restates the measurement ("80 degrees open" from "stance 80 degrees
+    open to the shot"), so the live cue stays valid.
     """
     cue_tokens, label_tokens = _tokens(cue), _tokens(facts.get("measured", ""))
     for _, number, _ in quoted_numbers(cue):
         extra = _change_words_near(cue_tokens, number.lower()) - _change_words_near(label_tokens, number.lower())
         if extra:
-            words = sorted(w for w in cue_tokens if any(w in f for f in extra))
+            words = sorted({w for w in cue_tokens if any(w in f for f in extra)})
             raise CoachError(f"Cue puts {number} next to a change {words}: the coach only measured it")
 
 
