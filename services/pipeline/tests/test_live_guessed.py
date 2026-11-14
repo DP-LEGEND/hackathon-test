@@ -42,12 +42,30 @@ def test_no_fault_swing_with_guessed_elbow_gets_unchanged_comparison():
     assert comparison["fix"]["amount"] == 0.0
 
 
-def test_guessed_wrist_backhand_with_open_feet_is_measured_but_not_ghosted():
+def _unflagged(s: dict) -> dict:
+    for f in s["frames"]:
+        f.pop("filled", None)
+        f.pop("visibility", None)
+    return s
+
+
+def test_guessed_wrist_backhand_with_open_feet_is_reported_not_faulted():
     s = _open_feet(_backhand())
     m = measure_swing(s, "backhand", 120)
     assert m["stance_direction"] == "front_wall_axis" and m["stance_open_deg"] > 40
     coached = coach_swing(s, "backhand", 120)
-    stance = [f for f in [coached["fault"]] if f and f["id"] == "stance_too_open"]
-    assert stance and stance[0]["ghost_ready"] is False
+    assert coached["fault"] is None or coached["fault"]["id"] != "stance_too_open"
+    assert "stance_too_open" not in coached["other_faults"]
+    assert any("camera's forward direction" in n for n in coached["notes"])
     comparison = live_comparison(s, coached, "R")
     assert comparison["noCorrection"] is True
+
+
+def test_measured_wrist_backhand_with_open_feet_is_a_fault():
+    s = _unflagged(_open_feet(_backhand(), 30.0))  # feet 70 deg open to the hitting direction
+    m = measure_swing(s, "backhand", 120)
+    assert m["stance_direction"] == "hitting_direction" and m["stance_open_deg"] > 40
+    coached = coach_swing(s, "backhand", 120)
+    ids = ([coached["fault"]["id"]] if coached["fault"] else []) + coached["other_faults"]
+    assert "stance_too_open" in ids
+    assert coached["notes"] == []
