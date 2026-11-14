@@ -1,7 +1,15 @@
-# Optional Python services
+# Python services (Ghost)
 
-Only if the product needs Python (for example computer vision, physics or data processing that is easier in Python than in the browser).
+One Python environment for everything in this folder. Run every command from inside `services/`.
 
-- One folder per service, e.g. `services/<name>/`, with its own `requirements.txt`.
-- Expose a small HTTP API (e.g. FastAPI) whose request and response shapes are written in `docs/interfaces.md`.
-- The Next.js app calls it from a server route in `app/api/`, never directly from the browser with secrets.
+| Folder | Owner | What it does |
+|---|---|---|
+| `pipeline/` | Dev | Slow-mo clip in, MediaPipe pose plus racket tape tracking, skeleton JSON out. Runs the local API server. |
+| `physics/` | aryan | Metrics, fault library, ghost skeleton edits, predicted ball flight. Pure functions with tests. |
+| `coach/` | aryan and Dev | The Claude coach: picks one fix from the metrics, calls the physics tools, runs the retest loop. |
+
+Setup and run commands for Mac and Windows are in the root `CLAUDE.md`.
+
+- The Next.js app talks to the server in `pipeline/server.py` (http://localhost:8000) through a route in `app/api/`, never with secrets in the browser.
+- Request and response shapes are agreed in `docs/interfaces.md` (draft types in `lib/ghost/types.ts`).
+- Clips go in `data/raw/` at the repo root. Videos are git-ignored, so never commit them.
