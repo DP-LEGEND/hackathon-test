@@ -37,6 +37,8 @@ export type ProcessFailure =
   | { kind: "offline"; message: string }
   /** 502 after the proxy's wait: the service may still finish and save the swing. */
   | { kind: "proxy-timeout" }
+  /** 404/405: the service that answered has no upload route (it predates PR #41). */
+  | { kind: "no-route" }
   /** Anything else, e.g. 422 "No fully tracked swing found…" or 503 "pose model unavailable". */
   | { kind: "failed"; status: number; message: string }
   /** No answer at all from the Next.js server. */
@@ -122,6 +124,7 @@ function readAnswer(status: number, text: string, waitedAfterUpload: number): Pr
   const message = serverMessage(body) ?? `The service answered HTTP ${status}.`;
   if (status === 429) return failed({ kind: "busy" });
   if (status === 413) return failed({ kind: "too-large", message });
+  if (status === 404 || status === 405) return failed({ kind: "no-route" });
   if (status === 502) {
     return failed(waitedAfterUpload >= PROXY_GAVE_UP_MS ? { kind: "proxy-timeout" } : { kind: "offline", message });
   }

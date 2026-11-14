@@ -285,6 +285,12 @@ function describe(failure: ProcessFailure, slowdown: Slowdown): FailureCopy {
         swingList: true,
         waiting: true,
       };
+    case "no-route":
+      return {
+        title: "This service can’t take uploads yet",
+        message: "The Python service answered that it has no POST /process route.",
+        hint: "Restart it from a version with the upload API (PR #41), then try again.",
+      };
     case "network":
       return {
         title: "Couldn’t reach Ghost",

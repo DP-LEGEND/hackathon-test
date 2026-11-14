@@ -23,6 +23,7 @@ Upload progress is real (XMLHttpRequest). The service doesn't report its steps, 
 | 413, or a file over 250 MB before it's sent | "Clip too large" |
 | 502 soon after the upload | The service isn't running, with the command to start it |
 | 502 after the proxy's 30 s wait | Still processing: the swing should appear in `/ghost`'s list |
+| 404 or 405 | The running service has no upload route yet (it predates PR #41) |
 | Anything else (e.g. 422 "No fully tracked swing found…") | The server's message and a slowdown suggestion |
 
 The 250 MB limit and the accepted extensions (MOV, MP4, M4V, AVI) mirror `server.py`.
