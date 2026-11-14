@@ -5,6 +5,7 @@ aren't on main yet. When each one merges, move it into the built sections and de
 - Upload page: PR #48 (feat/upload-page, Sammy) and the upload proxy, PR #47 (feat/upload-proxy, Dev)
 - Voice in the live flow: Claude-worded cue (coach/cue.py), ElevenLabs (coach/voice.py) and the
   Anam avatar lines (coach/avatar.py) are on main but only run from the command line
+- Adaption: physics/synth.py writes a local adaption.jsonl; no fine-tune has been run or used yet
 Delete this comment before pasting into Devpost.
 -->
 
@@ -79,6 +80,8 @@ These work on their own branches or from the command line and are being merged i
 - **ElevenLabs** reads the cue aloud, server-side.
 - **Anam:** the coach writes the two or three short lines a talking avatar would say.
 
+**Adaption.** Training-data export ready for Adaption fine-tuning. `physics/synth.py` adds faults of known size to real swings, re-measures them, and writes labelled rows to a local `adaption.jsonl`, all marked SIMULATED. We haven't run a fine-tune yet, and nothing in Ghost uses a fine-tuned model.
+
 ## Built with
 
 | | Used for |
@@ -90,10 +93,9 @@ These work on their own branches or from the command line and are being merged i
 | **Next.js 16**, **React 19**, **TypeScript**, **Tailwind CSS 4** | The web app, plus a same-origin proxy so the browser never talks to Python directly |
 | **three.js** | The 3D replay of you and your ghost, and the court with both PREDICTED ball paths |
 | **Anthropic Claude** (Opus 5.5) | Words the coaching cue from measured numbers only (command line for now, see above) |
-| **Adaption** | Fine-tune data: `physics/synth.py` adds faults of known size to real swings, re-measures them, and writes labelled rows, all marked SIMULATED |
 | **Claude Code** and **Codex** | How four people built it in parallel in one weekend |
 
-In progress: **ElevenLabs** (voice) and **Anam** (avatar), see *Voice coach* above.
+In progress: **ElevenLabs** (voice) and **Anam** (avatar), see *Voice coach* above, and **Adaption** (training-data export), see *Adaption* above.
 
 ## Team
 
