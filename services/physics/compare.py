@@ -54,18 +54,7 @@ METRICS = {
     "shoulder_turn_deg": ("deg", "shoulder turn"),
     "wrist_at_contact_deg": ("deg", "wrist angle at contact"),
     "wrist_release_ms": ("ms", "wrist release before contact"),
-}
-
-# The coach's names (services/coach/cue.py) -> ours. One row per coach MetricName:
-#   field   its SwingMetrics field
-#   metric  our measure() key with the same meaning (None = we don't measure it yet)
-#   fix     the ghost fix (physics/ghost.py FIXES) that addresses it (None = no ghost edit yet)
-COACH_METRICS = {
-    "elbow_bend": {"field": "elbow_bend_deg", "metric": "elbow_at_contact_deg", "fix": "straighten_elbow"},
-    "shoulder_turn": {"field": "shoulder_turn_deg", "metric": "shoulder_turn_deg", "fix": "turn_shoulders_more"},
-    # Coach: forearm-to-racket angle. Ours: forearm-to-hand (elbow-wrist-index), the hand standing in for the racket.
-    "wrist_angle": {"field": "wrist_angle_deg", "metric": "wrist_at_contact_deg", "fix": "hold_wrist_cock"},
-    "contact_point": {"field": "contact_point_cm", "metric": None, "fix": None},
+    "stance_open_deg": ("deg", "stance open to the shot"),
 }
 
 
@@ -74,12 +63,6 @@ def _num(x, nd: int = 1) -> float | None:
     if x is None or not math.isfinite(x):
         return None
     return round(float(x), nd)
-
-
-def to_coach_metrics(metrics: dict) -> dict:
-    """Our metrics under the coach's SwingMetrics field names. None = not measured yet."""
-    return {row["field"]: (None if row["metric"] is None else metrics.get(row["metric"]))
-            for row in COACH_METRICS.values()}
 
 
 def estimate_racket_speed(swing: dict, fps_real: float | None = None, hand: str | None = None) -> dict:
@@ -130,8 +113,7 @@ def _side(swing: dict, fps_real, hand: str, elevation_deg: float, azimuth_deg: f
     metrics = {k: _num(m[k]) for k in METRICS}
     racket = estimate_racket_speed(swing, fps_real, hand)
     ball = predict_ball_path(racket["value"], elevation_deg, azimuth_deg, _contact_spot(hand))
-    return {"swing": swing, "metrics": metrics, "coachMetrics": to_coach_metrics(metrics),
-            "racketSpeed": racket, "ball": ball}
+    return {"swing": swing, "metrics": metrics, "racketSpeed": racket, "ball": ball}
 
 
 def _change(a, b, nd: int = 1) -> dict:
@@ -185,8 +167,8 @@ def compare(swing: dict, fix_name: str, amount: float, fps_real: float | None = 
     elevation_deg, azimuth_deg: the ASSUMED launch direction for both PREDICTED ball paths.
     """
     if fix_name not in FIXES:
-        hint = COACH_METRICS.get(fix_name, {}).get("fix")
-        tip = f" (for the coach metric {fix_name!r} use {hint!r})" if hint else ""
+        uses = [fix for fix, (edit, _) in FIXES.items() if edit == fix_name]
+        tip = f" ({fix_name!r} is an edit; the fixes that use it are {', '.join(map(repr, uses))})" if uses else ""
         raise ValueError(f"unknown fix {fix_name!r}{tip}; known fixes: {', '.join(FIXES)}")
     if hand not in (None, "R", "L"):
         raise ValueError(f"hand must be 'R' or 'L', got {hand!r}")
