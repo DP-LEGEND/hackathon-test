@@ -3,9 +3,6 @@ TODO (9 AM freeze): written against main at cca6a0d (upload page #48 merged). Th
 follows docs/demo-runbook.md (PR #52) click by click; merge #56 before #52. Not on main, so not
 claimed here: voice or Claude in the live flow, and an Adaption fine-tune. If either changes,
 update the script and docs/devpost.md together.
-If PR #54 merges, the backhand sample's coach call becomes "Nothing to fix" (stance 27°, judged
-from the feet): swap the backhand beat for "Backhand, after #54 merges" below, and update the
-runbook's beat 2 to match.
 -->
 
 # Ghost: 3-minute pitch
@@ -70,15 +67,6 @@ Same clicks as the runbook's beats 1–3, faster. The wrist sensor (beat 4) move
 
 | OPERATOR clicks | On screen | PRESENTER says |
 |---|---|---|
-| **Try another swing**, then **Backhand · two-camera stereo** | *"Stance too open: stance 80° open to the shot"* | A backhand, filmed on two cameras at once. Stance 80 degrees open. |
-| **Show the ghost**, then **Show the court** | One path. *"This fix changes your body position, not the ball"*. Front wall 0.78 m | The ghost closes the stance. The ball doesn't change, and we say so. We don't invent a difference. |
-
-#### Backhand, after #54 merges (1:15–1:35)
-
-Use this instead of the backhand beat above once #54 is on main. Until then, main's backhand still shows "Stance too open", so keep the beat above.
-
-| OPERATOR clicks | On screen | PRESENTER says |
-|---|---|---|
 | **Try another swing**, then **Backhand · two-camera stereo** | The coach's call: *"No fault found"*, cue *"Nothing to fix on this swing. Hit the next one the same way."* | A backhand, filmed on two cameras at once. Nothing to fix in what the camera could see, and it couldn't see the wrist. That's exactly why we strapped a sensor to the arm. |
 | **Pick a swing** (the step bar at the top) | The swing list | |
 
@@ -86,7 +74,7 @@ Use this instead of the backhand beat above once #54 is on main. Until then, mai
 
 | OPERATOR clicks | On screen | PRESENTER says |
 |---|---|---|
-| Switch to browser tab 2 | The new swing at the coach's call: *"Reading the coach's call…"*, then the call, or *"No fault found"* (see below) | This one we filmed today on one phone, at 60 frames a second. Slow motion, hitting hand, and forehand or backhand are all detected automatically. The coach measures it live. *(Read the caption exactly as shown.)* |
+| Switch to browser tab 2 | The new swing at the coach's call: *"Reading the coach's call…"*, then the call, or *"No fault found"* (see below) | This one we filmed today on one phone, in slow motion. Slow motion, hitting hand, and forehand or backhand are all detected automatically. The coach measures it live. *(Read the caption exactly as shown.)* |
 | Only if the coach named a fault: **Show the ghost**, then **Show the court** | The ghost (*Coach's pick*), then both *PREDICTED* paths | And there's their ghost, computed just now. |
 
 **If the caption says "No fault found":** read it as shown. Then do one of these:
