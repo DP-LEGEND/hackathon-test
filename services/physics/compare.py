@@ -385,6 +385,60 @@ def _on_court(swing: dict, fps_real, hand: str, contact: int, shift: np.ndarray,
     return side, {"point": point, "azimuth": azimuth}
 
 
+def guessed_metrics(swing: dict, hand: str, contact: int, fps: float) -> dict[str, str]:
+    """{compare metric: why} for every METRICS entry that reads a joint the pipeline guessed.
+
+    Same rule as the coach (coach.measure_extra): a joint listed in metadata.approximatedJoints,
+    marked true in frames[i].filled on a frame the metric reads, or below 0.5 visibility at
+    contact. stance_open_deg here is the hitting-direction angle, so it is guessed whenever
+    the hitting wrist around contact is (the coach may judge stance from the feet instead,
+    but that is a different number). Files without flags give {} (absence means unknown).
+    """
+    from coach.measure_extra import _guessed_why, _per_joint, guessed_measurements
+
+    out = {k: why for k, why in guessed_measurements(swing, hand, contact, fps).items() if k in METRICS}
+    frames = swing.get("frames") or []
+    if frames and "wrist_at_contact_deg" in METRICS:
+        c = int(np.clip(contact, 0, len(frames) - 1))
+        listed = set((swing.get("metadata") or {}).get("approximatedJoints") or [])
+        vis = _per_joint(frames[c], "visibility")
+        a = ARM[hand]
+        why = next((w for j in (a["el"], a["wr"], a["index"])
+                    if (w := _guessed_why(j, listed, frames, range(c, c + 1), vis))), None)
+        if why:
+            out["wrist_at_contact_deg"] = why
+        # Racket speed (and so the PREDICTED ball speed) reads the hitting wrist's speed over
+        # the frames around contact and the elbow->wrist forearm: if either is guessed there,
+        # the numbers are still shown but flagged as not measured.
+        span = range(max(0, c - 2), min(len(frames), c + 3))
+        why = next((w for j in (a["wr"], a["el"]) if (w := _guessed_why(j, listed, frames, span, vis))), None)
+        if why:
+            reason = f"racket speed reads the hitting wrist and elbow around contact; {why}"
+            out["racket_speed"] = reason
+            out["ball_speed"] = reason
+    return out
+
+
+# Fix -> the measurement it edits, and the joint that measurement needs around contact.
+FIX_TARGETS = {
+    "straighten_elbow": ("elbow_at_contact_deg", "elbow"),
+    "bend_elbow": ("elbow_at_contact_deg", "elbow"),
+    "hold_wrist_cock": ("wrist_release_ms", "wrist"),
+    "close_stance": ("stance_open_deg", "wrist"),  # stance is measured against the wrist's direction
+    "turn_shoulders_more": ("shoulder_turn_deg", "shoulder"),
+    "turn_shoulders_less": ("shoulder_turn_deg", "shoulder"),
+}
+
+
+class GuessedFixError(ValueError):
+    """The fix edits a measurement the camera couldn't make on this swing."""
+
+
+def _drop_guessed(side: dict, guessed: dict[str, str]) -> None:
+    for k in guessed:
+        side["metrics"].pop(k, None)
+
+
 def _change(a, b, nd: int = 1) -> dict:
     return {"you": a, "ghost": b, "change": None if a is None or b is None else round(b - a, nd)}
 
@@ -400,7 +454,8 @@ def _fmt(x, unit: str = "") -> str:
 def _delta(you: dict, ghost: dict) -> dict:
     metrics = {}
     for k, (unit, _) in METRICS.items():
-        metrics[k] = {**_change(you["metrics"][k], ghost["metrics"][k]), "unit": unit}
+        if k in you["metrics"] and k in ghost["metrics"]:
+            metrics[k] = {**_change(you["metrics"][k], ghost["metrics"][k]), "unit": unit}
     yb, gb = you["ball"], ghost["ball"]
     ball = {
         "predicted": True,
@@ -413,8 +468,8 @@ def _delta(you: dict, ghost: dict) -> dict:
     }
     summary = []
     for k, (unit, words) in METRICS.items():
-        d = metrics[k]
-        if d["change"]:
+        d = metrics.get(k)
+        if d and d["change"]:
             summary.append(f"{words} {_fmt(d['you'])} -> {_fmt(d['ghost'])} {unit} ({d['change']:+g})")
     depth = ball["landingDepthM"]
     summary.append(
@@ -458,6 +513,14 @@ def compare(swing: dict, fix_name: str, amount: float, fps_real: float | None = 
     elevation = float(elevation_deg) if given_elevation else DEFAULT_ELEVATION_DEG[stroke]
     shift = court_shift(P, hand, contact, anchor)  # from YOUR racket head; the ghost reuses it
     played = {**swing, "contactFrame": contact}
+    # Never show a number read from a guessed joint, and never edit one: refuse a fix whose
+    # target measurement is guessed, and leave guessed metrics out (listed in notMeasured).
+    guessed = guessed_metrics(played, hand, contact, real_fps(swing, fps_real))
+    target = FIX_TARGETS.get(fix_name)
+    if target and target[0] in guessed and float(amount) != 0.0:  # amount 0 = "unchanged", always allowed
+        side_name = "right" if hand == "R" else "left"
+        raise GuessedFixError(f"Not available on this swing: the camera couldn't see the {side_name} {target[1]} "
+                              "around contact (guessed joints), so a ghost of this fix would edit a guess.")
     ghost_swing = apply_fix(played, fix_name, amount, fps_real, hand)
     ghost_swing.pop("wrist", None)  # your forearm phone's data isn't the ghost's: nothing may coach it
 
@@ -465,6 +528,10 @@ def compare(swing: dict, fix_name: str, amount: float, fps_real: float | None = 
         swing, estimate_racket_speed(played, fps_real, hand), estimate_racket_speed(ghost_swing, fps_real, hand))
     you, you_launch = _on_court(played, fps_real, hand, contact, shift, elevation, you_racket)
     ghost, ghost_launch = _on_court(ghost_swing, fps_real, hand, contact, shift, elevation, ghost_racket)
+    # The ghost inherits your frames' flags, so the same metrics are left out on both sides.
+    _drop_guessed(you, guessed)
+    _drop_guessed(ghost, guessed)
+    delta = _delta(you, ghost)
     edit, _ = FIXES[fix_name]
     return {
         "fix": {"id": fix_name, "amount": float(amount), "unit": EDITS[edit]["unit"]},
@@ -475,7 +542,8 @@ def compare(swing: dict, fix_name: str, amount: float, fps_real: float | None = 
         "coordinateSystem": "court",
         "you": you,
         "ghost": ghost,
-        "delta": _delta(you, ghost),
+        "delta": delta,
+        "notMeasured": guessed,
         "assumptions": {
             "stroke": {"value": stroke, "source": stroke_source, "label": STROKE_LABELS[stroke_source]},
             "anchor": {

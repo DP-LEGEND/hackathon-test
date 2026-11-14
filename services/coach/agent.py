@@ -100,6 +100,7 @@ def coach_swing(swing: dict, stroke: Optional[Stroke] = None, fps_real: Optional
         "tip": top["tip"] if top else None,
         "other_faults": [f["id"] for f in faults[1:]],
         "not_measured": unmeasured_faults(metrics),
+        "notes": [n for n in (metrics.get("stance_note"),) if n],
         "disabled_faults": disabled_faults(metrics["stroke"]),
         "ghost_fault": ghost,
         "ghost_fix": ghost["fix"] if ghost else None,
