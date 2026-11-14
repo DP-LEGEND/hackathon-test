@@ -139,6 +139,21 @@ def hitting_hand(P: np.ndarray) -> str:
     return "L" if best["L"] > best["R"] else "R"
 
 
+def swing_hand(swing: dict, P: np.ndarray | None = None) -> str:
+    """'R' or 'L': the hand the swing was played with.
+
+    Trusts the hand the pipeline recorded (swing["metadata"]["hand"], else swing["hand"])
+    when it is "R" or "L". Only guesses from the skeleton (`hitting_hand`) when neither is
+    set, because the guess picks the wrong arm whenever the free arm moves faster.
+    """
+    meta = swing.get("metadata")
+    recorded = meta.get("hand") if isinstance(meta, dict) else None
+    for hand in (recorded, swing.get("hand")):
+        if hand in ("R", "L"):
+            return hand
+    return hitting_hand(to_array(swing) if P is None else P)
+
+
 def rotate(points: np.ndarray, centre: np.ndarray, axis: np.ndarray, angle: float) -> np.ndarray:
     """Rotate points (k, 3) by `angle` radians about the line through `centre` along unit `axis`.
 
