@@ -631,3 +631,10 @@ def test_negations_are_rejected(facts: dict, cue: str) -> None:
 def test_the_new_number_words_are_rejected(cue: str) -> None:
     with pytest.raises(CoachError, match="spelled out a number"):
         check_worded_cue(cue, STANCE_LIVE_FACTS)
+
+
+def test_opposite_side_near_number_rejected() -> None:
+    # The label has "80 degrees open"; "close" near 80 is the OTHER side of the pair, so it
+    # isn't a restatement: open and close are separate change families.
+    with pytest.raises(CoachError, match="next to a change"):
+        check_worded_cue("Close your stance 80 degrees.", STANCE_FACTS)
