@@ -127,7 +127,8 @@ def test_audio_contact_is_used_by_pipeline(stereo_pair, monkeypatch):
     a, b, *_ = stereo_pair
     monkeypatch.setattr(process, 'audio_hits', lambda *args, **kwargs: np.array([.65]))
     swings, _ = swings_from_raw(a, b, Options(hits_wav='injected.wav'))
-    assert len(swings) == 1
+    assert len(swings) == 2
+    assert swings[1]['metadata']['contactMethod'] == 'wrist-speed-peak-estimate'
     swing = swings[0]
     assert swing['metadata']['contactMethod'] == 'audio-transient'
     assert a['t'][swing['metadata']['sourceContactFrame']] == pytest.approx(.65)

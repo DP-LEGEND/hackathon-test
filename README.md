@@ -2,17 +2,127 @@
 
 **Team: follow [WORKFLOW.md](WORKFLOW.md)** for the exact steps (start a task, test, PR, merge, after a merge). Roles and prompts are in [TEAM.md](TEAM.md).
 
-Team repo for the Imperial AI Hackathon: build an agentic AI product in a weekend. Product: _to be picked Saturday after the sponsor briefs_ (see `PRODUCT_BRIEF.template.md`).
+Team repo for the Imperial AI Hackathon. Our product is **Ghost**: film one squash swing, and Ghost finds the one fix that matters and shows a ghost of you making it, with the PREDICTED ball path for both swings. The Devpost write-up is in [docs/devpost.md](docs/devpost.md); product rules and folder ownership are in [CLAUDE.md](CLAUDE.md).
 
 ## Team and roles
 | Who | GitHub | Owns |
 |---|---|---|
-| _fill in_ | DP-LEGEND | _fill in_ |
-| _fill in_ | jeffrey-sammy | _fill in_ |
-| _fill in_ | 5quiwyrm | _fill in_ |
-| aryan | Programmer-123 | _fill in_ |
+| Dev | DP-LEGEND | Pipeline, infra and live clips (`services/pipeline/`, Ghost API routes) |
+| Sammy | jeffrey-sammy | Ghost UI and upload page (`app/ghost/`) |
+| Henoch | 5quiwyrm | Coach thresholds, voice and the wrist sensor |
+| aryan | Programmer-123 | Physics engine and court frame (`services/physics/`) |
 
-Suggested split: agent loop + repo owner (merges PRs) · core data/vision/physics logic · frontend · demo lead (test data, real-user testing, pitch, demo script, backup recording).
+## Run Ghost locally
+
+Ghost has two parts: a Python API (`services/`, FastAPI on port 8000) and the Next.js web app (port 3000). The web app also works on its own: without the API, `/ghost` falls back to the saved sample swings in `public/swings/`.
+
+### You need
+
+- **Node.js 26**
+- **Python 3.11 or 3.12** (MediaPipe may not have wheels for newer versions yet)
+- **ffmpeg and ffprobe** on your PATH, to process new clips. Mac: `brew install ffmpeg`. Windows: `winget install Gyan.FFmpeg`, then open a new terminal.
+- **The MediaPipe pose model**, to process new clips (step 3)
+
+### 1. Install the web app
+
+```
+npm ci
+```
+
+Windows PowerShell: `npm.cmd ci`
+
+### 2. Install the Python service (first time only)
+
+Mac:
+```
+cd services
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Windows PowerShell:
+```
+cd services
+py -3.12 -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+If Windows blocks the activate script, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once. In every new terminal, activate the environment again before running Python.
+
+### 3. Download the pose model (only needed for new clips)
+
+Mac:
+```
+mkdir -p ~/ghost-models
+curl -L -o ~/ghost-models/pose_landmarker_heavy.task https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/latest/pose_landmarker_heavy.task
+```
+
+Windows PowerShell:
+```
+New-Item -ItemType Directory -Force "$HOME\ghost-models"
+curl.exe -L -o "$HOME\ghost-models\pose_landmarker_heavy.task" https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/latest/pose_landmarker_heavy.task
+```
+
+To keep the model somewhere else, set `GHOST_POSE_MODEL` to its path.
+
+### 4. API keys (optional)
+
+The live flow (the API, `/ghost` and new clips) needs no keys: coaching, the ghost and the ball paths are all plain code. Keys are only needed for two command-line demos that aren't wired into the live flow yet:
+
+- `python -m coach.cue` has Claude word a cue from MOCK metrics (`ANTHROPIC_API_KEY`)
+- `python -m coach.cue --speak` also reads it aloud with ElevenLabs (`ELEVENLABS_API_KEY`)
+
+To run them, copy `.env.example` to `.env.local` at the repo root and fill in those keys. Never commit `.env.local`.
+
+### 5. Start the API
+
+From inside `services/`, with the environment active:
+
+```
+python -m uvicorn pipeline.server:app --reload --port 8000
+```
+
+Check http://localhost:8000/health shows `{"ok":true}`.
+
+### 6. Start the web app
+
+In a second terminal, from the repo root:
+
+```
+npm run dev
+```
+
+Windows PowerShell: `npm.cmd run dev`
+
+Open http://localhost:3000/ghost. The page reaches the API through its own `/api` route, so the browser never calls port 8000 directly. To point it at another API, set `GHOST_API_URL` in `.env.local`.
+
+### 7. Try your own swing
+
+Film one swing on a phone (slow motion is detected automatically). Then, from inside `services/`:
+
+```
+python -m pipeline /path/to/clip.mov
+```
+
+Or send it to the running API (Windows: `curl.exe`):
+
+```
+curl -F "file=@clip.mov" http://localhost:8000/process
+```
+
+Each accepted swing is saved under `data/processed/` (or `GHOST_SWINGS_DIR`) with the coach's call and the ghost comparison. Refresh `/ghost` to pick it. Add `--slowdown 4`, `--hand L` or `--stroke backhand` to override the automatic detection. If ffmpeg isn't on your PATH, set `GHOST_FFMPEG` and `GHOST_FFPROBE` to the two programs. More detail: [services/pipeline/README.md](services/pipeline/README.md).
+
+Never commit clips or model files. Put videos in `data/raw/`, which git ignores.
+
+### 8. Checks
+
+```
+bash scripts/check.sh
+```
+
+Windows: `powershell -ExecutionPolicy Bypass -File scripts\check.ps1`. This runs lint, the production build, the Python tests and the sample swing check. Stop `npm run dev` first, because the build uses the same folder.
 
 ## Before Saturday (setup only, no product code)
 - [ ] Accept the GitHub invite and clone the repo

@@ -8,6 +8,10 @@ so an exact [0, 0, 0] joint is read as missing and written back unchanged.
 Works with either "up" convention: MediaPipe world landmarks have y pointing DOWN,
 the stereo pipeline has y pointing UP. We never assume one; `up_vector` measures it
 from the body (ankles to shoulders).
+
+Swings arrive hip-centred and facing +z (towards the front wall). `to_court` puts one on
+the court, in the coordinates of physics/ball.py: metres, x 0..6.40 across from the left
+wall, y up from the floor, z 0..9.75 back from the front wall (so the player faces -z).
 """
 
 from __future__ import annotations
@@ -31,6 +35,13 @@ L_HEEL, R_HEEL = 29, 30
 L_FOOT, R_FOOT = 31, 32
 RACKET_TIP, RACKET_THROAT = 33, 34
 N_POINTS = 35
+
+# Points that touch the floor: ankles, heels and toes (MediaPipe's foot index points).
+FEET = [L_ANKLE, R_ANKLE, L_HEEL, R_HEEL, L_FOOT, R_FOOT]
+
+# ESTIMATE until racket tracking exists: the racket head is this far beyond the hitting
+# wrist, along the forearm line (elbow -> wrist).
+RACKET_HEAD_M = 0.45
 
 ARM = {
     "L": dict(sh=L_SH, el=L_EL, wr=L_WR, pinky=L_PINKY, index=L_INDEX, thumb=L_THUMB),
@@ -169,3 +180,69 @@ def bone_lengths(P: np.ndarray, hand: str = "R") -> np.ndarray:
     """(frames, bones) lengths for BONES + racket_bones(hand). NaN where a point is missing."""
     pairs = BONES + racket_bones(hand)
     return np.stack([np.linalg.norm(P[:, b] - P[:, a], axis=1) for a, b in pairs], axis=1)
+
+
+def racket_head(P: np.ndarray, hand: str) -> np.ndarray:
+    """(frames, 3) ESTIMATED racket head: the hitting wrist plus RACKET_HEAD_M along elbow -> wrist.
+
+    No racket tracking yet, so this is an estimate from the forearm. NaN where the
+    hitting elbow or wrist is missing.
+    """
+    j = ARM[hand]
+    fore = P[:, j["wr"]] - P[:, j["el"]]
+    with np.errstate(invalid="ignore", divide="ignore"):
+        unit = fore / np.linalg.norm(fore, axis=1, keepdims=True)
+    return P[:, j["wr"]] + RACKET_HEAD_M * unit
+
+
+def court_axes(P: np.ndarray) -> np.ndarray:
+    """Turn a skeleton that faces +z so it faces the front wall (-z) with y up. Not placed yet.
+
+    y up (pipeline swings): rotate 180 deg about y, [x, y, z] -> [-x, y, -z].
+    y down (raw MediaPipe, the mock swings): rotate 180 deg about x, [x, y, z] -> [x, -y, -z].
+    The pipeline's y-up frame is MediaPipe's turned 180 deg about z (pipeline/stereo.py
+    normalise), so both give the same court pose. Both are rotations, not mirror images:
+    bone lengths are kept and the right hand stays on the player's right.
+    """
+    up = up_vector(P)
+    if abs(up[1]) != 1.0:
+        raise ValueError("can't turn the swing to face the front wall: the body isn't upright along y")
+    s = up[1]
+    return P * np.array([-s, s, -1.0])
+
+
+def to_court(P: np.ndarray, hand: str, contact: int, anchor: tuple[float, float]) -> np.ndarray:
+    """The skeleton in court coordinates (physics/ball.py), placed where it strikes the ball.
+
+    1. Turn it to face the front wall (court_axes). A rotation, so no bone changes length.
+    2. Stand it on the floor: the lowest foot point over the whole swing goes to y = 0.
+    3. Slide it across the floor so the racket head (racket_head) at `contact` sits over
+       `anchor`, a floor position (x, z). The racket head keeps its MEASURED height.
+
+    P: (frames, 35, 3) from to_array, facing +z (the pipeline's convention), y up or down.
+    Returns a new array. Missing points stay NaN.
+    """
+    return court_axes(P) + court_shift(P, hand, contact, anchor)
+
+
+def court_shift(P: np.ndarray, hand: str, contact: int, anchor: tuple[float, float]) -> np.ndarray:
+    """The slide to_court adds after court_axes, shape (3,): steps 2 and 3 of to_court.
+
+    Add it to another swing's court_axes to place that swing exactly like this one. compare.py
+    places the ghost with the player's shift, so the two bodies overlap.
+    """
+    if hand not in ARM:
+        raise ValueError(f"hand must be 'R' or 'L', got {hand!r}")
+    if not 0 <= contact < len(P):
+        raise ValueError(f"contact frame {contact} is outside the swing (0-{len(P) - 1})")
+    if len(anchor) != 2 or not np.isfinite(anchor).all():
+        raise ValueError(f"anchor must be a finite floor position (x, z), got {anchor!r}")
+    Q = court_axes(P)
+    feet = Q[:, FEET, 1]
+    if not np.isfinite(feet).any():
+        raise ValueError("can't stand the swing on the floor: no ankle, heel or toe is visible")
+    head = racket_head(Q, hand)[contact]
+    if not np.isfinite(head).all():
+        raise ValueError("can't place the swing on the court: the hitting elbow or wrist is missing at contact")
+    x, z = anchor
+    return np.array([x - head[0], -np.nanmin(feet), z - head[2]])

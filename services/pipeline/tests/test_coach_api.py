@@ -59,7 +59,7 @@ def test_compare_returns_both_skeletons_metrics_and_court_paths(api):
         ball = result[side]['ball']
         assert ball['predicted'] is True and ball['label'] == 'PREDICTED'
         assert all(len(point) == 3 for point in ball['points'])
-        assert ball['points'][0] == result['assumptions']['contactSpot']
+        assert ball['points'][0] == result['assumptions']['launch'][side]['point']
     assert result['delta']['metrics']
     assert client.post('/swings/sample/ghost', json=request).json() == result
 
