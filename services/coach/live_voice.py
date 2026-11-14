@@ -111,16 +111,20 @@ _QUOTED = re.compile(
     rf"(?:(?:\s*|-)(?P<unit>{_UNIT})(?!\w))?",
     re.IGNORECASE,
 )
-# Spelled-out numbers can't be matched to the coach's digits, so with a unit they never pass
-# ("eighty degrees", "twenty-five percent"). Only number words may sit between them.
-_NUMBER_WORD = (r"(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|"
+# The coach writes every number as digits, so a spelled-out number can only be invented:
+# any of these words is rejected whatever follows it ("two inches", "half a foot").
+_NUMBER_WORD = (r"(?:zero|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|"
                 r"fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|"
-                r"sixty|seventy|eighty|ninety|hundred|thousand)")
-_SPELLED = re.compile(
-    rf"\b(?:minus\s+|negative\s+)?{_NUMBER_WORD}(?:[\s-]+(?:and\s+|point\s+)?{_NUMBER_WORD})*"
-    rf"[\s-]+(?:{_UNIT})(?!\w)",
-    re.IGNORECASE,
-)
+                r"sixty|seventy|eighty|ninety|hundreds?|thousands?|half|halves|quarters?|dozens?)")
+_SPELLED = re.compile(rf"\b{_NUMBER_WORD}\b", re.IGNORECASE)
+# "one" is everyday English ("one more swing", "one smooth turn"), so it only counts as a
+# number before a unit-like noun, allowing one word between ("one inch", "one more inch").
+UNIT_NOUNS = sorted(set(UNIT_ALIASES) | {
+    "inch", "inches", "foot", "feet", "yard", "yards", "mm", "millimetre", "millimetres",
+    "millimeter", "millimeters", "minute", "minutes", "step", "steps", "pace", "paces",
+}, key=len, reverse=True)
+_ONE_UNIT = re.compile(
+    rf"\bone(?:[\s-]+[a-z]+)?[\s-]+(?:{'|'.join(map(re.escape, UNIT_NOUNS))})(?!\w)", re.IGNORECASE)
 
 
 def quoted_numbers(text: str) -> list[tuple[str, str, Optional[str]]]:
@@ -204,9 +208,9 @@ def check_worded_cue(cue: str, facts: dict[str, str]) -> str:
     if invented:
         shown = [f"{sign}{num}{' ' + unit if unit else ''}" for sign, num, unit in invented]
         raise CoachError(f"Cue used numbers the coach didn't measure as written: {shown}")
-    spelled = _SPELLED.search(cue)
+    spelled = _SPELLED.search(cue) or _ONE_UNIT.search(cue)
     if spelled:
-        raise CoachError(f"Cue spelled out a measured number: {spelled.group(0)!r}")
+        raise CoachError(f"Cue spelled out a number: {spelled.group(0)!r}")
     check_direction(cue, facts)
     return cue
 

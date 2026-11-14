@@ -429,3 +429,38 @@ def test_a_cached_cue_that_reverses_the_fix_is_dropped_and_the_caption_returned(
     assert voice_for_swing("swing", result) == {"cue": "Turn your shoulders less", "audioUrl": None,
                                                 "source": "caption"}
     assert not path.exists()
+
+
+# ---- Review fix on #60: any spelled-out number is rejected, whatever follows it --------
+# The coach writes numbers as digits, so a number word can only be invented. "one" is
+# allowed as everyday English, unless a unit-like noun follows it.
+
+STANCE_LIVE_FACTS = {"measured": "Stance too open: stance 80 degrees open to the shot",
+                     "coach_cue": "Your open stance lets your hips fly open early. Close it so you can hold the turn."}
+LIVE_CUE = "Close your stance on this backhand, it's 80 degrees open, so your hips hold the turn longer."
+
+
+@pytest.mark.parametrize("cue", [
+    "Close your stance by two inches.",  # Codex's case: an unknown unit
+    "Close your stance by half a foot.",
+    "Close your stance one inch.",
+    "Close your stance one more inch.",
+    "Close your stance by twenty-five centimetres.",
+    "Take a dozen swings with a closed stance.",
+    "Close your stance a quarter turn.",
+])
+def test_any_spelled_out_number_is_rejected(cue: str) -> None:
+    with pytest.raises(CoachError, match="spelled out a number"):
+        check_worded_cue(cue, STANCE_LIVE_FACTS)
+
+
+@pytest.mark.parametrize("facts, cue", [
+    (OVER_FACTS, "Turn a little less, one smooth swing."),
+    # ("one more swing" against a "less" fix is still rejected, by the direction guard's "more")
+    (STANCE_LIVE_FACTS, "One more swing with a closed stance, so your hips hold the turn."),
+    (STANCE_LIVE_FACTS, LIVE_CUE),  # the cue Claude gave live
+    (STANCE_LIVE_FACTS, "Close your stance so your hips can hold the turn."),
+    (STANCE_LIVE_FACTS, "Hold one closed stance so your hips keep the turn."),
+])
+def test_one_as_everyday_english_and_the_live_cues_still_pass(facts: dict, cue: str) -> None:
+    assert check_worded_cue(cue, facts) == cue
