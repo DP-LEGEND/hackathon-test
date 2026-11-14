@@ -108,7 +108,7 @@ def test_unknown_swing_and_invalid_compare(api):
 def test_no_fault_or_unavailable_fix_has_no_actionable_ghost(api, monkeypatch):
     import pipeline.server as server
     client, _, _, _ = api
-    for fault, fix in ((None, None), ({'id': 'rolling_wrist'}, 'firm_wrist')):
+    for fault, fix in ((None, None), ({'id': 'rolled_wrist'}, 'firm_wrist')):
         monkeypatch.setattr(server, 'coach_swing', lambda *args, **kwargs: {
             'fault': fault, 'cue': 'Keep going.', 'fix': fix, 'fix_amount': 12,
             'ghost_ready': False, 'metrics': {}})
