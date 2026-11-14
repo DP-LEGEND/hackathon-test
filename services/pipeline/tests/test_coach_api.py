@@ -83,7 +83,7 @@ def test_session_specific_label_wins_and_missing_labels_are_null(api):
 
 def test_label_file_errors_are_explicit(api):
     client, _, _, labels = api
-    for text in ('wrong,columns\n', 'swing,intended_fault\nsample,none\nsample,open_stance\n'):
+    for text in ('wrong,columns\n', 'swing,intended_fault,pipeline_run\nsample,none,sample-run\nsample,open_stance,sample-run\n'):
         labels.write_text(text)
         assert client.get('/swings').status_code == 503
 

@@ -1,6 +1,6 @@
 """Local, read-only swing catalogue and measured physics comparison API.
 
-Run from services/: python -m uvicorn pipeline.server:app --port 8000
+Run from repo root: python -m uvicorn pipeline.server:app --app-dir services --port 8000
 GHOST_SWINGS_DIR points to a session or a directory of session folders.
 """
 from __future__ import annotations
@@ -88,8 +88,7 @@ def list_swings() -> dict:
     entries = catalogue()
     labels = read_labels()
     return {"swings": [
-        {"id": identifier, "label": labels.get(f"{identifier}@{entries[identifier].parent.name}",
-                                               labels.get(identifier))}
+        {"id": identifier, "label": labels.get((entries[identifier].parent.name, entries[identifier].stem))}
         for identifier in sorted(entries)
     ]}
 
@@ -114,7 +113,7 @@ def compare_swing(identifier: str, request: CompareRequest) -> dict:
 LABELS = {"good", "early_wrist", "over_rotation", "straight_arm", "open_stance", "rolled_wrist"}
 
 
-def read_labels() -> dict[str, str | None]:
+def read_labels() -> dict[tuple[str, str], str | None]:
     path = Path(os.environ.get("GHOST_LABELS_CSV", str(
         Path(__file__).resolve().parents[2] / "data" / "labels" / "labels.csv")))
     if not path.exists():
@@ -127,11 +126,20 @@ def read_labels() -> dict[str, str | None]:
             labels = {}
             for row in reader:
                 identifier = row["swing"].strip()
+                run = (row.get("pipeline_run") or "").strip()
+                if "@" in identifier:
+                    identifier, suffix_run = identifier.rsplit("@", 1)
+                    if run and run != suffix_run:
+                        raise ValueError("Label run conflicts with swing suffix")
+                    run = suffix_run
+                if not run:
+                    continue  # An unscoped swing ID cannot safely label a run.
+                key = (run, identifier)
                 label = row["intended_fault"].strip()
                 label = "good" if label == "none" else label
-                if identifier in labels:
-                    raise ValueError("Duplicate label id")
-                labels[identifier] = label if label in LABELS else None
+                if key in labels:
+                    raise ValueError("Duplicate run/swing label")
+                labels[key] = label if label in LABELS else None
             return labels
     except (OSError, ValueError, TypeError, AttributeError, csv.Error):
         raise HTTPException(503, "Swing labels are invalid or unavailable") from None
