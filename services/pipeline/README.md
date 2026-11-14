@@ -94,10 +94,9 @@ source start and contact frame indices for comparison with the source video.
   hip-mid torso; pass `--torso-m` for the player's measured length. This is an
   estimated-scale reconstruction, not a calibrated motion-capture measurement.
 - The iPhone must retain **shoulders (11/12), elbows (13/14), wrists (15/16)
-  and hips (23/24)**. Mono accepts finite image/world coordinates **regardless
-  of visibility**, including zero; visibility estimates occlusion rather than
-  whether MediaPipe returned a position. Only stereo retains its visibility
-  threshold above .3. Per swing, `metadata.coreVisibility` reports the mean
+  and hips (23/24)**. Mono requires finite image/world coordinates and
+  **visibility above .1**. Stereo retains its stricter visibility threshold
+  above .3. Per swing, `metadata.coreVisibility` reports the mean
   core-joint visibility (six decimal places), and `metadata.lowConfidence` flags
   values below .3 without discarding the swing. Nonfinite visibility is reported
   as zero confidence. Only **bounded** missing coordinate runs are interpolated

@@ -109,8 +109,8 @@ def swings_from_raw(a: dict, b: dict, options: Options = Options()) -> tuple[lis
     # The iPhone gate is independent of the iPad and of stereo reconstruction.
     mono = np.asarray(a["world"], dtype=float).copy()
     # Visibility estimates occlusion, not whether MediaPipe detected a position.
-    # Keep finite low-visibility mono joints; expose confidence in the metadata.
-    observed = np.isfinite(a["img"][:, :, :2]).all(axis=2)
+    # Keep finite mono joints above .1 visibility; expose confidence in metadata.
+    observed = np.isfinite(a["img"][:, :, :2]).all(axis=2) & (a["vis"] > .1)
     mono[~observed] = np.nan
     mono = clean(mono, max_gap=max_gap)
     cal, calibration_error = None, None

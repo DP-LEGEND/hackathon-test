@@ -315,8 +315,8 @@ def test_failed_stereo_normalisation_recovers_using_complete_mono_swing(stereo_p
                                [f['joints'] for f in mono[0]['frames']])
 
 
-@pytest.mark.parametrize('visibility', [0., .01, .15, .29, .3, 1.])
-def test_finite_mono_joints_survive_any_visibility_and_report_confidence(stereo_pair, visibility):
+@pytest.mark.parametrize('visibility', [.100001, .15, .29, .3, 1.])
+def test_mono_joints_above_minimum_visibility_report_confidence(stereo_pair, visibility):
     from pipeline.process import CORE_JOINTS
     a, b, *_ = stereo_pair
     a['vis'][:, CORE_JOINTS] = visibility
@@ -331,20 +331,19 @@ def test_finite_mono_joints_survive_any_visibility_and_report_confidence(stereo_
 
 def test_low_visibility_remains_excluded_from_stereo(stereo_pair):
     a, b, *_ = stereo_pair
-    a['vis'][:, 13] = .1  # finite mono elbow, not a reliable stereo correspondence
+    a['vis'][:, 13] = .2  # valid mono elbow, not a reliable stereo correspondence
     swings, report = swings_from_raw(a, b, Options(focal_a=900, focal_b=900))
     assert report['written'] == 2 and all(s['source'] == 'mono' for s in swings)
 
 
-def test_unknown_visibility_is_flagged_without_discarding_finite_mono(stereo_pair):
+@pytest.mark.parametrize('visibility', [0., .01, .1, float('nan')])
+def test_missing_or_below_minimum_visibility_rejects_mono(stereo_pair, visibility):
     a, b, *_ = stereo_pair
-    a['vis'][:] = np.nan
+    a['vis'][:] = visibility
     b['vis'][:] = 0
     swings, report = swings_from_raw(a, b, Options(focal_a=900, focal_b=900))
-    assert report['written'] == 2
-    assert all(s['metadata']['coreVisibility'] == 0 and s['metadata']['lowConfidence'] for s in swings)
-    for swing in swings:
-        json.dumps(swing, allow_nan=False)
+    assert report['detected'] == 2 and report['written'] == 0 and swings == []
+    assert all('iPhone view contains missing key joints' in r['reason'] for r in report['rejected'])
 
 
 @pytest.mark.parametrize('slowdown', [1, 4])
