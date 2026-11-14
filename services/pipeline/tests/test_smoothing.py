@@ -78,3 +78,22 @@ def test_middle_ground_calms_measured_frames_but_not_contact():
     assert np.median(_accel(S[:50, 14])) < 0.5 * np.median(_accel(P[:50, 14]))
     torso = [j for j in range(33) if j not in LIMB_JOINTS]
     assert np.allclose(S[:, torso], P[:, torso])
+
+
+def test_occluded_backhand_wrist_goes_behind_the_body():
+    from pipeline.smoothing import fix_occluded_hitting_wrist, frontal_plane
+    n = 40
+    P = np.zeros((n, 33, 3))
+    P[:, 23], P[:, 24] = [-0.1, 0, 0], [0.1, 0, 0]
+    P[:, 11], P[:, 12], P[:, 0] = [-0.2, 0.5, 0], [0.2, 0.5, 0], [0, 0.7, 0.05]  # chest faces +z
+    P[:, 14] = [0.0, 0.45, 0.05]          # elbow across the body
+    P[:, 16] = [-0.2, 0.55, 0.25]         # naive fill: wrist across AND in front (+z)
+    for h in (18, 20, 22):
+        P[:, h] = P[:, 16] + [0, 0, 0.05]
+    filled = np.zeros((n, 33), bool)
+    filled[5:35, 16] = True
+    out, changed = fix_occluded_hitting_wrist(P, filled, protect=None, blend=0)
+    nrm, c = frontal_plane(P[20])
+    assert (out[20, 16] - c) @ nrm < 0          # now behind the shoulder-hip plane
+    assert np.isclose(np.linalg.norm(out[20, 16] - out[20, 14]), np.linalg.norm(P[0, 16] - P[0, 14]))
+    assert np.allclose(out[~filled[:, 16]], P[~filled[:, 16]])  # seen frames untouched

@@ -132,3 +132,75 @@ def smooth_guessed_arms(P: np.ndarray, filled: np.ndarray, protect: tuple[int, i
     res = out.copy()
     res[:, LIMB_JOINTS] = w[:, None, None] * calm[:, LIMB_JOINTS] + (1 - w[:, None, None]) * out[:, LIMB_JOINTS]
     return res
+
+
+def frontal_plane(Pk: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """(normal pointing where the chest faces, centre) of the shoulder-hip plane, y up."""
+    n = np.cross([0.0, 1.0, 0.0], Pk[12] - Pk[11])
+    n = _unit(n)
+    centre = (Pk[11] + Pk[12] + Pk[23] + Pk[24]) / 4
+    if (Pk[0] - (Pk[11] + Pk[12]) / 2) @ n < 0:
+        n = -n
+    return n, centre
+
+
+def fix_occluded_hitting_wrist(P: np.ndarray, filled: np.ndarray, evidence: np.ndarray | None = None,
+                               evidence_ok: np.ndarray | None = None, protect: tuple[int, int] | None = None,
+                               hand: str = "R", window: int = 9, blend: int = BLEND) -> tuple[np.ndarray, np.ndarray]:
+    """Backhand backswing: put a guessed hitting wrist where the evidence says, usually behind the body.
+
+    On a backhand backswing the free arm hides the hitting arm from a camera behind the
+    player, and a naive fill draws the hitting wrist extended IN FRONT of the body. For each
+    guessed hitting-wrist frame outside `protect`:
+    - with evidence (e.g. a low-confidence two-camera triangulation where the second camera
+      still sees the wrist, evidence_ok), the forearm points from the (seen) elbow toward it;
+    - without evidence, a wrist that is in front of the shoulder-hip plane while across the
+      body (past the body's midline toward the free shoulder) is mirrored to the behind side.
+    The forearm keeps its median length (the elbow stays put, so the arm stays folded), the
+    direction is lightly filtered over each run and faded into the seen frames at the ends,
+    and the hand points move with the wrist. Returns (new P, mask of frames changed).
+    """
+    P = np.asarray(P, float)
+    n = len(P)
+    el, wr = (14, 16) if hand == "R" else (13, 15)
+    hand_pts = (18, 20, 22) if hand == "R" else (17, 19, 21)
+    free_sh, hit_sh = (11, 12) if hand == "R" else (12, 11)
+    keep = np.zeros(n, bool)
+    if protect is not None:
+        keep[max(0, protect[0]):min(n, protect[1] + 1)] = True
+    guessed = np.asarray(filled, bool)[:, wr] & ~keep
+    L = np.linalg.norm(P[:, wr] - P[:, el], axis=1)
+    length = float(np.median(L[~np.asarray(filled, bool)[:, wr]])) if (~filled[:, wr]).any() else float(np.median(L))
+    d = _unit(P[:, wr] - P[:, el])
+    target = d.copy()
+    for k in np.where(guessed)[0]:
+        if evidence is not None and evidence_ok is not None and evidence_ok[k] and np.isfinite(evidence[k]).all():
+            target[k] = _unit(evidence[k] - P[k, el])
+            continue
+        nrm, c = frontal_plane(P[k])
+        side = _unit(P[k, hit_sh] - P[k, free_sh])
+        across = (P[k, wr] - c) @ side < 0  # on the free-arm side of the body
+        depth = (P[k, wr] - c) @ nrm
+        if across and depth > 0:
+            w2 = P[k, wr] - 2 * depth * nrm
+            target[k] = _unit(w2 - P[k, el])
+    new = d.copy()
+    for i, j in _runs(guessed):
+        seg = target[i:j]
+        if j - i >= window:
+            seg = _unit(savgol_filter(seg, window, 2, axis=0, mode="interp"))
+        ramp = np.ones(j - i)
+        for k in range(min(blend, j - i)):
+            f = (k + 1) / (blend + 1)
+            if i > 0:
+                ramp[k] = min(ramp[k], f)
+            if j < n:
+                ramp[j - i - 1 - k] = min(ramp[j - i - 1 - k], f)
+        new[i:j] = _unit(ramp[:, None] * seg + (1 - ramp[:, None]) * d[i:j])
+    out = P.copy()
+    w_new = P[:, el] + new * length
+    delta = w_new - P[:, wr]
+    out[guessed, wr] = w_new[guessed]
+    for h in hand_pts:
+        out[guessed, h] = P[guessed, h] + delta[guessed]
+    return out, guessed
