@@ -58,6 +58,8 @@ export type CoachFault = {
   threshold: number | null;
   unit: string;
   severity: number | null;
+  /** How far the ghost should move it (fault library `fix_amount`). */
+  fixAmount: number | null;
 };
 
 /** Output of `coach.agent.coach_swing`: the top fault and its cue, decided by the fault library. */
@@ -65,9 +67,25 @@ export type CoachCaption = {
   stroke: string;
   fault: CoachFault | null;
   cue: string;
-  /** Every fault that fired, worst first (`faults` in the file; falls back to the top fault). */
+  /**
+   * Faults that fired, worst first: `faults` when the file has it (saved samples), else
+   * the top fault and the ghost's fault (the live coach returns only those).
+   */
   faults: CoachFault[];
+  /** Which fix the ghost starts on and by how much (coach #28). Null in older coach files. */
+  ghostFix: string | null;
+  ghostFixAmount: number | null;
+  /** Why the ghost shows a different fix from the caption's, e.g. the top one isn't animated yet. */
+  ghostNote: string | null;
 };
+
+/** True when both PREDICTED paths are the same points: the fix didn't change the ball. Equality only. */
+export function sameBallPath(a: BallPath, b: BallPath): boolean {
+  return (
+    a.points.length === b.points.length &&
+    a.points.every((p, i) => p[0] === b.points[i][0] && p[1] === b.points[i][1] && p[2] === b.points[i][2])
+  );
+}
 
 export class CompareDataError extends Error {
   name = "CompareDataError";
@@ -289,9 +307,11 @@ export type Catalogue = {
   /** physics.ghost.FIXES, in its order. */
   fixes: string[];
   units: Record<string, string>;
-  /** Fix sizes used when no coach has looked at the swing (live swings from the API). */
+  /** Fix sizes for fixes the coach didn't flag (and when the coach can't be reached). */
   demoAmounts: Record<string, number>;
   swings: CatalogueSwing[];
+  /** Id of the swing the demo opens on, if set. */
+  defaultSwing: string | null;
 };
 
 /** A plain file name in public/swings, never a path or URL. */
@@ -314,6 +334,7 @@ export function parseCatalogue(value: unknown): Catalogue {
   return {
     fixes,
     units,
+    defaultSwing: typeof c.defaultSwing === "string" && c.defaultSwing !== "" ? c.defaultSwing : null,
     demoAmounts: numberMap(c.demoAmounts, "demoAmounts"),
     swings: c.swings.map((s: unknown, i: number): CatalogueSwing => {
       const where = `swings[${i}]`;
@@ -353,17 +374,25 @@ function parseFault(value: unknown, where: string): CoachFault {
     threshold: numOrNull(f.threshold, `${where}.threshold`),
     unit: typeof f.unit === "string" ? f.unit : "",
     severity: numOrNull(f.severity, `${where}.severity`),
+    fixAmount: numOrNull(f.fix_amount, `${where}.fix_amount`),
   };
 }
 
-/** Checks an untrusted coach JSON value (coach_swing output). Throws CompareDataError. */
+/** Checks an untrusted coach JSON value (coach_swing output, file or live). Throws CompareDataError. */
 export function parseCoach(value: unknown): CoachCaption {
   const c = record(value, "file");
   const fault = c.fault === null || c.fault === undefined ? null : parseFault(c.fault, "fault");
+  const ghostFault = c.ghost_fault === null || c.ghost_fault === undefined ? null : parseFault(c.ghost_fault, "ghost_fault");
   const faults = Array.isArray(c.faults)
     ? c.faults.map((f: unknown, i: number) => parseFault(f, `faults[${i}]`))
-    : fault
-      ? [fault]
-      : [];
-  return { stroke: typeof c.stroke === "string" ? c.stroke : "", fault, cue: text(c.cue, "cue"), faults };
+    : [fault, ghostFault].filter((f, i, all): f is CoachFault => f !== null && all.findIndex((g) => g?.id === f.id) === i);
+  return {
+    stroke: typeof c.stroke === "string" ? c.stroke : "",
+    fault,
+    cue: text(c.cue, "cue"),
+    faults,
+    ghostFix: typeof c.ghost_fix === "string" && c.ghost_fix !== "" ? c.ghost_fix : null,
+    ghostFixAmount: numOrNull(c.ghost_fix_amount, "ghost_fix_amount"),
+    ghostNote: typeof c.ghost_note === "string" && c.ghost_note !== "" ? c.ghost_note : null,
+  };
 }

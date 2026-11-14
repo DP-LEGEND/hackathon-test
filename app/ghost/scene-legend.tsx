@@ -1,10 +1,12 @@
 // Legend over the 3D view: orange = what you did, cyan = the ghost / the fix, and the
-// PREDICTED ball paths when they're shown.
+// PREDICTED ball paths when they're shown. When the fix doesn't change the ball, one shared
+// path is drawn and the legend says so instead of showing two overlapping lines.
 
 import type { ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
 import { GHOST_COLOUR, YOU_COLOUR } from "./colours";
 import { OUTCOME_WORDS, type BallPath } from "./compare";
+import { SAME_PATH_MESSAGE } from "./delta-panel";
 
 export function SceneLegend({
   ghost,
@@ -13,7 +15,8 @@ export function SceneLegend({
 }: {
   /** What the ghost shows, e.g. "close stance 64.9°", and whether it's a real fix. Null = hidden. */
   ghost: { label: string; mock: boolean } | null;
-  balls: { you: BallPath; ghost: BallPath } | null;
+  /** `same`: both PREDICTED paths are identical. */
+  balls: { you: BallPath; ghost: BallPath; same: boolean } | null;
   /** The swing's depth is estimated from one camera, not measured by stereo. */
   monoDepth: boolean;
 }) {
@@ -31,27 +34,36 @@ export function SceneLegend({
       )}
       {balls && (
         <div className="mt-1 flex flex-col gap-1 border-t pt-2">
-          <p className="flex items-center gap-2 font-mono text-xs font-bold tracking-[0.14em]">
-            PREDICTED BALL PATHS
-          </p>
+          <p className="font-mono text-xs font-bold tracking-[0.14em]">PREDICTED BALL {balls.same ? "PATH" : "PATHS"}</p>
           <p className="text-xs text-muted-foreground">No real ball: from the ball model.</p>
-          {(
-            [
-              ["You", YOU_COLOUR, balls.you],
-              ["Ghost", GHOST_COLOUR, balls.ghost],
-            ] as const
-          ).map(([who, colour, ball]) => (
-            <p key={who} className="flex items-center gap-2 text-xs tabular-nums">
-              <span aria-hidden className="h-1 w-5 shrink-0 rounded-full" style={{ backgroundColor: colour }} />
-              <span style={{ color: colour }}>{who}</span>
-              <span className="text-muted-foreground">
-                {OUTCOME_WORDS[ball.outcome]} · {ball.speedKmh} km/h
-              </span>
-            </p>
-          ))}
+          {balls.same ? (
+            <>
+              <p className="text-sm font-medium text-balance" style={{ color: GHOST_COLOUR }}>
+                {SAME_PATH_MESSAGE}.
+              </p>
+              <BallRow colour={YOU_COLOUR} who="You and ghost" ball={balls.you} />
+            </>
+          ) : (
+            <>
+              <BallRow colour={YOU_COLOUR} who="You" ball={balls.you} />
+              <BallRow colour={GHOST_COLOUR} who="Ghost" ball={balls.ghost} />
+            </>
+          )}
         </div>
       )}
     </div>
+  );
+}
+
+function BallRow({ colour, who, ball }: { colour: string; who: string; ball: BallPath }) {
+  return (
+    <p className="flex items-center gap-2 text-xs tabular-nums">
+      <span aria-hidden className="h-1 w-5 shrink-0 rounded-full" style={{ backgroundColor: colour }} />
+      <span style={{ color: colour }}>{who}</span>
+      <span className="text-muted-foreground">
+        {OUTCOME_WORDS[ball.outcome]} · {ball.speedKmh} km/h
+      </span>
+    </p>
   );
 }
 

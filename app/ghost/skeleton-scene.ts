@@ -302,8 +302,8 @@ export type ReplayLayout = {
   floor: FloorOffsets;
   /** Assumed ball contact spot in court coordinates; the player is drawn beside it. Null = at the T. */
   contactSpot: Vec3 | null;
-  /** Null hides the ball paths. */
-  ballPaths: { you: BallPathView; ghost: BallPathView } | null;
+  /** Null hides the ball paths. Ghost null = one shared path (the fix doesn't change the ball). */
+  ballPaths: { you: BallPathView; ghost: BallPathView | null } | null;
 };
 
 export class SkeletonScene {
@@ -420,7 +420,9 @@ export class SkeletonScene {
     if (ballPaths) {
       const group = new THREE.Group();
       group.add(buildBallPath(ballPaths.you, { colour: YOU_COLOUR, opacity: 1, halo: 0, tagAbove: true }));
-      group.add(buildBallPath(ballPaths.ghost, { colour: GHOST_COLOUR, opacity: 0.7, halo: 0.007, tagAbove: false }));
+      if (ballPaths.ghost) {
+        group.add(buildBallPath(ballPaths.ghost, { colour: GHOST_COLOUR, opacity: 0.7, halo: 0.007, tagAbove: false }));
+      }
       const ball = new THREE.Mesh(
         new THREE.SphereGeometry(BALL_RADIUS, 16, 12),
         new THREE.MeshBasicMaterial({ color: 0xf5f5f5 }),

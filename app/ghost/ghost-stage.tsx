@@ -45,8 +45,8 @@ export function GhostStage({
   you: LoadedSwing | null;
   /** Null hides the ghost. */
   ghost: LoadedSwing | null;
-  /** Null hides the ball paths. */
-  balls: { you: BallPathView; ghost: BallPathView } | null;
+  /** Null hides the ball paths; ghost null draws one shared path. */
+  balls: { you: BallPathView; ghost: BallPathView | null } | null;
   contactSpot: Vec3 | null;
   view: CameraView;
   onViewChange: (view: CameraView) => void;

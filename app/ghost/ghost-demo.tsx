@@ -2,7 +2,7 @@
 
 // The /ghost demo flow: 1 pick a swing, 2 the coach's call, 3 the ghost makes the fix,
 // 4 both PREDICTED ball paths on the court. Owns which swing, step and fix are shown;
-// data comes from sources.ts (swing API or saved samples), the 3D view from ghost-stage.tsx.
+// data comes from sources.ts (live service or saved samples), the 3D view from ghost-stage.tsx.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight } from "lucide-react";
@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { CoachCaptionBar, type CaptionState } from "./coach-caption";
 import { CoachDetails } from "./coach-details";
-import { fixName, formatValue, OUTCOME_WORDS, type BallPath, type Catalogue } from "./compare";
+import { fixName, formatValue, OUTCOME_WORDS, sameBallPath, type BallPath, type Catalogue } from "./compare";
 import { BallChanges, BodyChanges } from "./delta-panel";
 import { FixPicker } from "./fix-picker";
 import { GhostStage, type StageStatus } from "./ghost-stage";
@@ -20,11 +20,13 @@ import type { BallPathView, CameraView } from "./skeleton-scene";
 import {
   buildEntries,
   checkApi,
+  fixOptionsFor,
   loadCatalogue,
   loadCoachFor,
   loadCompareFor,
   loadSwingFor,
   type ApiState,
+  type FixOption,
 } from "./sources";
 import { SwingPicker, type CatalogueState } from "./swing-picker";
 import { useAsync, type Async } from "./use-async";
@@ -55,13 +57,13 @@ const STEPS = [
     id: "court",
     title: "On court",
     heading: "Where the ball goes",
-    intro: "Both ball paths are PREDICTED from the estimated racket speed. There is no real ball.",
+    intro: "Ball paths are PREDICTED from the estimated racket speed. There is no real ball.",
     next: "Try another swing",
   },
 ] as const;
 type Step = (typeof STEPS)[number]["id"];
 
-function ballView(ball: BallPath, who: "you" | "ghost"): BallPathView {
+function ballView(ball: BallPath, who: string): BallPathView {
   return {
     points: ball.points,
     bounces: ball.bounces,
@@ -70,12 +72,19 @@ function ballView(ball: BallPath, who: "you" | "ghost"): BallPathView {
   };
 }
 
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export function GhostDemo() {
   const [step, setStep] = useState<Step>("swing");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [chosenFix, setChosenFix] = useState<string | null>(null);
   const [view, setView] = useState<CameraView>("player");
-  const [attempt, setAttempt] = useState(0);
+  // One retry counter per request, so Try again refetches only what failed.
+  const [swingAttempt, setSwingAttempt] = useState(0);
+  const [coachAttempt, setCoachAttempt] = useState(0);
+  const [compareAttempt, setCompareAttempt] = useState(0);
   const [catalogueAttempt, setCatalogueAttempt] = useState(0);
   const [catalogue, setCatalogue] = useState<Async<Catalogue>>({ status: "loading" });
   const [apiAttempt, setApiAttempt] = useState(0);
@@ -89,7 +98,7 @@ export function GhostDemo() {
     let live = true;
     loadCatalogue(catalogueAttempt).then(
       (value) => live && setCatalogue({ status: "ready", value }),
-      (error: unknown) => live && setCatalogue({ status: "error", message: error instanceof Error ? error.message : String(error) }),
+      (error: unknown) => live && setCatalogue({ status: "error", message: errorText(error) }),
     );
     return () => {
       live = false;
@@ -114,60 +123,67 @@ export function GhostDemo() {
     () => (catalogue.status === "ready" ? buildEntries(catalogue.value, api) : []),
     [catalogue, api],
   );
-  const entry = useMemo(() => entries.find((e) => e.key === selectedKey) ?? null, [entries, selectedKey]);
+  // Until someone picks, the demo swing is the selection.
+  const entry = useMemo(
+    () => entries.find((e) => e.key === selectedKey) ?? entries.find((e) => e.isDefault) ?? null,
+    [entries, selectedKey],
+  );
 
-  // Per swing: the swing itself, the coach's verdict (null = not coached) and the ghost.
-  const swingPromise = useMemo(() => (entry ? loadSwingFor(entry, attempt) : null), [entry, attempt]);
-  const coachPromise = useMemo(() => (entry ? loadCoachFor(entry, attempt) : null), [entry, attempt]);
+  // Per swing: the swing itself, the coach's verdict and the ghost for the active fix.
+  const swingPromise = useMemo(() => (entry ? loadSwingFor(entry, swingAttempt) : null), [entry, swingAttempt]);
+  const coachPromise = useMemo(() => (entry ? loadCoachFor(entry, coachAttempt) : null), [entry, coachAttempt]);
   const swing = useAsync(swingPromise);
   const coach = useAsync(coachPromise);
   const coachCaption = coach.status === "ready" ? coach.value : null;
-  const faults = useMemo(() => coachCaption?.faults ?? [], [coachCaption]);
   const coachSettled = coach.status === "ready" || coach.status === "error";
+  const faults = useMemo(() => coachCaption?.faults ?? [], [coachCaption]);
+  const fixes = useMemo(() => (entry ? fixOptionsFor(entry, coachCaption) : []), [entry, coachCaption]);
 
-  // The ghost starts on the coach's top fix (the worst fault physics can fix), else the first fix.
-  const activeFix = useMemo(() => {
-    if (!entry) return null;
-    const usable = entry.fixes.filter((f) => f.unavailable === null);
+  // The coach's pick: its ghost_fix (#28), else (older coach files) the worst fault physics can fix.
+  const coachPick = useMemo<FixOption | null>(() => {
+    const usable = fixes.filter((f) => f.unavailable === null);
+    const byId = (id: string | null | undefined) => usable.find((f) => f.id === id);
+    return byId(coachCaption?.ghostFix) ?? faults.map((f) => byId(f.fix)).find((f) => f !== undefined) ?? null;
+  }, [fixes, faults, coachCaption]);
+
+  const activeFix = useMemo<FixOption | null>(() => {
+    const usable = fixes.filter((f) => f.unavailable === null);
     const chosen = usable.find((f) => f.id === chosenFix);
     if (chosen) return chosen;
     if (!coachSettled) return null; // wait for the coach so the ghost doesn't switch under you
-    for (const fault of faults) {
-      const match = usable.find((f) => f.id === fault.fix);
-      if (match) return match;
-    }
-    return usable[0] ?? null;
-  }, [entry, chosenFix, coachSettled, faults]);
+    return coachPick ?? usable[0] ?? null;
+  }, [fixes, chosenFix, coachSettled, coachPick]);
 
   const comparePromise = useMemo(
-    () => (entry && activeFix ? loadCompareFor(entry, activeFix, attempt) : null),
-    [entry, activeFix, attempt],
+    () => (entry && activeFix ? loadCompareFor(entry, activeFix, compareAttempt) : null),
+    [entry, activeFix, compareAttempt],
   );
   const compareState = useAsync(comparePromise);
   const compare = compareState.status === "ready" ? compareState.value : null;
 
   const showGhost = step === "ghost" || step === "court";
   const onCourt = step === "court";
+  const samePath = compare ? sameBallPath(compare.you.ball, compare.ghost.ball) : false;
   const you = compare?.you.swing ?? (swing.status === "ready" ? swing.value : null);
-  const balls = useMemo(
-    () => (onCourt && compare ? { you: ballView(compare.you.ball, "you"), ghost: ballView(compare.ghost.ball, "ghost") } : null),
-    [onCourt, compare],
-  );
+  const balls = useMemo(() => {
+    if (!onCourt || !compare) return null;
+    // Identical paths: draw one, and the legend says the fix changes the body, not the ball.
+    return samePath
+      ? { you: ballView(compare.you.ball, "you and ghost"), ghost: null }
+      : { you: ballView(compare.you.ball, "you"), ghost: ballView(compare.ghost.ball, "ghost") };
+  }, [onCourt, compare, samePath]);
 
   const caption: CaptionState =
     coach.status === "ready"
-      ? coach.value
-        ? { kind: "ready", caption: coach.value }
-        : { kind: "none" }
+      ? { kind: "ready", caption: coach.value }
       : coach.status === "error"
-        ? { kind: "error", message: coach.message }
+        ? { kind: "error", message: coach.message, onRetry: () => setCoachAttempt((n) => n + 1) }
         : { kind: "loading" };
-  const coached = coachCaption !== null;
 
   const stageStatus: StageStatus = you
     ? null
     : swing.status === "error"
-      ? { kind: "error", message: swing.message, onRetry: retry }
+      ? { kind: "error", message: swing.message, onRetry: () => setSwingAttempt((n) => n + 1) }
       : { kind: "loading", message: "Loading swing…" };
 
   const catalogueState: CatalogueState =
@@ -184,13 +200,9 @@ export function GhostDemo() {
   }
 
   function pickSwing(key: string) {
-    if (key !== selectedKey) setChosenFix(null);
+    if (key !== entry?.key) setChosenFix(null);
     setSelectedKey(key);
     goTo("coach");
-  }
-
-  function retry() {
-    setAttempt((n) => n + 1);
   }
 
   function retryCatalogue() {
@@ -222,7 +234,7 @@ export function GhostDemo() {
           catalogue={catalogueState}
           entries={entries}
           api={api}
-          selectedKey={selectedKey}
+          selectedKey={entry?.key ?? null}
           onPick={pickSwing}
           onRetryApi={retryApi}
         />
@@ -258,11 +270,12 @@ export function GhostDemo() {
           {showGhost && (
             <div className="flex flex-col gap-2">
               <FixPicker
-                fixes={entry.fixes}
+                fixes={fixes}
                 selected={activeFix?.id ?? null}
                 loading={compareState.status === "loading"}
                 faults={faults}
-                coached={coached}
+                coachPick={coachPick?.id ?? null}
+                coached={coachCaption !== null}
                 onSelect={setChosenFix}
               />
               <p role="status" className="text-sm text-muted-foreground empty:hidden">
@@ -271,7 +284,7 @@ export function GhostDemo() {
               {compareState.status === "error" && (
                 <div role="alert" className="flex flex-wrap items-center gap-3 rounded-xl border border-destructive/40 bg-card p-3 text-sm">
                   <p className="flex-1">Couldn&apos;t make this ghost: {compareState.message}</p>
-                  <Button variant="outline" size="sm" onClick={retry}>
+                  <Button variant="outline" size="sm" onClick={() => setCompareAttempt((n) => n + 1)}>
                     Try again
                   </Button>
                 </div>
@@ -297,7 +310,7 @@ export function GhostDemo() {
                     }
                   : null
               }
-              balls={onCourt && compare ? { you: compare.you.ball, ghost: compare.ghost.ball } : null}
+              balls={onCourt && compare ? { you: compare.you.ball, ghost: compare.ghost.ball, same: samePath } : null}
               monoDepth={you?.source === "mono"}
             />
             {onCourt && (
@@ -311,8 +324,12 @@ export function GhostDemo() {
           {step === "coach" && <CoachDetails state={caption} />}
           {showGhost && compare && (
             <div className={cn("grid gap-3", onCourt && "lg:grid-cols-2")}>
-              {onCourt && <BallChanges compare={compare} />}
-              <BodyChanges compare={compare} flagged={faults.some((f) => f.fix === compare.fix.id)} coached={coached} />
+              {onCourt && <BallChanges compare={compare} samePath={samePath} />}
+              <BodyChanges
+                compare={compare}
+                flagged={faults.some((f) => f.fix === compare.fix.id)}
+                coached={coachCaption !== null}
+              />
             </div>
           )}
         </>

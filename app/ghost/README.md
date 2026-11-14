@@ -11,31 +11,34 @@ The demo flow has four steps: **pick a swing**, **the coach's call**, **the ghos
 
 ## Where swings come from
 
-1. **Live, from Dev's swing API** (`services/pipeline/server.py`, see its README). The page tries `http://localhost:8000`, or `NEXT_PUBLIC_GHOST_API_URL` if that's set, but only when the page itself runs on your computer. The API has no coach endpoint yet, so live swings show no coach call. Every fix uses a small fixed demo size (`demoAmounts` in the catalogue), and the ghost comes from `POST /swings/{id}/ghost`.
-2. **Saved samples in `public/swings/`.** These always work, including offline and on the deployed site.
+1. **Live, from Dev's Python service** (`services/pipeline/server.py`), reached through the same-origin Next.js proxy (`app/api/[...path]/route.ts`), so the browser never calls another origin. The page uses `GET /api/swings` (with each swing's label), `GET /api/swings/{id}`, `POST /api/coach/{id}` for the coach's call and `POST /api/compare/{id}` for each ghost. A 502 from `/api` means the service isn't running, and the page falls back to the saved samples.
+2. **Saved samples in `public/swings/`.** These always work, including offline and on the deployed site. The demo opens on `defaultSwing` in `catalogue.json`: the real forehand over-rotation swing.
 
-To try live swings, run this from `services/` with the venv activated:
+The ghost starts on the coach's `ghost_fix` with `ghost_fix_amount`, and the caption shows `ghost_note` when the ghost shows a different fix from the top fault. Older coach files without those fields fall back to the worst fault physics can fix. Fixes the coach didn't flag use a small fixed demo size (`demoAmounts` in the catalogue). A fix physics can't apply to a swing shows its reason. When a fix leaves both PREDICTED paths identical, the court step draws one path and says so.
+
+To try live swings, run this from the repo folder with the venv activated:
 
 ```
-python -m uvicorn pipeline.server:app --port 8000
+python -m uvicorn pipeline.server:app --app-dir services --port 8000
 ```
 
-`GHOST_SWINGS_DIR` must point at a processed session folder. Windows PowerShell: `$env:GHOST_SWINGS_DIR = '../data/processed'`.
+Swings come from `data/processed/` unless `GHOST_SWINGS_DIR` points somewhere else.
 
 ## Saved sample files
 
 | File in `public/swings/` | Made by | What it holds |
 |---|---|---|
-| `catalogue.json` | the script below | The samples, each fix's size and file, units, demo sizes |
+| `catalogue.json` | the script below (backhand), #35 (forehand) | The samples, each fix's size and file or why it's unavailable, units, demo sizes, `defaultSwing` |
 | `swing_2116_bh_stereo.json` | pipeline (two-camera stereo, 120 fps) | The input swing, the same as `data/samples/swing_sample.json` |
 | `coach_2116_bh_stereo.json` | `coach.agent.coach_swing(swing, "backhand")` plus `faults` from `coach.faults.detect_faults` | Top fault and cue (the caption), and every fault, worst first |
 | `compare_2116_<fix>.json` | `physics.compare.compare(swing, fix, amount)` | You and ghost swings, metrics, deltas, both PREDICTED ball paths |
+| `swing_fh_over_rotation.json`, `coach_fh_over_rotation.json`, `compare_fh_over_rotation_<fix>.json` | #35, the same way | The forehand over-rotation demo swing (one-camera depth) |
 
-There is one compare file for each fix in `physics.ghost.FIXES`. A fix the coach flagged uses the fault library's `fix_amount`. The ghost starts on the coach's top fix. Other fixes use a small demo size and are labelled as such. Joint positions are rounded to 0.1 mm, the input's precision, after every metric has been computed.
+There is one compare file for each fix in `physics.ghost.FIXES`. A fix the coach flagged uses the fault library's `fix_amount`. Other fixes use a small demo size and are labelled as such. Joint positions are rounded to 0.1 mm, the input's precision, after every metric has been computed.
 
 ## Regenerate the saved samples
 
-Save the script below as `make_swing_data.py` outside the repo, for example in Downloads. Then run it from inside `services/` with the venv activated.
+The script below regenerates the backhand sample. It updates only that swing's entry in `catalogue.json` and keeps the other swings and `defaultSwing`. Save it as `make_swing_data.py` outside the repo, for example in Downloads. Then run it from inside `services/` with the venv activated.
 
 Mac:
 
@@ -80,7 +83,7 @@ def round_swing(swing):
 
 
 def write(name, data):
-    (OUT / name).write_text(json.dumps(data, separators=(",", ":"), allow_nan=False))
+    (OUT / name).write_text(json.dumps(data, separators=(",", ":"), allow_nan=False), encoding="utf-8")
 
 
 missing = set(FIXES) - set(DEMO_AMOUNT)
@@ -107,19 +110,23 @@ for fix in FIXES:
         write(entry["file"], result)
     fixes[fix] = entry
 
-write("catalogue.json", {
-    "fixes": list(FIXES),
-    "units": {fix: EDITS[edit]["unit"] for fix, (edit, _) in FIXES.items()},
-    "demoAmounts": DEMO_AMOUNT,
-    "swings": [{
-        "id": swing["id"],
-        "label": "Backhand · two-camera stereo · 120 fps",
-        "stroke": STROKE,
-        "swing": SWING_FILE,
-        "coach": "coach_2116_bh_stereo.json",
-        "fixes": fixes,
-    }],
-})
+entry = {
+    "id": swing["id"],
+    "label": "Backhand · two-camera stereo · 120 fps",
+    "stroke": STROKE,
+    "swing": SWING_FILE,
+    "coach": "coach_2116_bh_stereo.json",
+    "fixes": fixes,
+}
+# Update only this swing's entry: keep the other samples and defaultSwing.
+path = OUT / "catalogue.json"
+catalogue = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {"swings": []}
+catalogue["fixes"] = list(FIXES)
+catalogue["units"] = {fix: EDITS[edit]["unit"] for fix, (edit, _) in FIXES.items()}
+catalogue["demoAmounts"] = DEMO_AMOUNT
+others = [s for s in catalogue["swings"] if s["id"] != entry["id"]]
+catalogue["swings"] = [entry] + others
+path.write_text(json.dumps(catalogue, separators=(",", ":"), ensure_ascii=False), encoding="utf-8")
 ```
 
 When physics adds a fix, add its demo size to `DEMO_AMOUNT` and run the script again. The page reads the fix list from the catalogue, so no code changes are needed.

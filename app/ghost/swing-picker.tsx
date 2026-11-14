@@ -1,12 +1,13 @@
-// Step 1 of the demo: pick a swing. Saved samples always work; live swings appear when
-// Dev's swing API (services/pipeline/server.py) is running on this computer.
+// Step 1 of the demo: pick a swing. The demo swing comes first with a big Start button.
+// Saved samples always work; live swings appear when Dev's Python service is running
+// (reached through the same-origin /api proxy).
 
-import { ChevronRight, RotateCcw } from "lucide-react";
+import { ChevronRight, Play, RotateCcw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { GHOST_COLOUR } from "./colours";
-import { GHOST_API_URL, type ApiState, type SwingEntry } from "./sources";
+import type { ApiState, SwingEntry } from "./sources";
 
 export type CatalogueState =
   | { status: "loading" }
@@ -28,8 +29,17 @@ export function SwingPicker({
   onPick: (key: string) => void;
   onRetryApi: () => void;
 }) {
+  const demo = entries.find((e) => e.isDefault);
   return (
     <div className="flex flex-col gap-4">
+      {demo && (
+        <div>
+          <Button size="lg" className="h-11 px-4 text-base" onClick={() => onPick(demo.key)}>
+            <Play data-icon="inline-start" />
+            Start with the demo swing
+          </Button>
+        </div>
+      )}
       {catalogue.status === "loading" && (
         <p role="status" className="rounded-xl border bg-card p-6 text-sm text-muted-foreground">
           Loading swings…
@@ -64,14 +74,19 @@ export function SwingPicker({
                   style={picked ? { borderColor: GHOST_COLOUR } : undefined}
                 >
                   <span className="flex min-w-0 flex-1 flex-col gap-1.5">
-                    <Badge variant={entry.origin === "api" ? "default" : "secondary"}>
-                      {entry.origin === "api" ? "Live · swing API" : "Saved sample"}
-                    </Badge>
+                    <span className="flex flex-wrap gap-1.5">
+                      <Badge variant={entry.origin === "api" ? "default" : "secondary"}>
+                        {entry.origin === "api" ? "Live" : "Saved sample"}
+                      </Badge>
+                      {entry.isDefault && <Badge variant="outline">Demo swing</Badge>}
+                    </span>
                     <span className="text-base font-medium text-balance">{entry.label}</span>
                     <span className="text-sm text-muted-foreground">
-                      {entry.coachFile ? "Coach's call ready · real ghosts" : "No coach call yet · ghosts at demo sizes"}
+                      {entry.origin === "api"
+                        ? "The coach measures it live; ghosts are computed on request"
+                        : "Coach's call and ghosts saved from the Python service"}
                     </span>
-                    {entry.label !== entry.id && (
+                    {entry.origin === "sample" && (
                       <span className="font-mono text-xs break-all text-muted-foreground">{entry.id}</span>
                     )}
                   </span>
@@ -98,29 +113,26 @@ function ApiStatus({ api, onRetry }: { api: ApiState; onRetry: () => void }) {
     </Button>
   );
   return (
-    <div className="flex flex-col gap-2 rounded-xl border border-dashed p-3 text-sm text-muted-foreground sm:p-4" role="status">
-      {api.status === "checking" && <p>Looking for the swing API at {GHOST_API_URL}…</p>}
-      {api.status === "local-only" && (
-        <p>Showing saved samples. Live swings from the swing API load only when this page runs on your own computer.</p>
-      )}
+    <div className="flex flex-col gap-2 rounded-xl border border-dashed p-3 text-sm text-muted-foreground sm:p-4">
+      {api.status === "checking" && <p role="status">Looking for live swings…</p>}
       {api.status === "offline" && (
         <>
-          <p>
-            The swing API isn&apos;t running at {GHOST_API_URL}, so these are the saved samples. To add live swings, run
-            this from <code className="font-mono text-foreground">services/</code>:
+          <p role="status">
+            The live Python service isn&apos;t running, so these are the saved samples. To add live swings, run this
+            from the repo folder:
           </p>
           <code className="w-fit rounded-md bg-muted px-2 py-1 font-mono text-xs break-all text-foreground">
-            python -m uvicorn pipeline.server:app --port 8000
+            python -m uvicorn pipeline.server:app --app-dir services --port 8000
           </code>
           <div>{retry}</div>
         </>
       )}
       {api.status === "online" && (
         <>
-          <p>
-            {api.ids.length === 0
-              ? "The swing API is running but has no processed swings. Point GHOST_SWINGS_DIR at a processed session (services/pipeline/README.md)."
-              : `${api.ids.length} live ${api.ids.length === 1 ? "swing" : "swings"} from the swing API at ${GHOST_API_URL}.`}
+          <p role="status">
+            {api.swings.length === 0
+              ? "The live service is running but has no processed swings. Point GHOST_SWINGS_DIR at a processed session (services/pipeline/README.md)."
+              : `${api.swings.length} live ${api.swings.length === 1 ? "swing" : "swings"} from the Python service.`}
           </p>
           <div>{retry}</div>
         </>
