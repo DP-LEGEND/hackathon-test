@@ -30,6 +30,7 @@ import {
   checkApi,
   coachPickFix,
   fixOptionsFor,
+  resolveSelection,
   loadCatalogue,
   loadCoachFor,
   loadCompareFor,
@@ -133,11 +134,13 @@ export function GhostDemo() {
     () => (catalogue.status === "ready" ? buildEntries(catalogue.value, api) : []),
     [catalogue, api],
   );
-  // Until someone picks, the demo swing is the selection.
-  const entry = useMemo(
-    () => entries.find((e) => e.key === selectedKey) ?? entries.find((e) => e.isDefault) ?? null,
-    [entries, selectedKey],
+  const demoEntry = useMemo(() => entries.find((e) => e.isDefault) ?? null, [entries]);
+  // The demo swing only while nothing is picked; never a silent switch away from a picked swing.
+  const selection = useMemo(
+    () => resolveSelection(entries, selectedKey, { samples: catalogue.status === "ready", live: api.status !== "checking" }),
+    [entries, selectedKey, catalogue.status, api.status],
   );
+  const entry = selection.entry;
 
   // Per swing: the swing itself, the coach's verdict and the ghost for the active fix.
   const swingPromise = useMemo(() => (entry ? loadSwingFor(entry, swingAttempt) : null), [entry, swingAttempt]);
@@ -216,6 +219,16 @@ export function GhostDemo() {
     goTo("coach");
   }
 
+  /** After a picked swing is gone: the user chooses the demo swing (or the list), never automatically. */
+  function leaveGoneSwing() {
+    if (demoEntry) {
+      pickSwing(demoEntry.key);
+    } else {
+      setSelectedKey(null);
+      goTo("swing");
+    }
+  }
+
   function retryCatalogue() {
     setCatalogue({ status: "loading" });
     setCatalogueAttempt((n) => n + 1);
@@ -241,22 +254,25 @@ export function GhostDemo() {
       </div>
 
       {step === "swing" ? (
-        <SwingPicker
-          catalogue={catalogueState}
-          entries={entries}
-          api={api}
-          selectedKey={entry?.key ?? null}
-          onPick={pickSwing}
-          onRetryApi={retryApi}
-        />
+        <>
+          {selection.gone && <SwingGone hasDemo={demoEntry !== null} onLeave={leaveGoneSwing} />}
+          <SwingPicker
+            catalogue={catalogueState}
+            entries={entries}
+            api={api}
+            selectedKey={entry?.key ?? null}
+            onPick={pickSwing}
+            onRetryApi={retryApi}
+          />
+        </>
       ) : !entry ? (
-        <div className="flex flex-col items-start gap-3 rounded-xl border bg-card p-6">
-          <p className="text-sm">This swing isn&apos;t available any more.</p>
-          <Button variant="outline" onClick={() => goTo("swing")}>
-            <ArrowLeft data-icon="inline-start" />
-            Pick a swing
-          </Button>
-        </div>
+        selection.gone ? (
+          <SwingGone hasDemo={demoEntry !== null} onLeave={leaveGoneSwing} />
+        ) : (
+          <p role="status" className="rounded-xl border bg-card p-6 text-sm text-muted-foreground">
+            Loading swings…
+          </p>
+        )
       ) : (
         <>
           <div className="flex flex-wrap items-center gap-2">
@@ -347,6 +363,19 @@ export function GhostDemo() {
           )}
         </>
       )}
+    </div>
+  );
+}
+
+/** A picked swing dropped out of the list. Says so instead of switching swings behind the user's back. */
+function SwingGone({ hasDemo, onLeave }: { hasDemo: boolean; onLeave: () => void }) {
+  return (
+    <div role="alert" className="flex flex-col items-start gap-3 rounded-xl border bg-card p-6">
+      <p className="text-sm">That swing isn&apos;t available any more.</p>
+      <Button variant="outline" onClick={onLeave}>
+        <ArrowLeft data-icon="inline-start" />
+        {hasDemo ? "Back to the demo swing" : "Pick a swing"}
+      </Button>
     </div>
   );
 }

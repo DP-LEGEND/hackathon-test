@@ -149,13 +149,41 @@ function words(label: string): string {
 }
 
 /** Saved samples first (the demo swing at the top), then live swings. */
+const SAMPLE_KEY = "sample:";
+const LIVE_KEY = "api:";
+
+export type Selection = {
+  /** The swing on screen, or null. */
+  entry: SwingEntry | null;
+  /** A swing was picked but its list no longer has it (and that list has finished loading). */
+  gone: boolean;
+};
+
+/**
+ * Which swing is on screen. The demo swing only while nothing has been picked; after that, only
+ * the swing that was picked. Never a silent switch: if it drops out of the list, `entry` is null
+ * and `gone` says so. While its list is still loading (catalogue, or the live list being
+ * re-checked), it isn't called gone yet.
+ */
+export function resolveSelection(
+  entries: SwingEntry[],
+  selectedKey: string | null,
+  loaded: { samples: boolean; live: boolean },
+): Selection {
+  if (selectedKey === null) return { entry: entries.find((e) => e.isDefault) ?? null, gone: false };
+  const entry = entries.find((e) => e.key === selectedKey) ?? null;
+  // Live entries are built from the catalogue too, so a live list needs both loaded.
+  const listLoaded = selectedKey.startsWith(LIVE_KEY) ? loaded.samples && loaded.live : loaded.samples;
+  return { entry, gone: entry === null && listLoaded };
+}
+
 export function buildEntries(catalogue: Catalogue, api: ApiState): SwingEntry[] {
   const unit = (fix: string) => catalogue.units[fix] ?? "";
   const defaultId = catalogue.defaultSwing ?? catalogue.swings[0]?.id ?? null;
   const samples = catalogue.swings
     .map(
       (s): SwingEntry => ({
-        key: `sample:${s.id}`,
+        key: `${SAMPLE_KEY}${s.id}`,
         id: s.id,
         origin: "sample",
         label: s.label,
@@ -176,7 +204,7 @@ export function buildEntries(catalogue: Catalogue, api: ApiState): SwingEntry[] 
     api.status === "online"
       ? api.swings.map(
           (s): SwingEntry => ({
-            key: `api:${s.id}`,
+            key: `${LIVE_KEY}${s.id}`,
             id: s.id,
             origin: "api",
             label: s.label ? `${s.id} · labelled ${words(s.label)}` : s.id,
