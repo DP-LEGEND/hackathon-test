@@ -36,7 +36,7 @@ LABEL_TO_FAULT: dict[str, Optional[str]] = {
     "over_rotation": "over_rotation",
     "straight_arm": "straight_arm",
     "open_stance": "stance_too_open",
-    "rolled_wrist": "rolling_wrist",
+    "rolled_wrist": "rolled_wrist",
 }
 
 # Measurements worth trying for each fault (the current rule's is always included).
@@ -45,7 +45,7 @@ CANDIDATES: dict[str, list[str]] = {
     "over_rotation": ["hip_turn_range_deg", "shoulder_turn_deg"],
     "straight_arm": ["elbow_min_before_deg", "elbow_at_contact_deg"],
     "stance_too_open": ["stance_width_ratio", "stance_open_deg"],
-    "rolling_wrist": ["forearm_roll_deg"],
+    "rolled_wrist": ["forearm_roll_deg"],
 }
 
 MIN_SWINGS = 5  # measured FAULT swings; fewer and the fault is disabled

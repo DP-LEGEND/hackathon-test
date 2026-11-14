@@ -1,0 +1,4 @@
+# Never commit real wrist-sensor recordings (Sensor Logger exports).
+# Put them in data/raw/wrist/ at the repo root, which is git-ignored.
+*.csv
+*.zip

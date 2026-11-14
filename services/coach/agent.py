@@ -8,6 +8,7 @@ only these numbers.
 Try it (from inside services/):
 
     python -m coach.agent ../data/samples/swing_sample.json --stroke backhand
+    python -m coach.agent swing.json --wrist wrist_metrics.json   # with the forearm sensor
 """
 
 from __future__ import annotations
@@ -114,9 +115,14 @@ def main() -> None:
     parser.add_argument("swing", help="path to a Swing JSON file")
     parser.add_argument("--stroke", choices=["forehand", "backhand"], help="override stroke detection")
     parser.add_argument("--fps-real", type=float, help="real capture fps for slow-mo clips")
+    parser.add_argument("--wrist", help="wrist_metrics.json from python -m wrist.run (adds the rolled_wrist check)")
     args = parser.parse_args()
     with open(args.swing) as fh:
         swing = json.load(fh)
+    if args.wrist:
+        from coach.wrist_sensor import attach_wrist  # CLI-only
+        with open(args.wrist) as fh:
+            swing = attach_wrist(swing, json.load(fh))
     print(json.dumps(coach_swing(swing, args.stroke, args.fps_real), indent=2))
 
 
