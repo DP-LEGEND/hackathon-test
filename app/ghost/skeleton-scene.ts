@@ -170,7 +170,7 @@ export type BallPathView = {
 function pathTag(text: string, colour: string, above: boolean): CSS2DObject {
   const el = document.createElement("div");
   el.className =
-    "rounded-md border bg-background/90 px-1.5 py-0.5 font-mono text-[0.65rem] leading-tight font-semibold tracking-wide whitespace-nowrap";
+    "rounded-md border bg-background/90 px-2 py-0.5 font-mono text-xs leading-tight font-semibold tracking-wide whitespace-nowrap";
   el.style.color = colour;
   el.style.borderColor = colour;
   el.style.margin = above ? "0 0 6px" : "6px 0 0";
@@ -302,6 +302,7 @@ export type ReplayLayout = {
   floor: FloorOffsets;
   /** Assumed ball contact spot in court coordinates; the player is drawn beside it. Null = at the T. */
   contactSpot: Vec3 | null;
+  /** Null hides the ball paths. */
   ballPaths: { you: BallPathView; ghost: BallPathView } | null;
 };
 
@@ -431,9 +432,11 @@ export class SkeletonScene {
     }
   }
 
-  setPoses(you: SkeletonPose, ghost: SkeletonPose) {
+  /** Ghost null = hide the ghost. */
+  setPoses(you: SkeletonPose, ghost: SkeletonPose | null) {
     this.you.update(you);
-    this.ghost.update(ghost);
+    if (ghost) this.ghost.update(ghost);
+    else this.ghost.group.visible = false;
   }
 
   /** Overlay (default) or ghost moved beside the player, towards the middle of the court. */
