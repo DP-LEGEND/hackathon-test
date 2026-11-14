@@ -74,6 +74,21 @@ export type CoachFault = {
   severity: number | null;
   /** How far the ghost should move it (fault library `fix_amount`). */
   fixAmount: number | null;
+  /** Where the fault's threshold comes from, e.g. "mock wrist-sensor swings". Null if not given. */
+  source: string | null;
+};
+
+/**
+ * What the coach read from the forearm sensor (its `metrics`, docs/interfaces.md swing["wrist"]).
+ * `source` is null when it didn't use one, and then `skipped` says why.
+ */
+export type CoachWristSensor = {
+  source: "sensor" | "mock sensor" | null;
+  skipped: string | null;
+  /** forearm_roll_deg: size of the roll through contact, deg. */
+  rollDeg: number | null;
+  /** forearm_roll_rate_dps: fastest roll rate about the forearm, deg/s. */
+  rollRateDps: number | null;
 };
 
 /** Output of `coach.agent.coach_swing`: the top fault and its cue, decided by the fault library. */
@@ -91,6 +106,9 @@ export type CoachCaption = {
   ghostFixAmount: number | null;
   /** Why the ghost shows a different fix from the caption's, e.g. the top one isn't animated yet. */
   ghostNote: string | null;
+  /** Ids of every fault that fired: `faults`, plus the top fault and the live coach's `other_faults`. */
+  firedFaultIds: string[];
+  wristSensor: CoachWristSensor;
 };
 
 /** True when both PREDICTED paths are the same points: the fix didn't change the ball. Equality only. */
@@ -315,6 +333,8 @@ export type CatalogueSwing = {
   swing: string;
   coach: string;
   fixes: Record<string, CatalogueFix>;
+  /** Optional wrist_series.json (services/wrist) holding this swing's forearm-sensor series. */
+  wristSeries: string | null;
 };
 
 /** public/swings/catalogue.json: the saved samples plus the fix list and demo sizes. */
@@ -372,6 +392,10 @@ export function parseCatalogue(value: unknown): Catalogue {
         swing: fileName(entry.swing, `${where}.swing`),
         coach: fileName(entry.coach, `${where}.coach`),
         fixes: Object.fromEntries(swingFixes),
+        wristSeries:
+          entry.wristSeries === undefined || entry.wristSeries === null
+            ? null
+            : fileName(entry.wristSeries, `${where}.wristSeries`),
       };
     }),
   };
@@ -390,6 +414,22 @@ function parseFault(value: unknown, where: string): CoachFault {
     unit: typeof f.unit === "string" ? f.unit : "",
     severity: numOrNull(f.severity, `${where}.severity`),
     fixAmount: numOrNull(f.fix_amount, `${where}.fix_amount`),
+    source: typeof f.source === "string" && f.source !== "" ? f.source : null,
+  };
+}
+
+/** The coach's sensor readings. Optional in the file (older coach output has none): never throws. */
+function parseWristSensor(metrics: unknown): CoachWristSensor {
+  const m = isRecord(metrics) ? metrics : {};
+  const reading = (key: string): number | null => {
+    const value = m[key];
+    return isFiniteNumber(value) ? value : null;
+  };
+  return {
+    source: m.wrist_sensor === "sensor" || m.wrist_sensor === "mock sensor" ? m.wrist_sensor : null,
+    skipped: typeof m.wrist_sensor_skipped === "string" && m.wrist_sensor_skipped !== "" ? m.wrist_sensor_skipped : null,
+    rollDeg: reading("forearm_roll_deg"),
+    rollRateDps: reading("forearm_roll_rate_dps"),
   };
 }
 
@@ -409,6 +449,14 @@ export function parseCoach(value: unknown): CoachCaption {
     ghostFix: typeof c.ghost_fix === "string" && c.ghost_fix !== "" ? c.ghost_fix : null,
     ghostFixAmount: numOrNull(c.ghost_fix_amount, "ghost_fix_amount"),
     ghostNote: typeof c.ghost_note === "string" && c.ghost_note !== "" ? c.ghost_note : null,
+    firedFaultIds: [
+      ...new Set([
+        ...faults.map((f) => f.id),
+        ...(fault ? [fault.id] : []),
+        ...(Array.isArray(c.other_faults) ? c.other_faults.filter((id): id is string => typeof id === "string") : []),
+      ]),
+    ],
+    wristSensor: parseWristSensor(c.metrics),
   };
 }
 

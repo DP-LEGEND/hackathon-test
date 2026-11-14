@@ -7,7 +7,8 @@ The demo flow has four steps: **pick a swing**, **the coach's call**, **the ghos
 | `ghost-demo.tsx` | The flow: steps, which swing and fix, loading |
 | `sources.ts` | Swings from the swing API or the saved samples |
 | `ghost-stage.tsx`, `skeleton-scene.ts` | The 3D view (three.js) and playback |
-| `compare.ts`, `swing.ts` | Checks the JSON before anything is drawn |
+| `compare.ts`, `swing.ts`, `wrist.ts` | Checks the JSON before anything is drawn |
+| `wrist-panel.tsx` | The Wrist sensor panel on the coach's call |
 
 ## Where swings come from
 
@@ -23,6 +24,20 @@ The demo flow has four steps: **pick a swing**, **the coach's call**, **the ghos
 Once a swing's coach result has loaded, the page asks `GET /api/coach/{id}/voice` (Henoch's #60) for `{cue, audioUrl, source}`, unless the live service is known to be offline. A first call can take a few seconds (Claude, then ElevenLabs), so the plain caption shows meanwhile. Then `cue` replaces the caption's cue. **Hear the coach** plays `audioUrl` with `new Audio(audioUrl).play()`, and a new play stops the one before. The button is hidden when `audioUrl` is null. The caption says **worded by Claude** only when `source` is `"claude"`. A 404 (before #60 is merged, or a swing the service doesn't know, such as a saved sample whose run isn't in `data/processed`), any error, a 60 s timeout or a malformed answer all keep the plain caption, with no message. Only an inline `data:audio/…` clip or a same-origin path is played.
 
 The ghost starts on the coach's `ghost_fix` with `ghost_fix_amount`, and the caption shows `ghost_note` when the ghost shows a different fix from the top fault. Older coach files without those fields fall back to the worst fault physics can fix. Fixes the coach didn't flag use a small fixed demo size (`demoAmounts` in the catalogue). A fix physics can't apply to a swing shows its reason. When a fix leaves both PREDICTED paths identical, the court step draws one path and says so.
+
+## Wrist sensor panel
+
+When a swing has forearm-sensor data, the coach's call step shows a **Wrist sensor** panel. With no data it is hidden. The data is one swing's entry in a `wrist_series.json` from `services/wrist` (format in `services/wrist/README.md`); the swing's own `wrist` field is the one in `docs/interfaces.md`. The panel shows:
+
+- **Wrist speed at contact**: the forearm's turn rate at 0 ms, read from `angular_speed_dps`.
+- **Roll through contact**: `roll_change_deg`, from −150 to +100 ms (the number the coach quotes).
+- **Peak roll rate**: the coach's `forearm_roll_rate_dps`, when the coach read the sensor.
+- Two small charts sharing the time axis, −300 to +200 ms. One is `roll_deg`, the other `angular_speed_dps`. Contact is marked, the measured window is shaded, and there is a crosshair readout on hover or with the arrow keys. **Show the numbers** gives the same values as a table.
+- A **Rolled wrist** badge when the coach's `rolled_wrist` fault fired (in `faults`, the top `fault` or the live coach's `other_faults`). **Firm wrist** when the coach read the sensor and the fault didn't fire. **Not judged**, with the coach's reason, when it didn't read the sensor.
+
+Every value is labelled **MEASURED (sensor)**, plus **MOCK** when the file says `"mock": true`. The rate chart is the forearm's *total* turn rate (|gyro|, smoothed over 30 ms), the only rate series `wrist_series.json` exports. It is not the roll rate about the forearm, and the page doesn't work one out from the roll angle. The tempo, impact and racket-speed fields are ESTIMATES, so the panel doesn't show them. An entry with `"usable": false` shows nothing.
+
+**Giving a saved sample wrist data:** put the `wrist_series.json` from `python -m wrist.run` in `public/swings/` and name it in that swing's catalogue entry as `"wristSeries": "<file>.json"`. Its `swings` must be keyed by the sample's `id`. Regenerate the sample's coach file from the swing with its `wrist` entry attached (`coach.wrist_sensor.attach_wrist`, or `python -m coach.agent <swing> --wrist wrist_metrics.json`), so the coach judges `rolled_wrist`. Live swings don't show the panel yet: the API doesn't serve wrist data.
 
 ## Where the player stands (display only)
 

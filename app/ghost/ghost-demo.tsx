@@ -38,12 +38,14 @@ import {
   loadVoiceFor,
   loadCompareFor,
   loadSwingFor,
+  loadWristFor,
   type ApiState,
   type FixOption,
 } from "./sources";
 import type { SwingCoordinates } from "./swing";
 import { SwingPicker, type CatalogueState } from "./swing-picker";
 import { useAsync, type Async } from "./use-async";
+import { WristSensorPanel } from "./wrist-panel";
 
 const STEPS = [
   {
@@ -107,6 +109,7 @@ export function GhostDemo({ requestedSwing }: { requestedSwing: string | null })
   const [swingAttempt, setSwingAttempt] = useState(0);
   const [coachAttempt, setCoachAttempt] = useState(0);
   const [compareAttempt, setCompareAttempt] = useState(0);
+  const [wristAttempt, setWristAttempt] = useState(0);
   const [catalogueAttempt, setCatalogueAttempt] = useState(0);
   const [catalogue, setCatalogue] = useState<Async<Catalogue>>({ status: "loading" });
   const [apiAttempt, setApiAttempt] = useState(0);
@@ -170,6 +173,9 @@ export function GhostDemo({ requestedSwing }: { requestedSwing: string | null })
   const coachPromise = useMemo(() => (entry ? loadCoachFor(entry, coachAttempt) : null), [entry, coachAttempt]);
   const swing = useAsync(swingPromise);
   const coach = useAsync(coachPromise);
+  // Forearm-sensor series, only for swings that have one (null hides the Wrist sensor panel).
+  const wristPromise = useMemo(() => (entry ? loadWristFor(entry, wristAttempt) : null), [entry, wristAttempt]);
+  const wrist = useAsync(wristPromise);
   const coachCaption = coach.status === "ready" ? coach.value : null;
   const coachSettled = coach.status === "ready" || coach.status === "error";
   const faults = useMemo(() => coachCaption?.faults ?? [], [coachCaption]);
@@ -390,6 +396,14 @@ export function GhostDemo({ requestedSwing }: { requestedSwing: string | null })
           </GhostStage>
 
           {step === "coach" && <CoachDetails state={caption} />}
+          {step === "coach" && (
+            <WristSensorPanel
+              state={wrist}
+              expected={entry.wristFile !== null}
+              caption={caption}
+              onRetry={() => setWristAttempt((n) => n + 1)}
+            />
+          )}
           {showGhost && compare && (
             <div className={cn("grid gap-3", onCourt && "lg:grid-cols-2")}>
               {onCourt && <BallChanges compare={compare} samePath={samePath} />}

@@ -813,7 +813,7 @@ def test_every_rule_measurement_knows_its_joints(sample: dict) -> None:
 @pytest.mark.parametrize("measurement", [
     "elbow_at_contact_deg", "elbow_min_before_deg", "wrist_angle_change_pre_deg", "wrist_uncock_deg",
     "wrist_uncock_ms", "wrist_release_ms", "shoulder_turn_deg", "hip_turn_range_deg",
-    "stance_width_ratio", "stance_open_deg"])
+    "stance_width_ratio", "stance_open_deg", "wrist_at_contact_deg"])
 def test_a_filled_joint_at_contact_nulls_each_measurement_that_reads_it(sample: dict, measurement: str) -> None:
     joints = {j for part, _ in _reads(sample, measurement) for j in part}
     for joint in sorted(joints):
@@ -829,23 +829,23 @@ def test_a_filled_joint_at_contact_nulls_each_measurement_that_reads_it(sample: 
 
 ALL_MEASUREMENTS = ["elbow_at_contact_deg", "elbow_min_before_deg", "wrist_angle_change_pre_deg",
                     "wrist_uncock_deg", "wrist_uncock_ms", "wrist_release_ms", "shoulder_turn_deg",
-                    "hip_turn_range_deg", "stance_width_ratio", "stance_open_deg"]
+                    "hip_turn_range_deg", "stance_width_ratio", "stance_open_deg", "wrist_at_contact_deg"]
 
 
 @pytest.mark.parametrize("offset", [-1, 1])
-def test_wrist_filled_next_to_contact_skips_stance(sample: dict, offset: int) -> None:
+def test_wrist_filled_next_to_contact_judges_backhand_stance_from_the_feet(sample: dict, offset: int) -> None:
+    # The shot direction (hitting wrist gradient at contact) is guessed, but the ankles were
+    # seen: the backhand stance is judged against the front-wall axis instead of skipped.
     c = sample["contactFrame"]
     assert R_WRIST in {j for part, _ in _reads(sample, "stance_open_deg") for j in part}  # no racket tracked
     swing = _flagged(sample, c + offset, R_WRIST)
     assert swing["frames"][c]["filled"][R_WRIST] is False  # real at contact
     m = measure_swing(swing, "backhand")
-    assert m["stance_open_deg"] is None
-    assert m["guessed_joints"]["stance_open_deg"] == f"joint {R_WRIST} filled at frame {c + offset}"
+    assert math.isfinite(m["stance_open_deg"]) and m["stance_direction"] == "front_wall_axis"
+    assert "stance_open_deg" not in m["guessed_joints"]
     result = coach_swing(swing, stroke="backhand")
-    assert STANCE_FAULT in result["not_measured"]
-    assert result["fault"] is None or result["fault"]["id"] != STANCE_FAULT
-    assert STANCE_FAULT not in result["other_faults"]
-    # The forehand stance ghost amount comes from the same angle, so it isn't sized either.
+    assert STANCE_FAULT not in result["not_measured"]
+    # The forehand stance ghost amount comes from the hitting-direction angle, so it isn't sized.
     assert measure_swing(swing, "forehand")["stance_open_deg"] is None
 
 
