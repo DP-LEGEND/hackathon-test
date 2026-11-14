@@ -76,6 +76,8 @@ In the PR description, write what you changed, which checks passed and how to se
 
 Don't let PRs sit, because small and fast beats big and late.
 
+**Your merge signal:** within a few minutes of opening or updating a PR, a Claude comment on it starts with **✅ OK to merge** or **⛔ Don't merge yet: reason**. It checks that the PR stays in the author's own folders, that CI is green, and that there are no keys or big files. Approve and merge on ✅. On ⛔, fix the reason first. You can also see which folders a PR touches yourself in its **Files changed** tab.
+
 **Your own folders only:** once the CI check is green, ask any teammate to click Approve (GitHub needs one approval), then click "Merge pull request" yourself. You don't need to wait for Dev.
 
 **Shared files:** Dev reviews and merges anything that touches `package.json`, the lockfile, `lib/ghost/types.ts`, `docs/interfaces.md`, `CLAUDE.md`, `AGENTS.md`, config, layout or global CSS.
