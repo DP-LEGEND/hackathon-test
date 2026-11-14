@@ -23,7 +23,9 @@ def stereo_pair():
                      14: [.3, -.3, 4.1], 16: [.35, -.1, 4]}.items():
         world[:, j] = point
     for contact in (.6, 1.5):
-        world[:, 16, 0] += .6 * (1 + np.tanh((times - contact) / .035)) / 2
+        # Deliberate slower pullback followed by a fast sweep and follow-through.
+        world[:, 16, 0] -= .18 * (1 + np.tanh((times - contact + .24) / .07)) / 2
+        world[:, 16, 0] += .78 * (1 + np.tanh((times - contact) / .035)) / 2
     for i, ti in enumerate(times):
         rotation = cv2.Rodrigues(np.array([0., .15 * np.sin(4 * ti), 0.]))[0]
         world[i] = (world[i] - [0, 0, 4]) @ rotation.T + [0, .02 * np.sin(5 * ti), 4]
@@ -202,6 +204,8 @@ def test_each_missing_iphone_key_joint_rejects_even_with_good_stereo(stereo_pair
     monkeypatch.setattr(process, 'find_swings', lambda *args, **kw: [
         {'start': 30, 'end': 110, 'peak': 70}])
     a['vis'][30:111, joint] = 0
+    a['world'][30:111, joint] = np.nan
+    a['img'][30:111, joint] = np.nan
     swings, report = swings_from_raw(a, b, Options(focal_a=900, focal_b=900))
     assert swings == [] and report['written'] == 0 and len(report['rejected']) == 1
     assert 'iPhone view contains missing key joints' in report['rejected'][0]['reason']
@@ -210,7 +214,8 @@ def test_each_missing_iphone_key_joint_rejects_even_with_good_stereo(stereo_pair
 def test_no_usable_swings_is_failed_and_reruns_use_cached_pose(tmp_path, monkeypatch, stereo_pair, capsys):
     import pipeline.process as process
     a, b, *_ = stereo_pair
-    a['vis'][:, 13] = 0  # segmentation still sees both peaks, but core gate fails
+    a['world'][:, 13] = np.nan  # segmentation sees both peaks, but core gate fails
+    a['img'][:, 13] = np.nan
     paths = [tmp_path / name for name in ('a.mov', 'b.mov', 'pose.task')]
     for path in paths:
         path.write_bytes(path.name.encode())
@@ -258,7 +263,8 @@ def test_fresh_output_reuses_cache_without_touching_successful_output(tmp_path, 
 
 def test_bounded_iphone_gap_can_be_repaired_but_missing_optional_joint_does_not_reject(stereo_pair):
     a, b, *_ = stereo_pair
-    a['vis'][60:65, 13] = 0  # five frames < .1 real second at120fps
+    a['world'][60:65, 13] = np.nan  # short bounded coordinate gap, not low visibility
+    a['img'][60:65, 13] = np.nan
     a['vis'][:, 5] = 0
     b['vis'][:, 5] = 0
     swings, report = swings_from_raw(a, b, Options(focal_a=900, focal_b=900))
@@ -307,3 +313,54 @@ def test_failed_stereo_normalisation_recovers_using_complete_mono_swing(stereo_p
     assert 'degenerate stereo pose' in swings[0]['metadata']['fallbackReason']
     np.testing.assert_allclose([f['joints'] for f in swings[0]['frames']],
                                [f['joints'] for f in mono[0]['frames']])
+
+
+@pytest.mark.parametrize('visibility', [0., .01, .15, .29, .3, 1.])
+def test_finite_mono_joints_survive_any_visibility_and_report_confidence(stereo_pair, visibility):
+    from pipeline.process import CORE_JOINTS
+    a, b, *_ = stereo_pair
+    a['vis'][:, CORE_JOINTS] = visibility
+    b['vis'][:] = 0
+    swings, report = swings_from_raw(a, b, Options(focal_a=900, focal_b=900))
+    assert report['detected'] == report['written'] == 2 and report['rejected'] == []
+    for swing in swings:
+        assert swing['source'] == 'mono'
+        assert swing['metadata']['coreVisibility'] == pytest.approx(visibility)
+        assert swing['metadata']['lowConfidence'] == (visibility < .3)
+
+
+def test_low_visibility_remains_excluded_from_stereo(stereo_pair):
+    a, b, *_ = stereo_pair
+    a['vis'][:, 13] = .1  # finite mono elbow, not a reliable stereo correspondence
+    swings, report = swings_from_raw(a, b, Options(focal_a=900, focal_b=900))
+    assert report['written'] == 2 and all(s['source'] == 'mono' for s in swings)
+
+
+def test_unknown_visibility_is_flagged_without_discarding_finite_mono(stereo_pair):
+    a, b, *_ = stereo_pair
+    a['vis'][:] = np.nan
+    b['vis'][:] = 0
+    swings, report = swings_from_raw(a, b, Options(focal_a=900, focal_b=900))
+    assert report['written'] == 2
+    assert all(s['metadata']['coreVisibility'] == 0 and s['metadata']['lowConfidence'] for s in swings)
+    for swing in swings:
+        json.dumps(swing, allow_nan=False)
+
+
+@pytest.mark.parametrize('slowdown', [1, 4])
+@pytest.mark.parametrize('missing_frames,written', [(20, 2), (30, 2), (31, 1)])
+def test_default_quarter_second_gap_limit_is_in_real_time(stereo_pair, slowdown, missing_frames, written):
+    a, b, *_ = stereo_pair
+    a['t'] *= slowdown
+    a['fps'] /= slowdown
+    a['world'][40:40 + missing_frames, 13] = np.nan
+    a['img'][40:40 + missing_frames, 13] = np.nan
+    b['vis'][:] = 0
+    options = Options(slowdown_a=slowdown, focal_a=900, focal_b=900)
+    swings, report = swings_from_raw(a, b, options)
+    assert options.max_gap_s == .25 and options.min_speed == 8
+    assert report['detected'] == 2 and len(swings) == report['written'] == written
+    if missing_frames == 20:
+        _, strict = swings_from_raw(a, b, Options(slowdown_a=slowdown, max_gap_s=.1,
+                                                 focal_a=900, focal_b=900))
+        assert strict['written'] == 1

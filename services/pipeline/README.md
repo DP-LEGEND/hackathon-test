@@ -61,8 +61,19 @@ source start and contact frame indices for comparison with the source video.
 ## Measurement limits and quality
 
 - Swing detection uses hip-relative dominant-wrist speed (default threshold
-  6 torso lengths / second, minimum peak spacing .5 real seconds), with .45 s
-  before and .35 s after the peak. `--min-speed` adjusts the threshold.
+  **8 torso lengths / second**, minimum accepted-peak spacing .5 real seconds),
+  with .45 s before and .35 s after the peak. `--min-speed` adjusts the threshold.
+  Smoothing uses about .06 real seconds rather than a fixed frame count.
+  A candidate also needs a pullback, fast forward sweep and follow-through;
+  speed alone does not make a movement a swing. The direction is derived from
+  the wrist near the peak, so hand choice and image rotation do not set its sign.
+  Starting heuristic thresholds: .12 torso lengths of preceding pullback,
+  .25 before the peak and .10 after it, .50 total forward sweep, and net/path
+  coherence at least .60. Pattern filtering precedes duplicate suppression.
+  These are conservative geometric heuristics, not validated classifications:
+  a cropped/foreshortened backswing can be missed, and a feed with a genuine
+  swing-like motion can still pass. Tune against labelled real recordings;
+  audio-confirmed hits remain a separate follow-up.
 - **Contact is estimated from the wrist-speed peak**, not an observed ball hit.
   `metadata.contactMethod` makes that explicit. Stroke side is also a heuristic;
   validate it against labels before using it to score technique.
@@ -83,9 +94,15 @@ source start and contact frame indices for comparison with the source video.
   hip-mid torso; pass `--torso-m` for the player's measured length. This is an
   estimated-scale reconstruction, not a calibrated motion-capture measurement.
 - The iPhone must retain **shoulders (11/12), elbows (13/14), wrists (15/16)
-  and hips (23/24)**. A joint needs finite image/world coordinates and visibility
-  above .3. Only short **bounded** missing runs are interpolated (default .1 real
-  seconds, `--max-gap-s`); longer gaps/endpoints in these joints reject that swing.
+  and hips (23/24)**. Mono accepts finite image/world coordinates **regardless
+  of visibility**, including zero; visibility estimates occlusion rather than
+  whether MediaPipe returned a position. Only stereo retains its visibility
+  threshold above .3. Per swing, `metadata.coreVisibility` reports the mean
+  core-joint visibility (six decimal places), and `metadata.lowConfidence` flags
+  values below .3 without discarding the swing. Nonfinite visibility is reported
+  as zero confidence. Only **bounded** missing coordinate runs are interpolated
+  (default **.25 real seconds**, `--max-gap-s`); longer gaps/endpoints in the
+  required joints reject that swing.
   Knees, ankles, face, hand and foot landmarks are optional. Missing optional
   coordinates repeat their parent **after** orientation/scaling; their indices
   are disclosed in `metadata.approximatedJoints`. These are replay placeholders,

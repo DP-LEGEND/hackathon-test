@@ -26,8 +26,8 @@ class Options:
     torso_m: float = 0.5
     focal_a: float | None = None
     focal_b: float | None = None
-    min_speed: float = 6.0
-    max_gap_s: float = 0.1
+    min_speed: float = 8.0
+    max_gap_s: float = 0.25
     model_path: str = DEFAULT_MODEL
     no_cache: bool = False
     cache_dir: str | None = None
@@ -108,7 +108,9 @@ def swings_from_raw(a: dict, b: dict, options: Options = Options()) -> tuple[lis
     max_gap = max(0, int(options.max_gap_s * fps_real))
     # The iPhone gate is independent of the iPad and of stereo reconstruction.
     mono = np.asarray(a["world"], dtype=float).copy()
-    observed = np.isfinite(a["img"][:, :, :2]).all(axis=2) & (a["vis"] > .3)
+    # Visibility estimates occlusion, not whether MediaPipe detected a position.
+    # Keep finite low-visibility mono joints; expose confidence in the metadata.
+    observed = np.isfinite(a["img"][:, :, :2]).all(axis=2)
     mono[~observed] = np.nan
     mono = clean(mono, max_gap=max_gap)
     cal, calibration_error = None, None
@@ -151,6 +153,10 @@ def swings_from_raw(a: dict, b: dict, options: Options = Options()) -> tuple[lis
         swing["fpsReal"] = fps_real
         swing["side"] = (classify_side(world, contact, options.hand)
                          if options.side == "auto" else options.side)
+        visibility = np.nan_to_num(a["vis"][start:end, CORE_JOINTS],
+                                   nan=0., posinf=0., neginf=0.)
+        # Stable reporting at the .3 boundary despite floating-point summation.
+        core_visibility = round(float(np.clip(visibility, 0, 1).mean()), 6)
         swing["metadata"] = {
             "hand": options.hand,
             "contactMethod": "wrist-speed-peak-estimate",
@@ -161,6 +167,7 @@ def swings_from_raw(a: dict, b: dict, options: Options = Options()) -> tuple[lis
             "scaleMethod": "assumed-torso-length", "torsoMetres": options.torso_m,
             "reconstruction": source, "approximatedJoints": filled,
             "fallbackReason": fallback_reason,
+            "coreVisibility": core_visibility, "lowConfidence": core_visibility < .3,
             "optionalJointPolicy": "missing optional joints repeat their parent; not measured",
         }
         swings.append(swing)
