@@ -7,7 +7,7 @@ import pytest
 
 import physics.compare as cmp
 from physics.ball import COURT_WIDTH_M, DEFAULT_CONTACT, predict_ball_path
-from physics.compare import COACH_METRICS, METRICS, RACKET_LEVER_M, compare, estimate_racket_speed, main
+from physics.compare import METRICS, RACKET_LEVER_M, compare, estimate_racket_speed, main
 from physics.ghost import FIXES
 from physics.tests.swing_factory import make_swing
 
@@ -30,6 +30,9 @@ def test_result_is_plain_json_and_every_ball_path_is_predicted(elbow):
         assert back[side]["racketSpeed"]["estimate"] is True and back[side]["racketSpeed"]["label"] == "ESTIMATE"
     assert back["delta"]["ball"]["predicted"] is True and back["delta"]["ball"]["label"] == "PREDICTED"
     assert any(line.startswith("PREDICTED ball") for line in back["delta"]["summary"])
+    # The coach measures for itself (coach/faults.py measure_swing); compare() doesn't speak its schema.
+    assert "coachMetrics" not in back["you"] and "coachMetrics" not in back["ghost"]
+    assert set(back["you"]["metrics"]) == set(METRICS)
 
 
 def test_ghost_metrics_move_by_the_fix_and_nothing_else(elbow):
@@ -38,6 +41,8 @@ def test_ghost_metrics_move_by_the_fix_and_nothing_else(elbow):
     assert d["elbow_at_contact_deg"]["ghost"] == pytest.approx(d["elbow_at_contact_deg"]["you"] + 12, abs=0.11)
     assert d["shoulder_turn_deg"]["change"] == 0.0
     assert d["wrist_release_ms"]["change"] == 0.0
+    # Not 0: the stance is measured against the racket's direction at contact, which moves with the arm.
+    assert abs(d["stance_open_deg"]["change"]) < 6.0
     assert d["elbow_at_contact_deg"]["unit"] == "deg" and d["wrist_release_ms"]["unit"] == "ms"
     assert elbow["delta"]["summary"][0] == (
         f"elbow at contact {d['elbow_at_contact_deg']['you']:g} -> {d['elbow_at_contact_deg']['ghost']:g} deg (+12)")
@@ -57,6 +62,33 @@ def test_more_shoulder_turn_swings_faster_so_the_predicted_ball_is_faster(good):
     assert r["delta"]["metrics"]["shoulder_turn_deg"]["change"] == pytest.approx(15.0)
     assert r["ghost"]["racketSpeed"]["value"] > r["you"]["racketSpeed"]["value"]
     assert r["delta"]["ball"]["speedKmh"]["change"] > 0
+
+
+# The new fixes: the ghost moves the fix's own metric by the amount; feet-only and
+# shoulder-only edits leave the arm alone, so the PREDICTED ball can only change through
+# the racket speed estimate.
+@pytest.mark.parametrize("fix,amount,metric", [
+    ("close_stance", 15, "stance_open_deg"),
+    ("bend_elbow", 10, "elbow_at_contact_deg"),
+    ("turn_shoulders_less", 15, "shoulder_turn_deg"),
+])
+def test_new_fixes_work_in_compare(good, fix, amount, metric):
+    r = json.loads(json.dumps(compare(good, fix, amount), allow_nan=False))
+    d = r["delta"]["metrics"]
+    assert d[metric]["change"] == pytest.approx(-amount, abs=0.11)
+    for k in ("elbow_at_contact_deg", "shoulder_turn_deg", "wrist_at_contact_deg", "wrist_release_ms"):
+        if k != metric:
+            assert d[k]["change"] == 0.0, k
+    assert r["fix"] == {"id": fix, "amount": float(amount), "unit": "deg"}
+    assert r["ghost"]["swing"]["synthetic"] is True
+    assert r["ghost"]["ball"]["label"] == "PREDICTED"
+    assert any(line.startswith(METRICS[metric][1]) for line in r["delta"]["summary"])
+
+
+def test_closing_the_stance_doesnt_change_the_predicted_ball(good):
+    r = compare(good, "close_stance", 15)
+    assert r["ghost"]["racketSpeed"] == r["you"]["racketSpeed"]
+    assert r["ghost"]["ball"] == r["you"]["ball"]
 
 
 def test_ball_path_is_ball_py_with_the_estimated_speed_and_assumed_shot(elbow):
@@ -119,8 +151,8 @@ def test_input_is_never_mutated(good):
 
 
 def test_bad_inputs_give_clear_errors(good):
-    with pytest.raises(ValueError, match="use 'straighten_elbow'"):
-        compare(good, "elbow_bend", 12)  # a coach metric name, not a fix
+    with pytest.raises(ValueError, match="fixes that use it are 'straighten_elbow', 'bend_elbow'"):
+        compare(good, "elbow_bend", 12)  # an edit name, not a fix
     with pytest.raises(ValueError, match="unknown fix"):
         compare(good, "swing_harder", 12)
     with pytest.raises(ValueError, match="hand"):
@@ -129,23 +161,10 @@ def test_bad_inputs_give_clear_errors(good):
         compare(good, "straighten_elbow", 500)
 
 
-def test_coach_mapping_points_at_real_metrics_and_fixes(elbow):
-    for row in COACH_METRICS.values():
-        assert row["metric"] is None or row["metric"] in METRICS
-        assert row["fix"] is None or row["fix"] in FIXES
-    m, coach = elbow["you"]["metrics"], elbow["you"]["coachMetrics"]
-    assert coach == {
-        "elbow_bend_deg": m["elbow_at_contact_deg"],
-        "shoulder_turn_deg": m["shoulder_turn_deg"],
-        "wrist_angle_deg": m["wrist_at_contact_deg"],
-        "contact_point_cm": None,  # not measured yet
-    }
-
-
-def test_coach_mapping_matches_the_coach_names():
-    cue = pytest.importorskip("coach.cue")  # needs the coach's packages (anthropic, pydantic)
-    assert set(COACH_METRICS) == set(cue.MetricName.__args__)
-    assert {row["field"] for row in COACH_METRICS.values()} == set(cue.SwingMetrics.model_fields)
+def test_every_fix_runs_through_compare(good):
+    for fix in FIXES:
+        r = compare(good, fix, 10)
+        assert r["fix"]["id"] == fix and r["ghost"]["swing"]["synthetic"] is True
 
 
 def test_cli_prints_the_json(good, tmp_path, capsys):

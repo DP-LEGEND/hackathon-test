@@ -7,7 +7,7 @@ One function, two jobs:
   (e.g. apply_fix(swing, "straighten_elbow", 12)).
 
 How bone lengths stay fixed: every edit rotates a rigid part of the body around a
-joint (forearm about the elbow, hand about the wrist, upper body about the hips).
+joint (forearm about the elbow, hand about the wrist, upper body or legs about the hips).
 A rotation can't change the distance between two points, so no bone stretches.
 
 Each edit fades in and out with a smooth cosine ramp so the replay never jumps.
@@ -23,12 +23,15 @@ from collections.abc import Mapping
 import numpy as np
 
 from physics.metrics import (
-    RELEASE_WINDOW_MS, contact_frame, real_fps, shoulder_coil, shoulder_yaw, wrist_angle,
+    RELEASE_WINDOW_MS, contact_frame, real_fps, shoulder_coil, shoulder_yaw, stance_angle, wrist_angle,
 )
 from physics.skeleton import (
     ARM, L_HIP, R_HIP, RACKET_THROAT, RACKET_TIP, UPPER_BODY, from_array, hitting_hand, mid,
     rotate, to_array, up_vector,
 )
+
+# Hips, legs and feet: what turns when the stance opens or closes. The upper body stays put.
+LOWER_BODY = list(range(L_HIP, 33))
 
 # Signed edits. The sign says which way; a fault and its fix are the same edit with
 # opposite signs.
@@ -46,18 +49,30 @@ EDITS = {
         "unit": "ms", "max_abs": 150.0,
         "doc": "+ breaks (uncocks) the wrist earlier, - holds the wrist cock longer",
     },
+    "stance_open": {
+        "unit": "deg", "max_abs": 90.0,  # the whole range: 0 = side-on, 90 = square
+        "doc": "+ opens the stance (feet more square to the shot), - closes it (more side-on). "
+               "Turns the hips and legs about the hip centre; blends in before contact and holds.",
+    },
 }
 
 # Coaching fixes the ghost can show: fix id -> (edit id, sign of the amount).
 FIXES = {
     "straighten_elbow": ("elbow_bend", -1.0),
+    "bend_elbow": ("elbow_bend", +1.0),
     "turn_shoulders_more": ("shoulder_turn", +1.0),
+    "turn_shoulders_less": ("shoulder_turn", -1.0),
     "hold_wrist_cock": ("wrist_early", -1.0),
+    "close_stance": ("stance_open", -1.0),
 }
 
 # Elbow edit timing (ms around contact): full strength from 100 ms before to 50 ms after.
 ELBOW_FULL_MS = (100.0, 50.0)
 ELBOW_RAMP_MS = 150.0
+# Stance edit timing (ms before contact): full strength from 200 ms before contact to the
+# end, after a 300 ms ramp, so the ghost steps into the new stance during the backswing.
+STANCE_FULL_MS = 200.0
+STANCE_RAMP_MS = 300.0
 
 
 def _envelope(n: int, fps: float, centre: int, before_ms: float, after_ms: float,
@@ -177,14 +192,34 @@ def _wrist_early(P, size, *, hand, contact, fps, up):
           [j["pinky"], j["index"], j["thumb"], RACKET_TIP, RACKET_THROAT], th - target)
 
 
-_EDIT_FUNCS = {"elbow_bend": _elbow_bend, "shoulder_turn": _shoulder_turn, "wrist_early": _wrist_early}
+def _stance_open(P, size, *, hand, contact, fps, up):
+    ang = stance_angle(P, hand, contact, up)
+    if not np.isfinite(ang):
+        raise ValueError("the feet or the hitting arm aren't visible at contact, so the stance can't be edited")
+    if size < 0 and -size > abs(ang):
+        raise ValueError(f"can't close the stance by {-size:g} deg: it is only {abs(ang):.0f} deg open")
+    if size > 0 and abs(ang) + size > 90.0:
+        raise ValueError(f"can't open the stance by {size:g} deg: it is already {abs(ang):.0f} deg open "
+                         "(90 = square to the shot)")
+    # Turn the feet line away from the hitting direction to open, towards it to close.
+    s = np.sign(ang) if ang != 0 else 1.0
+    w = _envelope(len(P), fps, contact, STANCE_FULL_MS, 0.0, STANCE_RAMP_MS, hold_after=True)
+    beta = np.radians(s * size) * w
+    centre = mid(P, L_HIP, R_HIP)
+    for i in np.flatnonzero(beta):
+        if np.isfinite(centre[i]).all():
+            P[i, LOWER_BODY] = rotate(P[i, LOWER_BODY], centre[i], up, beta[i])
+
+
+_EDIT_FUNCS = {"elbow_bend": _elbow_bend, "shoulder_turn": _shoulder_turn, "wrist_early": _wrist_early,
+               "stance_open": _stance_open}
 
 
 def edit_swing(swing: dict, edits: Mapping[str, float], fps_real: float | None = None,
                hand: str | None = None) -> dict:
     """Return a new swing with the edits applied, in order. Never mutates the input.
 
-    edits: e.g. {"elbow_bend": 12, "shoulder_turn": -15, "wrist_early": 40}
+    edits: e.g. {"elbow_bend": 12, "shoulder_turn": -15, "wrist_early": 40, "stance_open": -20}
     fps_real: real capture rate (frames per real second). Default: swing["fps"].
     hand: "R" or "L". Default: whichever wrist moves fastest.
 
