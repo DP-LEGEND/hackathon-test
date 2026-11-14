@@ -322,6 +322,12 @@ export function GhostStage({
             Reset view
           </Button>
         </div>
+        {sideBySide && ghost && coordinates.system === "court" && balls?.ghost && (
+          <p className="text-xs text-muted-foreground">
+            Side by side: the ghost and its PREDICTED ball path are drawn to the side, so the ghost&apos;s ball lands
+            off its real spot (display only).
+          </p>
+        )}
       </div>
     </section>
   );
