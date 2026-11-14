@@ -11,7 +11,8 @@ import cv2
 
 from pipeline.cache import extract_pair
 from pipeline.pose import DEFAULT_MODEL, extract_raw, to_swing
-from pipeline.segment import audio_hits, find_swings, wrist_speed
+from pipeline.segment import audio_hits, find_swings, wrist_speed, swing_evidence
+from pipeline.kinematics import gap_limit
 from pipeline.timing import Timeline
 from pipeline.stereo import calibrate, clean, normalise, triangulate
 
@@ -125,42 +126,69 @@ def swings_from_raw(a: dict, b: dict | None = None, options: Options = Options()
     # extrapolation using B's initial rate. Re-measure sync when changing ramps.
     real_offset = float(timeline_b.real(options.offset_b))
     synced_a = {**a, "t": real_a}
-    synced_b = {**b, "t": real_b} if b is not None else None
+    synced_b = {**b, 't': real_b,
+                # Preserve encoded-frame adjacency before the piecewise clock
+                # changes intervals. Resampling must not bridge dropped frames.
+                'frame_contiguous': np.diff(b['t']) <= 1.5 / b['fps']} if b is not None else None
     sections = timeline_a.sections(a["t"])
 
-    def clean_sections(points):
+    def clean_sections(points, filled, win=5):
         out = points.copy()
+        repaired = filled.copy()
         for lo, hi, factor in sections:
-            out[lo:hi] = clean(points[lo:hi], max_gap=int(options.max_gap_s * a["fps"] * factor))
-        return out
-    # The iPhone gate is independent of the iPad and of stereo reconstruction.
+            real_fps = a['fps'] * factor
+            limit = min(gap_limit(real_fps), int(options.max_gap_s * real_fps))
+            section_win = min(win, max(1, int(round(.04 * real_fps)) | 1))
+            out[lo:hi], repaired[lo:hi] = clean(points[lo:hi], win=section_win, max_gap=limit,
+                                                filled=filled[lo:hi], provenance=True)
+        return out, repaired
     mono = np.asarray(a["world"], dtype=float).copy()
-    # Visibility estimates occlusion, not whether MediaPipe detected a position.
-    # Keep finite mono joints above .1 visibility; expose confidence in metadata.
-    observed = np.isfinite(a["img"][:, :, :2]).all(axis=2) & (a["vis"] > .1)
+    observed = np.isfinite(a["img"][:, :, :2]).all(axis=2) & (a["vis"] >= .5)
+    mono_visibility = np.clip(np.nan_to_num(a['vis'], nan=0., posinf=0., neginf=0.), 0, 1)
+    mono_visibility[~np.isfinite(a['img'][:, :, :2]).all(axis=2)] = 0
     mono[~observed] = np.nan
     mono_filled = ~np.isfinite(mono).all(axis=2)
-    mono = clean_sections(mono)
+    mono, mono_filled = clean_sections(mono, mono_filled)
     cal, calibration_error = None, None
     stereo = np.full_like(mono, np.nan)
     stereo_filled = np.ones(mono.shape[:2], dtype=bool)
+    stereo_visibility = np.zeros(mono.shape[:2])
     try:
         if b is None:
             raise ValueError("Single camera: depth is estimated from MediaPipe")
         cal = calibrate(synced_a, synced_b, 1.0, real_offset, f_a=focal_a, f_b=focal_b)
-        reconstructed = triangulate(synced_a, synced_b, cal, 0, len(a["t"]))
+        reconstructed, stereo_filled, stereo_visibility = triangulate(
+            synced_a, synced_b, cal, 0, len(a['t']), provenance=True)
         # A stereo sample between B frames uses a temporally interpolated view.
         # Use the same fractional-frame exact-match tolerance as sample_b_at_a.
         target = real_a + real_offset
         index = np.clip(np.searchsorted(real_b, target, side="right") - 1, 0, len(real_b) - 2)
         weight = (target - real_b[index]) / (real_b[index + 1] - real_b[index])
         exact_b = np.isclose(weight, 0, rtol=0, atol=1e-9) | np.isclose(weight, 1, rtol=0, atol=1e-9)
-        stereo_filled = ~np.isfinite(reconstructed).all(axis=2) | ~exact_b[:, None]
-        stereo = clean_sections(reconstructed)
+        stereo_filled |= ~exact_b[:, None]
+        stereo, stereo_filled = clean_sections(reconstructed, stereo_filled)
     except (ValueError, cv2.error) as exc:
         # A cropped/unusable second view must not prevent usable iPhone swings.
         cal = None
         calibration_error = str(exc)
+    # A hidden A wrist must not defeat B's recovered 3D trajectory or inject
+    # low-confidence pixel spikes into detection/automatic hand selection.
+    detection = {**a, 'img': a['img'].copy(), 'vis': mono_visibility.copy()}
+    detection['img'][~observed] = np.nan
+    # Detection may use a bounded repair, while exported visibility remains the
+    # original camera evidence. The final metric gate uses the repaired 3D pose.
+    repaired_pixels, _ = clean_sections(detection['img'], ~observed, win=1)
+    usable = (~observed & np.isfinite(repaired_pixels).all(axis=2)
+              & np.isfinite(mono).all(axis=2))
+    detection['img'][usable] = repaired_pixels[usable]
+    detection['vis'][usable] = 1.
+    if cal is not None:
+        projected = stereo @ cal['Ka'].T
+        with np.errstate(invalid='ignore', divide='ignore'):
+            pixels = projected[:, :, :2] / projected[:, :, 2:]
+        recovered = ~observed & np.isfinite(pixels).all(axis=2)
+        detection['img'][recovered, :2] = pixels[recovered]
+        detection['vis'][recovered] = 1.
     if "audio_hits" in a:
         hits = np.asarray(a["audio_hits"])
     else:
@@ -169,12 +197,13 @@ def swings_from_raw(a: dict, b: dict | None = None, options: Options = Options()
     for lo, hi, factor in sections:
         if hi - lo < 2:
             continue
-        part = {**a, "img": a["img"][lo:hi], "t": real_a[lo:hi], "fps": a["fps"] * factor}
+        part = {**detection, 'img': detection['img'][lo:hi], 'vis': detection['vis'][lo:hi],
+                't': real_a[lo:hi], 'fps': a['fps'] * factor}
         section_events = []
         hands = ("R", "L") if options.hand == "auto" else (options.hand,)
         for hand in hands:
             for event in find_swings(part, min_speed=7.0 if options.tap_filter else options.min_speed,
-                                     min_gap_real_s=2.5 if options.tap_filter else .5,
+                                     min_gap_real_s=0,
                                      hits=hits, confirm_s=.5, require_audio=False,
                                      speed_fallback=True, wrist=16 if hand == "R" else 15):
                 event["hand"] = hand
@@ -186,25 +215,25 @@ def swings_from_raw(a: dict, b: dict | None = None, options: Options = Options()
                         event["start"] = min(event["start"], hit_frame)
                         event["end"] = max(event["end"], hit_frame)
                 event["fpsReal"] = float(a["fps"]) * factor
+                event['section'] = (lo, hi)
                 event["realtime"] = factor == 1
                 section_events.append(event)
         detections.extend(section_events)
-    # Enforce spacing across rate switches as well as inside each section.
-    selected = []
-    for event in sorted(detections, key=lambda e: e["speed"], reverse=True):
-        if all(abs(real_a[event["peak"]] - real_a[e["peak"]]) >= (2.5 if options.tap_filter else .5)
-               for e in selected):
-            selected.append(event)
-    detections = sorted(selected, key=lambda e: e["peak"])
+    # Deduplicate exact candidate frames here; enforce spacing only AFTER the
+    # metric/backswing gate so a stronger catch cannot suppress a valid swing.
+    unique = {}
+    for event in sorted(detections, key=lambda e: e['speed']):
+        unique[event['peak']] = event
+    detections = sorted(unique.values(), key=lambda e: e['peak'])
     swings, rejected = [], []
-    valid_core = np.isfinite(mono[:, CORE_JOINTS]).all(axis=(1, 2))
+    accepted_events = []
     for number, event in enumerate(detections, 1):
         start, end = event["start"], event["end"] + 1  # finder uses inclusive end
         hand = event.get("hand", options.hand)
         if hand == "auto":
             hand = "R"
         if options.hand == "auto":
-            local = {**a, "img": a["img"][start:end]}
+            local = {**detection, 'img': detection['img'][start:end], 'vis': detection['vis'][start:end]}
             peaks = {}
             speeds = {}
             for side, joint in (("R", 16), ("L", 15)):
@@ -223,6 +252,14 @@ def swings_from_raw(a: dict, b: dict | None = None, options: Options = Options()
             # Keep the rate-consistent window; do not fabricate a contact frame.
             contact_source = event["peak"]
             measured_contact = False
+        lo, hi = event['section']
+        start = max(lo, int(np.searchsorted(real_a, real_a[contact_source] - .6 - 1e-9)))
+        end = min(hi, max(end, contact_source + int(round(.35 * fps_real)) + 1))
+        stereo_core = np.isfinite(stereo[:, CORE_JOINTS]).all(axis=(1, 2))
+        mono_core = np.isfinite(mono[:, CORE_JOINTS]).all(axis=(1, 2))
+        source = ('stereo' if stereo_core[start:end].all() else 'mono'
+                  if mono_core[start:end].all() else 'stereo' if stereo_core[contact_source] else 'mono')
+        valid_core = stereo_core if source == 'stereo' else mono_core
         original_window = (start, end)
         # An occluded windup edge need not discard a tracked contact and follow-
         # through. Crop only to a contiguous observed/repaired core run; never
@@ -239,12 +276,11 @@ def swings_from_raw(a: dict, b: dict | None = None, options: Options = Options()
                 start, end = left, right
         contact = contact_source - start
         try:
-            if not np.isfinite(mono[start:end, CORE_JOINTS]).all():
-                missing = [j for j in CORE_JOINTS if not np.isfinite(mono[start:end, j]).all()]
-                raise ValueError(f"iPhone view contains missing key joints {missing}; gap exceeds max_gap_s={options.max_gap_s}")
-            source = "stereo" if np.isfinite(stereo[start:end, CORE_JOINTS]).all() else "mono"
+            selected = stereo[start:end] if source == 'stereo' else mono[start:end]
+            if not np.isfinite(selected[:, CORE_JOINTS]).all():
+                missing = [j for j in CORE_JOINTS if not np.isfinite(selected[:, j]).all()]
+                raise ValueError(f'Reconstruction contains missing key joints {missing}; hidden gap exceeds the repair limit')
             fallback_reason = (calibration_error or "Stereo key joints unavailable after quality gates") if source == "mono" else None
-            selected = stereo[start:end] if source == "stereo" else mono[start:end]
             try:
                 normalised = normalise(selected, options.torso_m)
             except ValueError as exc:
@@ -253,10 +289,18 @@ def swings_from_raw(a: dict, b: dict | None = None, options: Options = Options()
                 source = "mono"
                 fallback_reason = f"Stereo normalisation failed: {exc}"
                 normalised = normalise(mono[start:end], options.torso_m)
+            # Sound can be offset from the speed peak. Keep its requested .6 s
+            # replay trim without throwing away earlier backswing evidence.
+            evidence_start = max(lo, min(start, event['peak'] - int(round(.6 * fps_real))))
+            evidence_world = (normalised if evidence_start == start else
+                              normalise((stereo if source == 'stereo' else mono)[evidence_start:end], options.torso_m))
+            evidence = swing_evidence(evidence_world, real_a[evidence_start:end], 15 if hand == 'L' else 16,
+                                      event['peak'] - evidence_start, options.torso_m)
             joint_filled = (stereo_filled if source == "stereo" else mono_filled)[start:end].copy()
             joint_filled |= ~np.isfinite(normalised).all(axis=2)
             world, filled = complete_optional_joints(normalised)
-            raw = {"world": world, "filled": joint_filled, "t": real_a[start:end],
+            confidence = (stereo_visibility if source == 'stereo' else mono_visibility)[start:end]
+            raw = {"world": world, "filled": joint_filled, 'vis': confidence, "t": real_a[start:end],
                    "fps": fps_real}
             swing = to_swing(raw, smooth_win=1, swing_id=f"swing-{number:04d}", contact_frame=contact)
         except ValueError as exc:
@@ -266,8 +310,7 @@ def swings_from_raw(a: dict, b: dict | None = None, options: Options = Options()
         swing["fpsReal"] = fps_real
         swing["side"] = (classify_side(world, contact, hand)
                          if options.side == "auto" else options.side)
-        visibility = np.nan_to_num(a["vis"][start:end, CORE_JOINTS],
-                                   nan=0., posinf=0., neginf=0.)
+        visibility = confidence[:, CORE_JOINTS]
         # Stable reporting at the .3 boundary despite floating-point summation.
         core_visibility = round(float(np.clip(visibility, 0, 1).mean()), 6)
         swing["metadata"] = {
@@ -289,9 +332,18 @@ def swings_from_raw(a: dict, b: dict | None = None, options: Options = Options()
             "reconstruction": source, "approximatedJoints": filled,
             "fallbackReason": fallback_reason,
             "coreVisibility": core_visibility, "lowConfidence": core_visibility < .3,
+            'hittingArmFilledPercent': 100 * float(joint_filled[:, (11, 13, 15) if hand == 'L' else (12, 14, 16)].any(axis=1).mean()),
+            **evidence,
             "optionalJointPolicy": "missing optional joints repeat their parent; not measured",
         }
         swings.append(swing)
+        accepted_events.append(event)
+    spaced = []
+    for swing, event in sorted(zip(swings, accepted_events), key=lambda row: row[1]['speed'], reverse=True):
+        if all(abs(real_a[event['peak']] - real_a[other['peak']]) >= (2.5 if options.tap_filter else .5)
+               for _, other in spaced):
+            spaced.append((swing, event))
+    swings = [swing for swing, event in sorted(spaced, key=lambda row: row[1]['peak'])]
     report = {"detected": len(detections), "written": len(swings), "rejected": rejected,
               "sync": {"scale": scale, "offset": options.offset_b, "realOffset": real_offset, "timeline": "piecewise"},
               "calibration": ({k: cal[k] for k in ("inliers", "n", "reprojectionErrorPx")}

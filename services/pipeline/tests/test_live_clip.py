@@ -87,7 +87,7 @@ def test_auto_quicktime_piecewise_edit_mapping(tmp_path, monkeypatch, version):
 def test_single_camera_auto_hand_and_estimated_depth(stereo_pair):
     a, _, *_ = stereo_pair
     for key in ('img', 'world', 'vis'):
-        a[key][:, [15, 16]] = a[key][:, [16, 15]]
+        a[key][:, [11, 13, 15, 12, 14, 16]] = a[key][:, [12, 14, 16, 11, 13, 15]]
     swings, report = swings_from_raw(a)
     assert report['written'] == 2
     assert all(swing['metadata']['hand'] == 'L' and swing['metadata']['handSource'] == 'auto'
@@ -144,7 +144,7 @@ def test_process_upload_overrides_and_error_states(tmp_path, monkeypatch):
     assert client.post('/process', files={'file': ('clip.mov', b'bytes')}).status_code == 503
 
 
-def test_end_to_end_short_clip_with_real_model(tmp_path, monkeypatch):
+def test_real_model_rejects_rotating_photo_as_non_swing(tmp_path, monkeypatch):
     """Optional real decoder + MediaPipe integration on a generated image-motion clip.
 
     GHOST_LIVE_TEST_IMAGE is the official MediaPipe pose.jpg fixture. The clip is
@@ -168,19 +168,10 @@ def test_end_to_end_short_clip_with_real_model(tmp_path, monkeypatch):
     writer.release()
     monkeypatch.setenv('GHOST_SWINGS_DIR', str(tmp_path / 'processed'))
     response = TestClient(app).post('/process', files={'file': ('short.avi', clip.read_bytes(), 'video/x-msvideo')})
-    assert response.status_code == 201, response.text
-    result = response.json()
-    swing_id = result['swingId']
-    client = TestClient(app)
-    swing = client.get(f'/swings/{swing_id}').json()
-    assert swing['metadata']['slowdown'] == 1 and swing['metadata']['slowdownSource'] == 'auto'
-    assert swing['metadata']['depth'] == 'estimated'
-    assert swing['metadata']['hand'] in ('L', 'R') and swing['metadata']['stroke'] in ('forehand', 'backhand')
-    assert result['coach']['metrics']['hand'] == swing['metadata']['hand']
-    assert result['compare']['you']['ball']['label'] == 'PREDICTED'
-    assert result['compare']['ghost']['ball']['label'] == 'PREDICTED'
-    assert any(row['id'] == swing_id for row in client.get('/swings').json()['swings'])
-    json.dumps(result, allow_nan=False)
+    assert response.status_code == 422, response.text
+    assert 'No fully tracked swing' in response.json()['detail']
+    assert TestClient(app).get('/swings').json() == {'swings': []}
+    assert not list((tmp_path / 'processed').glob('*/manifest.json'))
 
 def test_manual_values_are_saved_through_coach_and_ghost(tmp_path, monkeypatch, stereo_pair):
     import pipeline.live as live
@@ -222,9 +213,10 @@ def test_cli_one_clip_defaults_and_manual_precedence(tmp_path, monkeypatch):
 def test_auto_hand_is_resolved_per_window_not_per_session(stereo_pair, monkeypatch):
     import pipeline.process as process
     a, _, *_ = stereo_pair
-    t = a['t']
-    a['img'][:, 16, 0] = 650 + 200 * np.tanh((t - .6) / .04)
-    a['img'][:, 15, 0] = 600 - 350 * np.tanh((t - 1.5) / .04)
+    # Move the whole articulated second swing to the left arm, not just its
+    # image wrist: final admission now verifies physical 3D swing evidence.
+    for key in ('img', 'world', 'vis'):
+        a[key][120:, [11, 13, 15, 12, 14, 16]] = a[key][120:, [12, 14, 16, 11, 13, 15]]
     monkeypatch.setattr(process, 'find_swings', lambda *args, **kwargs: [
         {'start': 24, 'end': 114, 'peak': 72, 'speed': 10},
         {'start': 132, 'end': 222, 'peak': 180, 'speed': 11}])

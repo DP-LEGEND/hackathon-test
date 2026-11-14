@@ -148,7 +148,6 @@ def test_retry_saves_same_contact_times_as_normalized_clip(live_run, monkeypatch
     import pipeline.live as live
     clip, output, model, raw = live_run
     raw = copy.deepcopy(raw)
-    raw['world'][:, 16, 0] *= 1.5
     slowed = {**raw, 't': raw['t'] * 4, 'fps': raw['fps'] / 4}
     if with_audio:
         monkeypatch.setattr(live, 'run_tool', lambda *args, **kwargs: '')

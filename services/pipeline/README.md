@@ -144,9 +144,10 @@ The real-model integration case requires `GHOST_POSE_MODEL`, ffmpeg/ffprobe, and
 `GHOST_LIVE_TEST_IMAGE` pointing to the official
 [MediaPipe pose.jpg test asset](https://storage.googleapis.com/mediapipe-assets/pose.jpg).
 It generates a short image-motion AVI under pytest's temporary directory and runs
-upload -> real decoder -> real MediaPipe -> saved swing -> coach -> ghost. No
-pose functions are mocked in that case. The motion is synthetic global rotation,
-not validation of squash technique or of a live phone recording. Without those
+upload -> real decoder -> real MediaPipe -> rejection of the rotating photograph
+as a non-swing. No pose functions are mocked in that case. Successful saved swing,
+coach and ghost integration uses a separate articulated synthetic pose fixture.
+Neither is validation of squash technique or of a live phone recording. Without those
 optional test assets it is explicitly skipped; no videos/models are committed.
 
 ## Stereo swing pipeline (Dev)
@@ -187,7 +188,7 @@ local **`raw_cache.npz`** pose cache (see below).
 Load an individual swing file into the web replay, not the manifest or a wrapper.
 Required fields match `lib/ghost/types.ts`; `source`, `fpsReal`, `side` and
 `metadata` are additive. New frames also include optional `filled` provenance
-(see below and `docs/interfaces.md`); legacy files without it remain valid.
+and `visibility` confidence; legacy files without these remain valid.
 Shared TypeScript contracts and the frontend are unchanged.
 
 ```json
@@ -199,12 +200,12 @@ Shared TypeScript contracts and the frontend are unchanged.
   "contactFrame": 54,
   "side": "forehand",
   "frames": [
-    {"t": 0.0, "joints": [[0.1, 0.2, 0.3]], "filled": [false]}
+    {"t": 0.0, "joints": [[0.1, 0.2, 0.3]], "filled": [false], "visibility": [0.95]}
   ]
 }
 ```
 
-The example abbreviates `frames`, `joints` and `filled`: real output has at least two
+The example abbreviates `frames`, `joints`, `filled` and `visibility`: real output has at least two
 frames and **33 finite `[x,y,z]` joints per frame in MediaPipe order**, metres,
 +y up, hips centred separately in each frame. Time starts at zero for each swing;
 `contactFrame` is a zero-based index **inside that swing**. Metadata retains the
@@ -213,28 +214,47 @@ source start and contact frame indices for comparison with the source video.
 ## Filled joint flags
 
 Every newly serialized frame includes `filled`: 33 booleans parallel to `joints`.
-True means that joint used temporal interpolation, bounded gap filling, or a
-parent copy. Partial-coordinate repairs mark the whole joint. Stereo joints that
+True means that joint used temporal interpolation, bounded gap filling, a
+one-view depth estimate, or a parent copy. Partial-coordinate repairs mark the whole joint. Stereo joints that
 use camera B interpolated between recorded timestamps are also marked. Fallback
 to mono uses the original camera-A observation mask. Flags are recorded before
 cleaning, so smoothing cannot hide a gap; copying optional children marks each
 copied joint at exactly the affected frames.
 
 Observed joints remain false after ordinary smoothing, bone-length constraints
-or coordinate transforms. Flags describe reconstruction rather than confidence,
+or coordinate transforms when their anchors were observed. Rebuilding a child
+from a filled parent also marks the child. Flags describe reconstruction rather than confidence,
 3D accuracy or ghost edits. Old frames may omit `filled`; absence means unknown
 provenance. `scripts/check_swing.py` accepts old files and checks that present
 flags contain exactly 33 booleans. Shared frontend types remain unchanged; the
 additive wire field is documented in `docs/interfaces.md`.
 
+`visibility` contains 33 finite values in [0, 1], in the same MediaPipe order as
+`filled` and `joints`. Mono uses camera A's observation confidence; stereo uses
+the maximum available camera confidence per joint. Missing/nonfinite image
+observations contribute zero. Filling does not raise this exported confidence.
+Consumers should skip a guessed joint when `filled[j]` is true, even if another
+camera saw its 2D position confidently. Coach implementation and shared interface
+files are outside this change; older JSON does not gain confidence retrospectively.
+
+`metadata.hittingArmFilledPercent` is the percentage of saved frames where **any**
+hitting-side shoulder, elbow or wrist is filled (11/13/15 for L; 12/14/16 for R).
+It is a frame percentage, not a percentage of all 33 joint samples.
+
 ## Measurement limits and quality
 
-- Swing detection uses hip-relative dominant-wrist speed (default threshold
+- Swing proposals use hip-relative dominant-wrist speed (default threshold
   **8 torso lengths / second**, minimum accepted-peak spacing .5 real seconds),
-  with .45 s before and .35 s after the peak. `--min-speed` adjusts the threshold.
+  followed by a mandatory measured 3D gate: peak wrist speed above **12 m/s**,
+  prominence at least 6 m/s, half-prominence peak width at most .18 real seconds,
+  and a preceding backswing/sweep/follow-through. `--min-speed` adjusts proposal
+  sensitivity; it does not bypass the metric gate. `metadata.peakWristSpeedMs`
+  and `metadata.backswingVerified` record the accepted evidence. Saved windows
+  start .6 real seconds before the selected contact, clipped at recording/rate
+  boundaries or an unrepairable occlusion, and retain the follow-through.
   Smoothing uses about .06 real seconds rather than a fixed frame count.
-  A canonical pullback/sweep pattern is preferred; speed-peak fallback recovers
-  swings with an atypical or cropped windup. The direction is derived from
+  Speed-peak fallback proposes candidates but cannot admit a catch/feed without
+  the metric peak and backswing. The direction is derived from
   the wrist near the peak, so hand choice and image rotation do not set its sign.
   Starting heuristic thresholds: .12 torso lengths of preceding pullback,
   .25 before the peak and .10 after it, .50 total forward sweep, and net/path
@@ -247,11 +267,22 @@ additive wire field is documented in `docs/interfaces.md`.
   peak estimate**. `metadata.contactMethod` makes that explicit. Stroke side is also a heuristic;
   validate it against labels before using it to score technique.
 - Essential-matrix self-calibration uses visible shared 2D joints, then
-  triangulates. It rejects insufficient correspondences, poor cheirality and
+  triangulates using confidence-weighted DLT (each camera's equations weighted
+  by the square root of its visibility). Both views must have visibility >= .5.
+  It rejects insufficient correspondences, poor cheirality and
   excessive median reprojection error. Each joint must be in front of both
-  cameras and reproject within 12 pixels in each image to count as stereo.
+  cameras and reproject within 12 pixels in each confident image. If exactly one
+  view is confident, its ray is intersected with a bone-length sphere around a
+  recovered parent. Length is learned from jointly observed frames; a reliable
+  bone direction within .25 real seconds disambiguates depth. Without an anchor,
+  length or consistent ray, the joint stays missing. The bad camera is not used.
+  Recovered depths are flagged `filled`, and missing A detection pixels can use
+  the recovered projection instead of hidden wrist predictions. Missing camera-B
+  frames are never treated as confident observations by timestamp resampling;
+  ordinary resampling between adjacent recorded frames remains supported.
 - Selection is **per swing**, not a per-joint blend. Use `source: "stereo"`
-  when both views yield the eight required joints for its whole window. Otherwise
+  when calibrated reconstruction yields the eight required joints for its whole
+  window (including explicitly flagged single-view recovery). Otherwise
   use the iPhone's MediaPipe world skeleton and label it `source: "mono"`.
   Missing iPad joints, failed calibration or unavailable overlapping coverage
   do not reject an otherwise usable iPhone swing. Mono depth is inferred by
@@ -262,15 +293,20 @@ additive wire field is documented in `docs/interfaces.md`.
   where available. Metres are scaled using an assumed .5 m shoulder-mid to
   hip-mid torso; pass `--torso-m` for the player's measured length. This is an
   estimated-scale reconstruction, not a calibrated motion-capture measurement.
-- The iPhone must retain **shoulders (11/12), elbows (13/14), wrists (15/16)
-  and hips (23/24)**. Mono requires finite image/world coordinates and
-  **visibility above .1**. Stereo retains its stricter visibility threshold
-  above .3. Per swing, `metadata.coreVisibility` reports the mean
+- The selected reconstruction must retain **shoulders (11/12), elbows (13/14),
+  wrists (15/16) and hips (23/24)**; camera B can rescue a hidden A joint.
+  Mono requires finite image/world coordinates and **visibility >= .5**.
+  Per swing, `metadata.coreVisibility` reports the mean
   core-joint visibility (six decimal places), and `metadata.lowConfidence` flags
   values below .3 without discarding the swing. Nonfinite visibility is reported
-  as zero confidence. Only **bounded** missing coordinate runs are interpolated
-  (default **.25 real seconds**, `--max-gap-s`); longer gaps/endpoints in the
-  required joints reject that swing.
+  as zero confidence. Only bounded short gaps are repaired by interpolating
+  unit bone directions on the sphere (joint angles), retaining observed median
+  bone lengths. The hard limit is **6 frames at 120 real fps, 3 at 30** (4 at 60;
+  never more than 6). `--max-gap-s` can tighten this limit, not relax it. Cleaning
+  is independent within each rate section; smoothing never mixes opposite sides
+  of an unfilled gap. A ten-frame gap hidden in both cameras is not filled; a
+  ten-frame A-only gap may still be reconstructed from actual B observations.
+  Longer/end gaps in required joints cause cropping or rejection.
   Knees, ankles, face, hand and foot landmarks are optional. Missing optional
   coordinates repeat their parent **after** orientation/scaling; their indices
   are disclosed in `metadata.approximatedJoints`. These are replay placeholders,

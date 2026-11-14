@@ -35,11 +35,18 @@ def sample_b_at_a(A: dict, B: dict, scale: float, offset: float):
     w = ((tb - times[i0]) / (times[i0 + 1] - times[i0]))[:, None, None]
     img = (1 - w) * B["img"][i0] + w * B["img"][i0 + 1]
     vis = np.minimum(B["vis"][i0], B["vis"][i0 + 1])
+    intervals = np.diff(times)
+    cadence = 1 / B['fps'] if 'fps' in B else float(np.median(intervals))
+    contiguous = np.asarray(B.get('frame_contiguous', intervals <= 1.5 * cadence), dtype=bool)
+    # Ordinary resampling between adjacent recorded frames is allowed. Missing
+    # camera frames are not confident observations, regardless of endpoint vis.
+    exact_sample = np.zeros(len(tb), dtype=bool)
     for endpoint, weight in ((i0, 0.0), (i0 + 1, 1.0)):
         exact = np.isclose(w[:, 0, 0], weight, rtol=0, atol=1e-9)
+        exact_sample |= exact
         img[exact] = B["img"][endpoint[exact]]
         vis[exact] = B["vis"][endpoint[exact]]
-    valid = (tb >= times[0]) & (tb <= times[-1])
+    valid = (tb >= times[0]) & (tb <= times[-1]) & (exact_sample | contiguous[i0])
     img[~valid] = np.nan
     vis[~valid] = 0
     return img, vis
@@ -84,32 +91,86 @@ def calibrate(A: dict, B: dict, scale: float, offset: float, f_a=1400.0, f_b=140
             "inliers": float(good.mean()), "n": int(len(pa)), "reprojectionErrorPx": reprojection}
 
 
-def triangulate(A: dict, B: dict, cal: dict, f0: int, f1: int, min_vis=0.3) -> np.ndarray:
-    """(f1-f0, 33, 3) metric 3D in camera-A frame, NaN where either camera lost the joint."""
+def triangulate(A: dict, B: dict, cal: dict, f0: int, f1: int, min_vis=0.5,
+                *, provenance: bool = False):
+    """Weighted stereo, or a confident ray constrained by an observed bone.
+
+    The optional provenance tuple is (points, filled, visibility). One-view
+    depths are estimates even when their image landmark is confidently seen.
+    """
+    from pipeline.kinematics import PARENTS
+
     imgB, visB = sample_b_at_a(A, B, cal["scale"], cal["offset"])
-    P1 = cal["Ka"] @ np.hstack([np.eye(3), np.zeros((3, 1))])
-    P2 = cal["Kb"] @ np.hstack([cal["R"], cal["t"]])
+    images = [A['img'][f0:f1, :, :2], imgB[f0:f1, :, :2]]
+    confidence = [np.clip(np.nan_to_num(v[f0:f1], nan=0., posinf=0., neginf=0.), 0, 1)
+                  for v in (A['vis'], visB)]
+    visible = [np.isfinite(p).all(axis=-1) & (v >= max(.5, min_vis))
+               for p, v in zip(images, confidence)]
+    confidence = [np.where(np.isfinite(p).all(axis=-1), v, 0.) for p, v in zip(images, confidence)]
+    matrices = [cal['Ka'] @ np.hstack([np.eye(3), np.zeros((3, 1))]),
+                cal['Kb'] @ np.hstack([cal['R'], cal['t']])]
     out = np.full((f1 - f0, 33, 3), np.nan)
-    for k, i in enumerate(range(f0, f1)):
-        a, b = A["img"][i, :, :2], imgB[i, :, :2]
-        ok = np.isfinite(a).all(axis=-1) & np.isfinite(b).all(axis=-1) & (A["vis"][i] > min_vis) & (visB[i] > min_vis)
-        if ok.sum() == 0:
+    both = visible[0] & visible[1]
+    frame, joint = np.nonzero(both)
+    if len(frame):
+        equations = []
+        for camera in (0, 1):
+            pixels = images[camera][frame, joint]
+            projection = matrices[camera]
+            weight = np.sqrt(confidence[camera][frame, joint])[:, None]
+            equations.extend([(pixels[:, 0, None] * projection[2] - projection[0]) * weight,
+                              (pixels[:, 1, None] * projection[2] - projection[1]) * weight])
+        _, _, vt = np.linalg.svd(np.stack(equations, axis=1))
+        homogeneous = vt[:, -1]
+        with np.errstate(divide='ignore', invalid='ignore'):
+            xyz = homogeneous[:, :3] / homogeneous[:, 3:]
+        valid = np.isfinite(xyz).all(axis=1)
+        for camera in (0, 1):
+            projected = np.c_[xyz, np.ones(len(xyz))] @ matrices[camera].T
+            with np.errstate(divide='ignore', invalid='ignore'):
+                error = np.linalg.norm(projected[:, :2] / projected[:, 2:] - images[camera][frame, joint], axis=1)
+            valid &= (projected[:, 2] > 0) & (error <= 12)
+        out[frame[valid], joint[valid]] = xyz[valid]
+    stereo = out.copy()
+    filled = ~np.isfinite(out).all(axis=2)
+    times = np.asarray(A['t'][f0:f1])
+    centers = [np.zeros(3), -cal['R'].T @ cal['t'].reshape(3)]
+    inverse = [np.linalg.inv(cal['Ka']), cal['R'].T @ np.linalg.inv(cal['Kb'])]
+    # The root can be hidden too. Recover it from an observed adjacent hip or
+    # shoulder before walking outward; never bootstrap two missing anchors.
+    for child, parent in [(23, 24), (23, 11), *PARENTS.items()]:
+        bones = stereo[:, child] - stereo[:, parent]
+        lengths = np.linalg.norm(bones, axis=1)
+        reference = np.flatnonzero(np.isfinite(lengths) & (lengths > 1e-9))
+        if not len(reference):
             continue
-        X = cv2.triangulatePoints(P1, P2, a[ok].T.astype(float), b[ok].T.astype(float))
-        out[k, ok] = (X[:3] / X[3]).T
-    # Keep only points in front of both cameras and consistent with both images.
-    for k, i in enumerate(range(f0, f1)):
-        xyz = out[k]
-        za = xyz[:, 2]
-        xb = xyz @ cal["R"].T + cal["t"].reshape(3)
-        pa = xyz @ cal["Ka"].T
-        pb = xb @ cal["Kb"].T
-        with np.errstate(divide="ignore", invalid="ignore"):
-            ea = np.linalg.norm(pa[:, :2] / pa[:, 2:] - A["img"][i, :, :2], axis=1)
-            eb = np.linalg.norm(pb[:, :2] / pb[:, 2:] - imgB[i, :, :2], axis=1)
-        valid = (za > 0) & (xb[:, 2] > 0) & (ea <= 12) & (eb <= 12)
-        out[k, ~valid] = np.nan
-    return out
+        length = float(np.median(lengths[reference]))
+        candidates = np.flatnonzero((visible[0][:, child] ^ visible[1][:, child])
+                                    & np.isfinite(out[:, parent]).all(axis=1)
+                                    & ~np.isfinite(out[:, child]).all(axis=1))
+        for frame in candidates:
+            nearest = reference[np.argmin(abs(times[reference] - times[frame]))]
+            if abs(times[nearest] - times[frame]) > .25:
+                continue  # ambiguous depth with no recent reliable direction
+            camera = 0 if visible[0][frame, child] else 1
+            center = centers[camera]
+            ray = inverse[camera] @ np.r_[images[camera][frame, child], 1.]
+            ray /= np.linalg.norm(ray)
+            offset = center - out[frame, parent]
+            along = float(np.dot(ray, offset))
+            discriminant = along * along - (np.dot(offset, offset) - length * length)
+            if discriminant < -1e-9:
+                continue
+            roots = -along + np.array([-1., 1.]) * np.sqrt(max(0., discriminant))
+            points = center + roots[:, None] * ray
+            valid = (roots > 0) & (points[:, 2] > 0) & ((points @ cal['R'].T + cal['t'].reshape(3))[:, 2] > 0)
+            points = points[valid]
+            if not len(points):
+                continue
+            expected = out[frame, parent] + bones[nearest] / lengths[nearest] * length
+            out[frame, child] = points[np.argmin(np.linalg.norm(points - expected, axis=1))]
+    visibility = np.maximum(*confidence)
+    return (out, filled, visibility) if provenance else out
 
 
 def normalise(X: np.ndarray, torso_m: float = 0.5) -> np.ndarray:
@@ -146,34 +207,7 @@ def normalise(X: np.ndarray, torso_m: float = 0.5) -> np.ndarray:
     return (X - centre) @ Rm.T
 
 
-# parent -> child chains, walked outwards from the hips
-CHAIN = [(23, 11), (24, 12), (11, 13), (13, 15), (15, 19), (12, 14), (14, 16), (16, 20),
-         (23, 25), (25, 27), (27, 31), (24, 26), (26, 28), (28, 32), (11, 0)]
-
-
-def clean(X: np.ndarray, win: int = 5, max_gap: int = 12) -> np.ndarray:
-    """Fill only bounded short gaps, smooth, and constrain observed bone lengths.
-
-    Never extrapolate a limb through an occlusion or fill an entire missing joint.
-    """
-    from pipeline.pose import smooth
-
-    Y = X.copy()
-    for j in range(Y.shape[1]):
-        for d in range(3):
-            v = Y[:, j, d]
-            observed = np.flatnonzero(np.isfinite(v))
-            for left, right in zip(observed[:-1], observed[1:]):
-                if 1 < right - left <= max_gap + 1:
-                    v[left + 1:right] = np.interp(np.arange(left + 1, right), [left, right], v[[left, right]])
-    missing = ~np.isfinite(Y)
-    Y = smooth(Y, win)
-    Y[missing] = np.nan
-    for a, b in CHAIN:
-        d = Y[:, b] - Y[:, a]
-        lengths = np.linalg.norm(d, axis=1)
-        valid = np.isfinite(lengths) & (lengths > 1e-9)
-        if valid.any():
-            length = np.median(lengths[valid])
-            Y[valid, b] = Y[valid, a] + d[valid] / lengths[valid, None] * length
-    return Y
+def clean(X: np.ndarray, win: int = 5, max_gap: int = 6, *, filled=None, provenance=False):
+    """Repair only short bounded bone-angle gaps, preserving lengths."""
+    from pipeline.kinematics import repair_pose
+    return repair_pose(X, max_gap=max_gap, win=win, filled=filled, provenance=provenance)
