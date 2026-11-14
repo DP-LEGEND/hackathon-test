@@ -147,6 +147,7 @@ def measure(swing: dict, fps_real: float | None = None, hand: str | None = None)
         "contact_frame": c,
         "fps_real": fps,
         "elbow_at_contact_deg": float(elbow_angle(P, hand)[c]),
+        "wrist_at_contact_deg": float(wrist_angle(P, hand)[c]),
         "shoulder_turn_deg": abs(turn),
         "wrist_release_ms": wrist_release_ms(P, hand, c, fps),
     }
