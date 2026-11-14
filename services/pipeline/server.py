@@ -21,7 +21,7 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from coach.agent import coach_swing
-from physics.compare import compare
+from physics.compare import GuessedFixError, compare
 from physics.ghost import FIXES
 from pipeline.live import LiveOptions, process_live_clip, ghost_choice
 
@@ -140,6 +140,16 @@ def compare_swing(identifier: str, request: CompareRequest) -> dict:
         raise HTTPException(422, {"error": "Unknown fix", "fixes": sorted(FIXES)})
     try:
         return compare(swing, request.fix, request.amount, fps_real=swing.get("fpsReal"))
+    except GuessedFixError as exc:
+        # The fix would edit a guessed joint: return the unchanged comparison (amount 0) for
+        # the same fix id, marked noCorrection, with the reason, so the page still loads.
+        try:
+            unchanged = compare(swing, request.fix, 0.0, fps_real=swing.get("fpsReal"))
+        except (ValueError, KeyError, IndexError, TypeError):
+            raise HTTPException(422, str(exc)) from None
+        unchanged["noCorrection"] = True
+        unchanged["ghostNote"] = str(exc)
+        return unchanged
     except (ValueError, KeyError, IndexError, TypeError):
         raise HTTPException(422, "Swing cannot be compared with this fix") from None
 
