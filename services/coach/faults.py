@@ -21,6 +21,10 @@ Fix names match physics/ghost.py apply_fix. A fault is ghost_ready only if its f
 exists in physics.ghost.FIXES today, the amount is in that edit's unit, and the
 swing allows the edit. aryan is adding close_stance, bend_elbow, turn_shoulders_less;
 they become ready automatically once FIXES has them. firm_wrist isn't planned yet.
+
+rolled_wrist is the one fault the camera can't see: it reads forearm roll from a phone
+strapped to the forearm (services/wrist, coach/wrist_sensor.py) and is skipped (listed
+in not_measured) for swings without usable sensor data.
 """
 
 from __future__ import annotations
@@ -38,12 +42,16 @@ from pipeline.features import swing_features
 from coach.measure_extra import (
     STROKES, stance_joints_filled, stance_open_deg, stroke_side, wrist_index_filled, wrist_uncock,
 )
+from coach.wrist_sensor import sensor_metrics
 
 Stroke = Literal["forehand", "backhand"]
 Confidence = Literal["high", "medium", "low"]
 
 LABELLED = "labelled clips"
 GUESS = "guess"
+# Thresholds picked by python -m wrist.tune from labelled wrist-sensor swings.
+WRIST_SENSOR = "wrist-sensor swings"
+WRIST_MOCK = "mock wrist-sensor swings"  # synthetic data: replace with real swings
 
 # ---- Tune here ---------------------------------------------------------------------
 THRESHOLDS: dict[str, dict[str, dict[str, Any]]] = {
@@ -70,8 +78,11 @@ THRESHOLDS: dict[str, dict[str, dict[str, Any]]] = {
         # shoulder widths; the normal 1.7 comes from the one real clip (sample backhand).
         "stance_too_open": {"measurement": "stance_width_ratio", "threshold": 1.275,
                             "severe_at": 0.85, "target": 1.7, "source": LABELLED},
-        "rolling_wrist": {"measurement": "forearm_roll_deg", "threshold": 30.0,
-                          "severe_at": 60.0, "target": 0.0, "source": GUESS},
+        # Wrist sensor only (coach/wrist_sensor.py): forearm roll -150..+100 ms around
+        # contact; skipped when the swing has no sensor data. From MOCK 5 normal (16.5 deg)
+        # vs 5 rolled (62.1 deg) swings via python -m wrist.tune: retune on real swings.
+        "rolled_wrist": {"measurement": "forearm_roll_deg", "threshold": 39.3,
+                         "severe_at": 62.1, "target": 16.5, "source": WRIST_MOCK},
     },
     "backhand": {
         # Fastest wrist OPENING before contact; a fast cocking move never counts.
@@ -86,8 +97,9 @@ THRESHOLDS: dict[str, dict[str, dict[str, Any]]] = {
                          "severe_at": 109.0, "target": 77.0, "source": LABELLED},
         "stance_too_open": {"measurement": "stance_open_deg", "threshold": 40.0,
                             "severe_at": 70.0, "target": 15.0, "source": GUESS},
-        "rolling_wrist": {"measurement": "forearm_roll_deg", "threshold": 30.0,
-                          "severe_at": 60.0, "target": 0.0, "source": GUESS},
+        # Wrist sensor only; the same MOCK rule as the forehand until real backhands.
+        "rolled_wrist": {"measurement": "forearm_roll_deg", "threshold": 39.3,
+                         "severe_at": 62.1, "target": 16.5, "source": WRIST_MOCK},
     },
 }
 # ------------------------------------------------------------------------------------
@@ -114,8 +126,12 @@ MEASUREMENTS: dict[str, dict[str, Any]] = {
                         "phrase": "stance {v:.0f} deg open to the shot"},
     "stance_width_ratio": {"unit": "shoulder widths", "confidence": "medium",
                            "phrase": "feet {v:.1f} shoulder widths apart"},
-    "forearm_roll_deg": {"unit": "deg", "confidence": "low",  # not measured yet: always None
-                         "phrase": "forearm rolls {v:.0f} deg through contact"},
+    # Wrist sensor (forearm phone), None without one. Low until real swings confirm the
+    # strap axis and the threshold. "sensor": labels get "(MOCK sensor data)" if synthetic.
+    "forearm_roll_deg": {"unit": "deg", "confidence": "low", "sensor": True,
+                         "phrase": "forearm rolls {v:.0f} deg through contact (wrist sensor)"},
+    "forearm_roll_rate_dps": {"unit": "deg/s", "confidence": "low", "sensor": True,
+                              "phrase": "forearm rolls at up to {v:.0f} deg/s through contact (wrist sensor)"},
 }
 
 # The library. `priority` breaks severity ties: stance first, then preparation,
@@ -131,12 +147,15 @@ FAULTS: dict[str, dict[str, Any]] = {
                       "cue": "Turn a little less and stay balanced through the ball."},
     "early_wrist_snap": {"title": "Early wrist snap", "fix": "hold_wrist_cock", "priority": 4,
                          "cue": "Keep your wrist cocked until the racket meets the ball."},
-    "rolling_wrist": {"title": "Rolling wrist", "fix": "firm_wrist", "priority": 5,
-                      "cue": "Keep your wrist firm and the racket face steady."},
+    "rolled_wrist": {"title": "Rolled wrist", "fix": "firm_wrist", "priority": 5,
+                     "cue": "Keep your wrist firm and the racket face steady through the ball."},
 }
 
 # Smallest shoulder turn the shoulder edits in physics/ghost.py can work from.
 MIN_SHOULDER_TURN_FOR_EDIT = 1.0
+
+# Added to a sensor fault's label when its numbers came from a synthetic recording.
+MOCK_SENSOR_NOTE = " (MOCK sensor data)"
 
 
 class Fault(TypedDict):
@@ -237,7 +256,9 @@ def measure_swing(swing: dict, stroke: Optional[Stroke] = None, fps_real: Option
         feats["stance_width_m"] / shoulder_width
         if _finite(shoulder_width) and shoulder_width > 1e-6 else float("nan")
     )
-    m["forearm_roll_deg"] = None  # not measured yet
+    # Forearm roll: the camera can't see it, only a forearm phone (swing["wrist"]). Without
+    # a usable one these are None and rolled_wrist is skipped.
+    m.update(sensor_metrics(swing.get("wrist")))
 
     # Stance comes from the ankles. If either is a filled-in placeholder, both stance
     # numbers are unmeasured: no stance fault beats a false one.
@@ -278,7 +299,8 @@ def detect_faults(swing: dict, stroke: Optional[Stroke] = None, fps_real: Option
         amount, amount_unit = fix_amount(spec["fix"], value, rule, m)
         found.append(Fault(
             id=fault_id,
-            label=f"{spec['title']}: {meas['phrase'].format(v=value)}",
+            label=f"{spec['title']}: {meas['phrase'].format(v=value)}"
+                  + (MOCK_SENSOR_NOTE if meas.get("sensor") and m.get("wrist_sensor") == "mock sensor" else ""),
             stroke=m["stroke"],
             measurement=rule["measurement"],
             value=round(float(value), 2 if meas["unit"] == "shoulder widths" else 1),
