@@ -1,0 +1,357 @@
+"use client";
+
+// The /ghost demo flow: 1 pick a swing, 2 the coach's call, 3 the ghost makes the fix,
+// 4 both PREDICTED ball paths on the court. Owns which swing, step and fix are shown;
+// data comes from sources.ts (swing API or saved samples), the 3D view from ghost-stage.tsx.
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, ArrowRight } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import { CoachCaptionBar, type CaptionState } from "./coach-caption";
+import { CoachDetails } from "./coach-details";
+import { fixName, formatValue, OUTCOME_WORDS, type BallPath, type Catalogue } from "./compare";
+import { BallChanges, BodyChanges } from "./delta-panel";
+import { FixPicker } from "./fix-picker";
+import { GhostStage, type StageStatus } from "./ghost-stage";
+import { SceneLegend } from "./scene-legend";
+import type { BallPathView, CameraView } from "./skeleton-scene";
+import {
+  buildEntries,
+  checkApi,
+  loadCatalogue,
+  loadCoachFor,
+  loadCompareFor,
+  loadSwingFor,
+  type ApiState,
+} from "./sources";
+import { SwingPicker, type CatalogueState } from "./swing-picker";
+import { useAsync, type Async } from "./use-async";
+
+const STEPS = [
+  {
+    id: "swing",
+    title: "Pick a swing",
+    heading: "Pick a swing",
+    intro: "One swing, filmed in slow motion and turned into a 3D skeleton.",
+    next: null,
+  },
+  {
+    id: "coach",
+    title: "Coach's call",
+    heading: "The coach's call",
+    intro: "Code measured the swing. The coach names the one fix that matters most.",
+    next: "Show the ghost",
+  },
+  {
+    id: "ghost",
+    title: "The ghost",
+    heading: "Your ghost makes the fix",
+    intro: "Orange is the swing you played. Cyan is the same swing with one fix applied by physics.",
+    next: "Show the court",
+  },
+  {
+    id: "court",
+    title: "On court",
+    heading: "Where the ball goes",
+    intro: "Both ball paths are PREDICTED from the estimated racket speed. There is no real ball.",
+    next: "Try another swing",
+  },
+] as const;
+type Step = (typeof STEPS)[number]["id"];
+
+function ballView(ball: BallPath, who: "you" | "ghost"): BallPathView {
+  return {
+    points: ball.points,
+    bounces: ball.bounces,
+    landing: ball.landing,
+    label: `PREDICTED · ${who} · ${OUTCOME_WORDS[ball.outcome]}`,
+  };
+}
+
+export function GhostDemo() {
+  const [step, setStep] = useState<Step>("swing");
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [chosenFix, setChosenFix] = useState<string | null>(null);
+  const [view, setView] = useState<CameraView>("player");
+  const [attempt, setAttempt] = useState(0);
+  const [catalogueAttempt, setCatalogueAttempt] = useState(0);
+  const [catalogue, setCatalogue] = useState<Async<Catalogue>>({ status: "loading" });
+  const [apiAttempt, setApiAttempt] = useState(0);
+  const [api, setApi] = useState<ApiState>({ status: "checking" });
+
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const focusHeading = useRef(false);
+
+  // App-wide data loads after mount, so nothing is fetched while the page is prerendered.
+  useEffect(() => {
+    let live = true;
+    loadCatalogue(catalogueAttempt).then(
+      (value) => live && setCatalogue({ status: "ready", value }),
+      (error: unknown) => live && setCatalogue({ status: "error", message: error instanceof Error ? error.message : String(error) }),
+    );
+    return () => {
+      live = false;
+    };
+  }, [catalogueAttempt]);
+
+  useEffect(() => {
+    let live = true;
+    checkApi().then((state) => live && setApi(state));
+    return () => {
+      live = false;
+    };
+  }, [apiAttempt]);
+
+  useEffect(() => {
+    if (!focusHeading.current) return;
+    focusHeading.current = false;
+    headingRef.current?.focus();
+  }, [step]);
+
+  const entries = useMemo(
+    () => (catalogue.status === "ready" ? buildEntries(catalogue.value, api) : []),
+    [catalogue, api],
+  );
+  const entry = useMemo(() => entries.find((e) => e.key === selectedKey) ?? null, [entries, selectedKey]);
+
+  // Per swing: the swing itself, the coach's verdict (null = not coached) and the ghost.
+  const swingPromise = useMemo(() => (entry ? loadSwingFor(entry, attempt) : null), [entry, attempt]);
+  const coachPromise = useMemo(() => (entry ? loadCoachFor(entry, attempt) : null), [entry, attempt]);
+  const swing = useAsync(swingPromise);
+  const coach = useAsync(coachPromise);
+  const coachCaption = coach.status === "ready" ? coach.value : null;
+  const faults = useMemo(() => coachCaption?.faults ?? [], [coachCaption]);
+  const coachSettled = coach.status === "ready" || coach.status === "error";
+
+  // The ghost starts on the coach's top fix (the worst fault physics can fix), else the first fix.
+  const activeFix = useMemo(() => {
+    if (!entry) return null;
+    const usable = entry.fixes.filter((f) => f.unavailable === null);
+    const chosen = usable.find((f) => f.id === chosenFix);
+    if (chosen) return chosen;
+    if (!coachSettled) return null; // wait for the coach so the ghost doesn't switch under you
+    for (const fault of faults) {
+      const match = usable.find((f) => f.id === fault.fix);
+      if (match) return match;
+    }
+    return usable[0] ?? null;
+  }, [entry, chosenFix, coachSettled, faults]);
+
+  const comparePromise = useMemo(
+    () => (entry && activeFix ? loadCompareFor(entry, activeFix, attempt) : null),
+    [entry, activeFix, attempt],
+  );
+  const compareState = useAsync(comparePromise);
+  const compare = compareState.status === "ready" ? compareState.value : null;
+
+  const showGhost = step === "ghost" || step === "court";
+  const onCourt = step === "court";
+  const you = compare?.you.swing ?? (swing.status === "ready" ? swing.value : null);
+  const balls = useMemo(
+    () => (onCourt && compare ? { you: ballView(compare.you.ball, "you"), ghost: ballView(compare.ghost.ball, "ghost") } : null),
+    [onCourt, compare],
+  );
+
+  const caption: CaptionState =
+    coach.status === "ready"
+      ? coach.value
+        ? { kind: "ready", caption: coach.value }
+        : { kind: "none" }
+      : coach.status === "error"
+        ? { kind: "error", message: coach.message }
+        : { kind: "loading" };
+  const coached = coachCaption !== null;
+
+  const stageStatus: StageStatus = you
+    ? null
+    : swing.status === "error"
+      ? { kind: "error", message: swing.message, onRetry: retry }
+      : { kind: "loading", message: "Loading swing…" };
+
+  const catalogueState: CatalogueState =
+    catalogue.status === "error"
+      ? { status: "error", message: catalogue.message, onRetry: retryCatalogue }
+      : catalogue.status === "ready"
+        ? { status: "ready" }
+        : { status: "loading" };
+
+  function goTo(next: Step) {
+    focusHeading.current = true;
+    setStep(next);
+    setView(next === "court" ? "court" : "player");
+  }
+
+  function pickSwing(key: string) {
+    if (key !== selectedKey) setChosenFix(null);
+    setSelectedKey(key);
+    goTo("coach");
+  }
+
+  function retry() {
+    setAttempt((n) => n + 1);
+  }
+
+  function retryCatalogue() {
+    setCatalogue({ status: "loading" });
+    setCatalogueAttempt((n) => n + 1);
+  }
+
+  function retryApi() {
+    setApi({ status: "checking" });
+    setApiAttempt((n) => n + 1);
+  }
+
+  const index = STEPS.findIndex((s) => s.id === step);
+  const meta = STEPS[index];
+
+  return (
+    <div className="flex flex-col gap-5">
+      <StepNav step={step} canAdvance={entry !== null} onGo={goTo} />
+
+      <div className="flex flex-col gap-1">
+        <h2 ref={headingRef} tabIndex={-1} className="text-2xl font-semibold tracking-tight outline-none sm:text-3xl">
+          {meta.heading}
+        </h2>
+        <p className="text-sm text-muted-foreground sm:text-base">{meta.intro}</p>
+      </div>
+
+      {step === "swing" ? (
+        <SwingPicker
+          catalogue={catalogueState}
+          entries={entries}
+          api={api}
+          selectedKey={selectedKey}
+          onPick={pickSwing}
+          onRetryApi={retryApi}
+        />
+      ) : !entry ? (
+        <div className="flex flex-col items-start gap-3 rounded-xl border bg-card p-6">
+          <p className="text-sm">This swing isn&apos;t available any more.</p>
+          <Button variant="outline" onClick={() => goTo("swing")}>
+            <ArrowLeft data-icon="inline-start" />
+            Pick a swing
+          </Button>
+        </div>
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" onClick={() => goTo(STEPS[index - 1].id)}>
+              <ArrowLeft data-icon="inline-start" />
+              Back
+            </Button>
+            <p className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
+              <Badge variant={entry.origin === "api" ? "default" : "secondary"}>
+                {entry.origin === "api" ? "Live" : "Sample"}
+              </Badge>
+              <span className="truncate">{entry.label}</span>
+            </p>
+            {meta.next && (
+              <Button size="lg" className="ml-auto" onClick={() => goTo(step === "court" ? "swing" : STEPS[index + 1].id)}>
+                {meta.next}
+                <ArrowRight data-icon="inline-end" />
+              </Button>
+            )}
+          </div>
+
+          {showGhost && (
+            <div className="flex flex-col gap-2">
+              <FixPicker
+                fixes={entry.fixes}
+                selected={activeFix?.id ?? null}
+                loading={compareState.status === "loading"}
+                faults={faults}
+                coached={coached}
+                onSelect={setChosenFix}
+              />
+              <p role="status" className="text-sm text-muted-foreground empty:hidden">
+                {compareState.status === "loading" && activeFix ? `Making the ${fixName(activeFix.id).toLowerCase()} ghost…` : ""}
+              </p>
+              {compareState.status === "error" && (
+                <div role="alert" className="flex flex-wrap items-center gap-3 rounded-xl border border-destructive/40 bg-card p-3 text-sm">
+                  <p className="flex-1">Couldn&apos;t make this ghost: {compareState.message}</p>
+                  <Button variant="outline" size="sm" onClick={retry}>
+                    Try again
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+
+          <GhostStage
+            you={you}
+            ghost={showGhost && compare ? compare.ghost.swing : null}
+            balls={balls}
+            contactSpot={onCourt && compare ? compare.assumptions.contactSpot : null}
+            view={view}
+            onViewChange={setView}
+            status={stageStatus}
+          >
+            <SceneLegend
+              ghost={
+                showGhost && compare
+                  ? {
+                      label: `${fixName(compare.fix.id).toLowerCase()} ${formatValue(compare.fix.amount, compare.fix.unit)}`,
+                      mock: !compare.ghostIsReal,
+                    }
+                  : null
+              }
+              balls={onCourt && compare ? { you: compare.you.ball, ghost: compare.ghost.ball } : null}
+              monoDepth={you?.source === "mono"}
+            />
+            {onCourt && (
+              <p className="pointer-events-none absolute top-3 right-3 hidden max-w-[34%] text-right text-xs text-muted-foreground md:block">
+                Court 6.40 × 9.75 m · player drawn beside the assumed contact spot (display only)
+              </p>
+            )}
+            <CoachCaptionBar state={caption} size={step === "coach" ? "large" : "compact"} />
+          </GhostStage>
+
+          {step === "coach" && <CoachDetails state={caption} />}
+          {showGhost && compare && (
+            <div className={cn("grid gap-3", onCourt && "lg:grid-cols-2")}>
+              {onCourt && <BallChanges compare={compare} />}
+              <BodyChanges compare={compare} flagged={faults.some((f) => f.fix === compare.fix.id)} coached={coached} />
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function StepNav({ step, canAdvance, onGo }: { step: Step; canAdvance: boolean; onGo: (step: Step) => void }) {
+  const current = STEPS.findIndex((s) => s.id === step);
+  return (
+    <nav aria-label="Demo steps">
+      <ol className="flex flex-wrap gap-2">
+        {STEPS.map((s, i) => {
+          const isCurrent = i === current;
+          return (
+            <li key={s.id}>
+              <button
+                type="button"
+                onClick={() => onGo(s.id)}
+                disabled={i > 0 && !canAdvance}
+                aria-current={isCurrent ? "step" : undefined}
+                className={cn(
+                  "flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm transition-colors outline-none",
+                  "focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-40",
+                  isCurrent
+                    ? "border-foreground bg-foreground text-background"
+                    : i < current
+                      ? "text-foreground hover:bg-muted"
+                      : "text-muted-foreground hover:bg-muted",
+                )}
+              >
+                <span className="font-mono text-xs tabular-nums">{i + 1}</span>
+                {s.title}
+              </button>
+            </li>
+          );
+        })}
+      </ol>
+    </nav>
+  );
+}

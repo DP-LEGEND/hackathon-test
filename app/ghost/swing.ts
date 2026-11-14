@@ -25,6 +25,8 @@ export type LoadedSwing = {
   floorY: number;
   /** True when the file was y-down (raw MediaPipe) and was turned y-up for display. */
   flippedFromYDown: boolean;
+  /** The pipeline's `source` ("stereo" or "mono"), if the file says. Mono depth is estimated, not measured. */
+  source: string | null;
 };
 
 /** One drawable pose. Joints are hip-centred metres, y up. */
@@ -177,6 +179,7 @@ export function loadSwing(value: unknown, fileContactFrame?: number): LoadedSwin
     contactT: swing.frames[contactFrame].t,
     floorY,
     flippedFromYDown,
+    source: isRecord(value) && typeof value.source === "string" ? value.source : null,
   };
 }
 
