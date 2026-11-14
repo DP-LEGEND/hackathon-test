@@ -721,3 +721,40 @@ export function parseCoach(value: unknown): CoachCaption {
       : [],
   };
 }
+
+/**
+ * The coach's cue as speech (`GET /coach/{id}/voice`, PR #60). `cue` replaces the caption's cue;
+ * `audioUrl` is a recording of exactly that cue, or null.
+ */
+export type CoachVoice = {
+  cue: string;
+  audioUrl: string | null;
+  /** `source === "claude"`: Claude worded the cue, and the page says so. Else it's the plain caption. */
+  wordedByClaude: boolean;
+};
+
+/**
+ * Only audio the service made itself plays: an inline data:audio clip, or a path on this site.
+ * A path must start with exactly one "/", have no backslash (browsers read "/\host" as "//host",
+ * another site) and resolve to this page's origin. Anything that doesn't parse is refused. On
+ * the server there's no origin to check against, so only the inline clip passes there.
+ */
+function playableAudio(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  if (/^data:audio\/[\w.+-]+;base64,/i.test(value)) return value;
+  if (typeof window === "undefined") return null;
+  if (!value.startsWith("/") || value.startsWith("//") || value.includes("\\")) return null;
+  try {
+    const origin = window.location.origin;
+    return new URL(value, origin).origin === origin ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Checks an untrusted voice answer. Throws CompareDataError unless it has a usable cue. */
+export function parseVoice(value: unknown): CoachVoice {
+  const v = record(value, "voice");
+  if (typeof v.cue !== "string" || v.cue.trim() === "") throw new CompareDataError("cue must be a non-empty string");
+  return { cue: v.cue.trim(), audioUrl: playableAudio(v.audioUrl), wordedByClaude: v.source === "claude" };
+}

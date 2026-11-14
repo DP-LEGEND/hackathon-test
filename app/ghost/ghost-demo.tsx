@@ -36,6 +36,7 @@ import {
   resolveSelection,
   loadCatalogue,
   loadCoachFor,
+  loadVoiceFor,
   loadCompareFor,
   loadSwingFor,
   loadWristFor,
@@ -216,9 +217,17 @@ export function GhostDemo({ requestedSwing }: { requestedSwing: string | null })
       : { you: ballView(compare.you.ball, "you"), ghost: ballView(compare.ghost.ball, "ghost") };
   }, [onCourt, compare, samePath]);
 
+  // The coach's cue as speech (#60): asked for only on a step that shows the caption (the coach's
+  // call onwards, so not for the demo swing preloading behind the swing list), once the coach has
+  // answered and the live service is online. It can take seconds; the plain caption shows
+  // meanwhile, and stays if there's no voice (null). A null isn't kept: coming back asks again.
+  const voiceWanted = step !== "swing" && coach.status === "ready" && api.status === "online";
+  const voicePromise = useMemo(() => (entry && voiceWanted ? loadVoiceFor(entry) : null), [entry, voiceWanted]);
+  const voice = useAsync(voicePromise);
+
   const caption: CaptionState =
     coach.status === "ready"
-      ? { kind: "ready", caption: coach.value }
+      ? { kind: "ready", caption: coach.value, voice: voice.status === "ready" ? voice.value : null }
       : coach.status === "error"
         ? { kind: "error", message: coach.message, onRetry: () => setCoachAttempt((n) => n + 1) }
         : { kind: "loading" };
@@ -391,7 +400,8 @@ export function GhostDemo({ requestedSwing }: { requestedSwing: string | null })
                   : "Court 6.40 × 9.75 m · player placed with the hitting hand over the ball's assumed start (display only)"}
               </p>
             )}
-            <CoachCaptionBar state={caption} size={step === "coach" ? "large" : "compact"} />
+            {/* Keyed by swing, so a new swing never keeps the last one's clip playing. */}
+            <CoachCaptionBar key={entry.key} state={caption} size={step === "coach" ? "large" : "compact"} />
           </GhostStage>
 
           {step === "coach" && <CoachDetails state={caption} />}
