@@ -12,9 +12,10 @@ from pathlib import Path
 
 import pytest
 
-from coach.agent import NO_FAULT_CUE, coach_swing
+from coach.agent import GHOST_SHOWS_NEXT, GHOST_SHOWS_NONE, NO_FAULT_CUE, coach_swing
 from coach.faults import (
-    FAULTS, MEASUREMENTS, THRESHOLDS, detect_faults, measure_swing, severity, unmeasured_faults,
+    FAULTS, GUESS, LABELLED, MEASUREMENTS, THRESHOLDS, detect_faults, measure_swing, severity,
+    unmeasured_faults,
 )
 from physics.ghost import EDITS, FIXES, apply_fix
 from physics.metrics import measure
@@ -22,6 +23,7 @@ from physics.tests.swing_factory import make_swing
 
 SAMPLE = Path(__file__).resolve().parents[3] / "data" / "samples" / "swing_sample.json"
 STROKES = ("forehand", "backhand")
+SIX = {"early_wrist_snap", "over_rotation", "under_rotation", "straight_arm", "stance_too_open", "rolling_wrist"}
 
 
 @pytest.fixture(scope="module")
@@ -31,10 +33,12 @@ def sample() -> dict:
 
 def neutral_metrics(stroke: str) -> dict:
     """Metrics where every measurement sits on its target, so no fault fires."""
-    rules = THRESHOLDS[stroke]
     m: dict = {"stroke": stroke}
-    for fid, spec in FAULTS.items():
-        m.setdefault(spec["measurement"], rules[fid]["target"])
+    for rule in THRESHOLDS[stroke].values():
+        m.setdefault(rule["measurement"], rule["target"])
+        if "amount_from" in rule:
+            m.setdefault(rule["amount_from"]["measurement"], rule["amount_from"]["target"])
+    m.setdefault("shoulder_turn_deg", 80.0)
     return m
 
 
@@ -42,36 +46,69 @@ def fires(value: float, rule: dict) -> bool:
     return severity(value, rule) > 0
 
 
+def expected_amount(fault_id: str, stroke: str, m: dict) -> float:
+    rule = THRESHOLDS[stroke][fault_id]
+    src = rule.get("amount_from") or rule
+    gap = m[src["measurement"]] - src["target"]
+    amount = max(0.0, gap if rule["severe_at"] > rule["threshold"] else -gap)  # faulty side only
+    fix = FAULTS[fault_id]["fix"]
+    return min(amount, EDITS[FIXES[fix][0]]["max_abs"]) if fix in FIXES else amount
+
+
 # ---- The library itself -------------------------------------------------------------
 
-def test_library_covers_the_six_faults_for_both_strokes() -> None:
-    expected = {"early_wrist_snap", "over_rotation", "under_rotation", "straight_arm",
-                "stance_too_open", "rolling_wrist"}
-    assert set(FAULTS) == expected
-    for stroke in STROKES:
-        assert set(THRESHOLDS[stroke]) == expected
-        for rule in THRESHOLDS[stroke].values():
-            assert rule["severe_at"] != rule["threshold"]
-            assert severity(rule["target"], rule) == 0, "target must be inside the threshold"
+@pytest.mark.parametrize("stroke", STROKES)
+def test_library_covers_the_six_faults(stroke: str) -> None:
+    assert set(FAULTS) == SIX
+    assert set(THRESHOLDS[stroke]) == SIX
+    for rule in THRESHOLDS[stroke].values():
+        assert rule["measurement"] in MEASUREMENTS
+        assert rule["source"] in (LABELLED, GUESS)
+        assert rule["severe_at"] != rule["threshold"]
+        assert severity(rule["target"], rule) == 0, "target must be inside the threshold"
+        if "amount_from" in rule:
+            assert rule["amount_from"]["measurement"] in MEASUREMENTS
+
+
+def test_labelled_rules_put_threshold_halfway_from_good_to_fault() -> None:
+    labelled = [(s, f, r) for s in STROKES for f, r in THRESHOLDS[s].items() if r["source"] == LABELLED]
+    assert {(s, f) for s, f, _ in labelled} == {
+        ("forehand", "early_wrist_snap"), ("forehand", "over_rotation"),
+        ("forehand", "stance_too_open"), ("backhand", "straight_arm"),
+    }
+    for _, _, rule in labelled:
+        assert rule["threshold"] == pytest.approx((rule["target"] + rule["severe_at"]) / 2)
+
+
+def test_labelled_values_from_real_data() -> None:
+    fh, bh = THRESHOLDS["forehand"], THRESHOLDS["backhand"]
+    assert (fh["early_wrist_snap"]["target"], fh["early_wrist_snap"]["severe_at"]) == (30.0, 61.0)
+    assert (fh["over_rotation"]["target"], fh["over_rotation"]["severe_at"]) == (65.0, 110.0)
+    assert fh["stance_too_open"]["severe_at"] == pytest.approx(fh["stance_too_open"]["target"] / 2)
+    assert (bh["straight_arm"]["target"], bh["straight_arm"]["severe_at"]) == (77.0, 109.0)
 
 
 @pytest.mark.parametrize("fault_id", sorted(FAULTS))
-def test_each_fault_has_measurement_fix_and_one_line_cue(fault_id: str) -> None:
+def test_each_fault_has_fix_and_one_line_cue(fault_id: str) -> None:
     spec = FAULTS[fault_id]
-    assert spec["measurement"] in MEASUREMENTS
-    assert spec["fix"]
+    assert spec["fix"] and spec["title"]
     cue = spec["cue"].strip()
     assert cue.endswith(".") and cue.count(".") == 1, "one sentence"
     assert not any(ch.isdigit() for ch in cue), "cues quote no numbers"
 
 
+def test_fix_names_match_physics_and_aryans_planned_fixes() -> None:
+    names = {spec["fix"] for spec in FAULTS.values()}
+    available = {"straighten_elbow", "turn_shoulders_more", "hold_wrist_cock"}
+    planned = {"close_stance", "bend_elbow", "turn_shoulders_less"}
+    assert available <= set(FIXES)
+    assert names - {"firm_wrist"} <= available | planned
+
+
 def test_ready_fixes_really_run_in_apply_fix() -> None:
     swing = make_swing()
-    ready = {spec["fix"] for spec in FAULTS.values() if spec["fix"] in FIXES}
-    assert ready == {"turn_shoulders_more", "hold_wrist_cock"}
-    for fix in ready:
-        edit = FIXES[fix][0]
-        ghost = apply_fix(swing, fix, EDITS[edit]["max_abs"] / 4)
+    for fix in {spec["fix"] for spec in FAULTS.values()} & set(FIXES):
+        ghost = apply_fix(swing, fix, EDITS[FIXES[fix][0]]["max_abs"] / 4)
         assert ghost["synthetic"] is True
 
 
@@ -98,49 +135,144 @@ def test_neutral_swing_has_no_faults(stroke: str) -> None:
 def test_each_fault_fires_alone_past_its_threshold(stroke: str, fault_id: str) -> None:
     rule = THRESHOLDS[stroke][fault_id]
     m = neutral_metrics(stroke)
-    m[FAULTS[fault_id]["measurement"]] = rule["threshold"]
+    m[rule["measurement"]] = rule["threshold"]
     assert detect_faults({}, metrics=m) == [], "exactly at the threshold is not a fault"
 
-    m[FAULTS[fault_id]["measurement"]] = rule["severe_at"]
+    m[rule["measurement"]] = rule["severe_at"]
     faults = detect_faults({}, metrics=m)
     assert [f["id"] for f in faults] == [fault_id]
     f = faults[0]
     assert f["severity"] == 1.0
     assert f["fix"] == FAULTS[fault_id]["fix"]
-    assert f["ghost_ready"] == (f["fix"] in FIXES)
-    assert f["fix_amount"] == pytest.approx(min(
-        abs(rule["severe_at"] - rule["target"]),
-        EDITS[FIXES[f["fix"]][0]]["max_abs"] if f["ghost_ready"] else math.inf,
-    ), abs=0.1)
+    assert f["source"] == rule["source"]
+    assert f["fix_amount"] == pytest.approx(expected_amount(fault_id, stroke, m), abs=0.01)
+    if f["ghost_ready"]:
+        assert f["fix"] in FIXES and EDITS[FIXES[f["fix"]][0]]["unit"] == f["fix_unit"]
 
 
 def test_worst_fault_first_and_priority_breaks_ties() -> None:
-    m = neutral_metrics("forehand")
-    rules = THRESHOLDS["forehand"]
-    m["wrist_release_ms"] = rules["early_wrist_snap"]["severe_at"]  # severity 1, priority 4
-    m["elbow_at_contact_deg"] = rules["straight_arm"]["severe_at"]  # severity 1, priority 1
+    m = neutral_metrics("backhand")
+    rules = THRESHOLDS["backhand"]
+    m["wrist_uncock_ms"] = rules["early_wrist_snap"]["severe_at"]  # severity 1, priority 4
+    m["elbow_min_before_deg"] = rules["straight_arm"]["severe_at"]  # severity 1, priority 1
     assert [f["id"] for f in detect_faults({}, metrics=m)] == ["straight_arm", "early_wrist_snap"]
 
-    half = (rules["straight_arm"]["threshold"] + rules["straight_arm"]["severe_at"]) / 2
-    m["elbow_at_contact_deg"] = half  # now severity 0.5
+    sa = rules["straight_arm"]
+    m["elbow_min_before_deg"] = (sa["threshold"] + sa["severe_at"]) / 2  # now severity 0.5
     assert [f["id"] for f in detect_faults({}, metrics=m)] == ["early_wrist_snap", "straight_arm"]
 
 
 @pytest.mark.parametrize("missing", [None, float("nan")])
 def test_unmeasured_values_never_fire(missing) -> None:
     m = neutral_metrics("forehand")
-    m["wrist_release_ms"] = missing
+    m["wrist_uncock_deg"] = missing
     assert detect_faults({}, metrics=m) == []
     assert "early_wrist_snap" in unmeasured_faults(m)
 
 
+# ---- Ghost readiness ----------------------------------------------------------------
+
+def _fault(m: dict, fault_id: str) -> dict:
+    return next(f for f in detect_faults({}, metrics=m) if f["id"] == fault_id)
+
+
+def test_wrist_ghost_amount_is_in_ms_even_when_detected_in_degrees() -> None:
+    m = neutral_metrics("forehand")
+    m["wrist_uncock_deg"] = 61.0
+    m["wrist_uncock_ms"] = 56.0
+    f = _fault(m, "early_wrist_snap")
+    assert f["unit"] == "deg" and f["fix_unit"] == "ms"
+    assert f["fix_amount"] == pytest.approx(46.0) and f["ghost_ready"] is True
+
+
+def test_no_shoulder_ghost_when_shoulders_barely_turn() -> None:
+    # Codex P1 on #22: ghost.py refuses shoulder edits below 1 deg of turn.
+    m = neutral_metrics("forehand")
+    m["shoulder_turn_deg"] = 0.5
+    f = _fault(m, "under_rotation")
+    assert f["fix"] == "turn_shoulders_more" and f["ghost_ready"] is False
+
+
+def test_planned_fixes_become_ready_when_physics_adds_them(monkeypatch: pytest.MonkeyPatch) -> None:
+    m = neutral_metrics("forehand")
+    m["hip_turn_range_deg"] = 110.0
+    m["shoulder_turn_deg"] = 100.0  # shoulders over-turned too
+    monkeypatch.delitem(FIXES, "turn_shoulders_less", raising=False)
+    assert _fault(m, "over_rotation")["ghost_ready"] is False
+
+    monkeypatch.setitem(FIXES, "turn_shoulders_less", ("shoulder_turn", -1.0))
+    assert _fault(m, "over_rotation")["ghost_ready"] is True
+
+
+def test_over_rotation_ghost_amount_comes_from_shoulders_not_hips(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Codex P1 on #28: turn_shoulders_less only rotates the upper body, so the hip
+    # excess (110 - 65 = 45 deg) must never become a shoulder reduction.
+    monkeypatch.setitem(FIXES, "turn_shoulders_less", ("shoulder_turn", -1.0))
+    m = neutral_metrics("forehand")
+    m["hip_turn_range_deg"] = 110.0
+
+    m["shoulder_turn_deg"] = 100.0
+    f = _fault(m, "over_rotation")
+    assert f["fix"] == "turn_shoulders_less" and f["fix_unit"] == "deg"
+    assert f["fix_amount"] == pytest.approx(15.0) and f["ghost_ready"] is True  # 100 - 85
+
+    m["shoulder_turn_deg"] = 80.0  # hips over-rotate, shoulders don't
+    f = _fault(m, "over_rotation")
+    assert f["severity"] == 1.0, "the hip fault is still reported for the caption"
+    assert f["fix_amount"] == 0.0 and f["ghost_ready"] is False  # no shoulder reduction
+
+    m["shoulder_turn_deg"] = None
+    f = _fault(m, "over_rotation")
+    assert f["fix_amount"] is None and f["ghost_ready"] is False
+
+
+def test_late_wrist_release_gets_no_hold_wrist_cock(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Codex P2 on #28: hold_wrist_cock always delays the release, so a release that's
+    # already at or after the 10 ms target must not be pushed later.
+    m = neutral_metrics("forehand")
+    m["wrist_uncock_deg"] = 61.0  # the angle rule fires
+    for release_ms in (10.0, 0.0, -20.0):
+        m["wrist_uncock_ms"] = release_ms
+        f = _fault(m, "early_wrist_snap")
+        assert f["fix_amount"] == 0.0 and f["ghost_ready"] is False
+    m["wrist_uncock_ms"] = 56.0
+    assert _fault(m, "early_wrist_snap")["fix_amount"] == pytest.approx(46.0)
+
+
+@pytest.mark.parametrize("stroke", STROKES)
+@pytest.mark.parametrize("fault_id", sorted(FAULTS))
+def test_ghost_never_moves_past_the_target(stroke: str, fault_id: str) -> None:
+    """Directional amounts: on the good side of the target the ghost does nothing."""
+    rule = THRESHOLDS[stroke][fault_id]
+    src = rule.get("amount_from") or rule
+    m = neutral_metrics(stroke)
+    m[rule["measurement"]] = rule["severe_at"]  # the fault fires
+    if "amount_from" in rule:
+        good_side = -1.0 if rule["severe_at"] > rule["threshold"] else 1.0
+        m[src["measurement"]] = src["target"] + good_side * 5.0
+        f = _fault(m, fault_id)
+        assert f["fix_amount"] == 0.0 and f["ghost_ready"] is False
+    else:
+        f = _fault(m, fault_id)
+        assert f["fix_amount"] > 0  # severe_at is on the faulty side of the target
+
+
+def test_fix_with_wrong_unit_is_not_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(FIXES, "close_stance", ("elbow_bend", -1.0))  # deg edit
+    m = neutral_metrics("forehand")
+    m["stance_width_ratio"] = 0.85  # measured in shoulder widths
+    assert _fault(m, "stance_too_open")["ghost_ready"] is False
+
+
 # ---- The real sample swing ----------------------------------------------------------
 
-def test_sample_uses_physics_measurements_exactly(sample: dict) -> None:
+def test_sample_uses_physics_and_pipeline_measurements(sample: dict) -> None:
     m = measure_swing(sample, "backhand")
     physics = measure(sample)
     for key in ("elbow_at_contact_deg", "shoulder_turn_deg", "wrist_release_ms", "contact_frame"):
         assert m[key] == physics[key]
+    for key in ("wrist_angle_change_pre_deg", "hip_turn_range_deg", "elbow_min_before_deg", "stance_width_ratio"):
+        assert math.isfinite(m[key])
     assert m["forearm_roll_deg"] is None
     assert 0 <= m["stance_open_deg"] <= 90
 
@@ -149,11 +281,11 @@ def test_sample_uses_physics_measurements_exactly(sample: dict) -> None:
 def test_sample_faults_match_thresholds(sample: dict, stroke: str) -> None:
     m = measure_swing(sample, stroke)
     got = {f["id"] for f in detect_faults(sample, metrics=m)}
-    expected = {
-        fid for fid, spec in FAULTS.items()
-        if isinstance(m[spec["measurement"]], float) and math.isfinite(m[spec["measurement"]])
-        and fires(m[spec["measurement"]], THRESHOLDS[stroke][fid])
-    }
+    expected = set()
+    for fid, rule in THRESHOLDS[stroke].items():
+        v = m[rule["measurement"]]
+        if isinstance(v, float) and math.isfinite(v) and fires(v, rule):
+            expected.add(fid)
     assert got == expected
 
 
@@ -167,10 +299,36 @@ def test_coach_swing_on_sample(sample: dict) -> None:
     assert top is not None, "this sample has faults at the current thresholds"
     assert result["fix"] == top["fix"] and result["cue"] == top["cue"]
     assert result["fix_amount"] == top["fix_amount"] and result["ghost_ready"] == top["ghost_ready"]
-    # The label quotes the measured number (rounded), never anything else.
-    assert f"{top['value']:.0f}" in top["label"]
+    assert top["label"].startswith(FAULTS[top["id"]]["title"])
     all_ids = [top["id"]] + result["other_faults"]
     assert len(all_ids) == len(set(all_ids))
+
+
+def test_sample_backhand_ghost_fault_is_animatable(sample: dict) -> None:
+    result = coach_swing(sample, stroke="backhand")
+    ghost = result["ghost_fault"]
+    assert ghost is not None and ghost["ghost_ready"] is True
+    assert result["ghost_fix"] == ghost["fix"] and result["ghost_fix"] in FIXES
+    assert result["ghost_fix_amount"] == ghost["fix_amount"]
+    # It really animates: physics accepts this fix and amount on this swing.
+    assert apply_fix(sample, result["ghost_fix"], result["ghost_fix_amount"])["synthetic"] is True
+    if result["fault"]["ghost_ready"]:
+        assert result["ghost_fault"] == result["fault"] and result["ghost_note"] is None
+    else:
+        assert result["ghost_note"] == GHOST_SHOWS_NEXT
+
+
+def test_no_ghost_fault_when_nothing_is_animatable(monkeypatch: pytest.MonkeyPatch, sample: dict) -> None:
+    monkeypatch.setattr("coach.faults.FIXES", {})  # no fix is built, whatever physics has today
+    m = neutral_metrics("backhand")
+    m["stance_open_deg"] = THRESHOLDS["backhand"]["stance_too_open"]["severe_at"]
+    faults = detect_faults({}, metrics=m)
+    assert faults and not any(f["ghost_ready"] for f in faults)
+    monkeypatch.setattr("coach.agent.detect_faults", lambda swing, metrics: faults)
+    result = coach_swing(sample, stroke="backhand")
+    assert result["fault"]["id"] == "stance_too_open"
+    assert result["ghost_fault"] is None and result["ghost_fix"] is None
+    assert result["ghost_fix_amount"] is None and result["ghost_note"] == GHOST_SHOWS_NONE
 
 
 def test_coach_swing_with_no_faults(monkeypatch: pytest.MonkeyPatch, sample: dict) -> None:
@@ -178,6 +336,7 @@ def test_coach_swing_with_no_faults(monkeypatch: pytest.MonkeyPatch, sample: dic
     result = coach_swing(sample, stroke="forehand")
     assert result["fault"] is None and result["fix"] is None
     assert result["cue"] == NO_FAULT_CUE and result["ghost_ready"] is False
+    assert result["ghost_fault"] is None and result["ghost_note"] is None
 
 
 # ---- Stroke --------------------------------------------------------------------------
@@ -197,3 +356,197 @@ def test_mock_forehand_is_detected_as_forehand() -> None:
 def test_bad_stroke_is_rejected(sample: dict) -> None:
     with pytest.raises(ValueError, match="stroke"):
         measure_swing(sample, "lob")  # type: ignore[arg-type]
+
+
+# ---- Filled-in ankles never produce stance faults -----------------------------------
+
+STANCE_FAULT = "stance_too_open"
+L_ANKLE, R_ANKLE, L_KNEE, R_KNEE = 27, 28, 25, 26
+
+
+def _with(sample: dict, **changes) -> dict:
+    import copy
+
+    s = copy.deepcopy(sample)
+    for key, value in changes.items():
+        s[key] = value
+    return s
+
+
+def _stance_result(swing: dict, stroke: str = "backhand") -> tuple[dict, dict]:
+    m = measure_swing(swing, stroke)
+    return m, coach_swing(swing, stroke=stroke)
+
+
+def test_real_ankles_are_measured(sample: dict) -> None:
+    m, result = _stance_result(sample)
+    assert m["stance_skipped"] is None
+    assert math.isfinite(m["stance_open_deg"]) and math.isfinite(m["stance_width_ratio"])
+    assert result["fault"]["id"] == STANCE_FAULT  # the sample's real top fault
+
+
+@pytest.mark.parametrize("stroke", STROKES)
+@pytest.mark.parametrize("ankle", [L_ANKLE, R_ANKLE])
+def test_ankle_listed_as_approximated_skips_stance(sample: dict, stroke: str, ankle: int) -> None:
+    swing = _with(sample, metadata={"approximatedJoints": [19, ankle, 31]})
+    m, result = _stance_result(swing, stroke)
+    assert m["stance_open_deg"] is None and m["stance_width_ratio"] is None
+    assert f"joint {ankle} approximated" in m["stance_skipped"]
+    ids = [f["id"] for f in detect_faults(swing, metrics=m)]
+    assert STANCE_FAULT not in ids
+    assert result["fault"] is None or result["fault"]["id"] != STANCE_FAULT
+    assert STANCE_FAULT not in result["other_faults"]
+    assert STANCE_FAULT in result["not_measured"]
+    json.dumps(result, allow_nan=False)
+
+
+def test_ankle_copied_from_knee_at_contact_skips_stance_without_metadata(sample: dict) -> None:
+    swing = _with(sample)
+    c = swing["contactFrame"]
+    swing["frames"][c]["joints"][R_ANKLE] = list(swing["frames"][c]["joints"][R_KNEE])
+    m, result = _stance_result(swing)
+    assert m["stance_skipped"] == "joint 28 copied from knee at contact"
+    assert STANCE_FAULT not in [result["fault"]["id"]] + result["other_faults"]
+
+
+def test_ankle_missing_at_contact_skips_stance(sample: dict) -> None:
+    swing = _with(sample)
+    swing["frames"][swing["contactFrame"]]["joints"][L_ANKLE] = [0.0, 0.0, 0.0]  # pipeline's "lost"
+    m, _ = _stance_result(swing)
+    assert m["stance_skipped"] == "joint 27 missing at contact"
+    assert m["stance_open_deg"] is None and m["stance_width_ratio"] is None
+
+
+def test_copy_away_from_contact_or_other_filled_joints_keep_stance(sample: dict) -> None:
+    swing = _with(sample, metadata={"approximatedJoints": [19, 20, 31, 32]})  # hands and toes only
+    swing["frames"][0]["joints"][R_ANKLE] = list(swing["frames"][0]["joints"][R_KNEE])  # not contact
+    m, result = _stance_result(swing)
+    assert m["stance_skipped"] is None
+    assert result["fault"]["id"] == STANCE_FAULT
+
+
+def test_other_faults_still_fire_when_stance_is_skipped(sample: dict) -> None:
+    clean = {f["id"] for f in detect_faults(sample, "backhand")}
+    swing = _with(sample, metadata={"approximatedJoints": [L_ANKLE, R_ANKLE]})
+    skipped = {f["id"] for f in detect_faults(swing, "backhand")}
+    assert skipped == clean - {STANCE_FAULT}
+
+
+# ---- A filled-in index finger never produces a wrist fault --------------------------
+
+WRIST_FAULT = "early_wrist_snap"
+R_WRIST, L_INDEX, R_INDEX = 16, 19, 20  # the sample is right-handed
+
+
+def test_real_index_is_measured(sample: dict) -> None:
+    m = measure_swing(sample, "forehand")
+    assert m["wrist_skipped"] is None and math.isfinite(m["wrist_angle_change_pre_deg"])
+    assert WRIST_FAULT in {f["id"] for f in detect_faults(sample, metrics=m)}  # real fault on the sample
+
+
+def test_index_listed_as_approximated_skips_wrist_angle(sample: dict) -> None:
+    swing = _with(sample, metadata={"approximatedJoints": [R_INDEX]})
+    m = measure_swing(swing, "forehand")
+    assert m["wrist_angle_change_pre_deg"] is None
+    assert m["wrist_skipped"] == "joint 20 approximated"
+    result = coach_swing(swing, stroke="forehand")
+    assert WRIST_FAULT not in [result["fault"]["id"]] + result["other_faults"]
+    assert WRIST_FAULT in result["not_measured"]
+    json.dumps(result, allow_nan=False)
+
+
+@pytest.mark.parametrize("frame_offset", [-30, 0])  # before contact, and at contact
+def test_index_copied_onto_wrist_up_to_contact_skips_wrist_angle(sample: dict, frame_offset: int) -> None:
+    swing = _with(sample)
+    f = swing["contactFrame"] + frame_offset
+    swing["frames"][f]["joints"][R_INDEX] = list(swing["frames"][f]["joints"][R_WRIST])
+    m = measure_swing(swing, "forehand")
+    assert m["wrist_skipped"] == f"joint 20 copied from wrist at frame {f}"
+    assert m["wrist_angle_change_pre_deg"] is None
+    assert WRIST_FAULT not in {x["id"] for x in detect_faults(swing, metrics=m)}
+
+
+def test_copy_after_contact_or_off_side_index_keeps_wrist_angle(sample: dict) -> None:
+    swing = _with(sample, metadata={"approximatedJoints": [L_INDEX, 27]})  # non-hitting index, an ankle
+    after = swing["contactFrame"] + 5
+    swing["frames"][after]["joints"][R_INDEX] = list(swing["frames"][after]["joints"][R_WRIST])
+    m = measure_swing(swing, "forehand")
+    assert m["wrist_skipped"] is None and math.isfinite(m["wrist_angle_change_pre_deg"])
+    assert m["stance_skipped"] is not None  # the ankle is still handled separately
+
+
+def test_left_hander_checks_the_left_index(sample: dict) -> None:
+    from coach.measure_extra import wrist_index_filled
+
+    c = sample["contactFrame"]
+    assert wrist_index_filled({**sample, "metadata": {"approximatedJoints": [L_INDEX]}}, "L", c) == "joint 19 approximated"
+    assert wrist_index_filled({**sample, "metadata": {"approximatedJoints": [R_INDEX]}}, "L", c) is None
+
+
+def test_other_faults_still_fire_when_wrist_is_skipped(sample: dict) -> None:
+    clean = {f["id"] for f in detect_faults(sample, "forehand")}
+    swing = _with(sample, metadata={"approximatedJoints": [R_INDEX]})
+    skipped = {f["id"] for f in detect_faults(swing, "forehand")}
+    assert skipped == clean - {WRIST_FAULT}
+
+
+def test_filled_index_also_drops_release_timing(sample: dict) -> None:
+    swing = _with(sample, metadata={"approximatedJoints": [R_INDEX]})
+    m = measure_swing(swing, "backhand")
+    for key in ("wrist_angle_change_pre_deg", "wrist_release_ms", "wrist_uncock_deg", "wrist_uncock_ms"):
+        assert m[key] is None, key
+    assert WRIST_FAULT not in {f["id"] for f in detect_faults(swing, metrics=m)}  # backhand rule too
+    json.dumps(coach_swing(swing, stroke="backhand"), allow_nan=False)
+
+
+# ---- Early wrist snap needs the wrist to RELEASE (open) before contact ---------------
+
+def _wrist_curve(kind: str, n: int, c: int, fps: float) -> "np.ndarray":
+    """Inside wrist angle per frame (180 = in line, smaller = cocked)."""
+    import numpy as np
+
+    f = np.arange(n, dtype=float)
+    cocked = np.interp(f, [0, c - 60, c - 40], [170, 170, 110])  # cock to 110 deg during prep
+    if kind == "held":  # cock, then hold through contact and after
+        return cocked
+    if kind == "increasing":  # keeps cocking right up to contact, and after
+        return np.interp(f, [0, c, n - 1], [170, 110, 100])
+    if kind == "early_release":  # opens fully ~100 ms before contact
+        start, end = c - round(0.125 * fps), c - round(0.075 * fps)
+        return np.where(f < start, cocked, np.interp(f, [start, end], [110, 170]))
+    if kind == "after_contact":  # holds the cock until contact, opens just after
+        return np.where(f <= c, cocked, np.interp(f, [c, c + round(0.03 * fps)], [110, 170]))
+    raise ValueError(kind)
+
+
+@pytest.mark.parametrize("kind, fires", [
+    ("held", False), ("increasing", False), ("after_contact", False), ("early_release", True),
+])
+@pytest.mark.parametrize("stroke", STROKES)
+def test_early_wrist_snap_only_for_a_release_before_contact(
+    monkeypatch: pytest.MonkeyPatch, kind: str, fires: bool, stroke: str,
+) -> None:
+    import numpy as np
+
+    swing = make_swing()  # 240 fps mock forehand; only the wrist curve is replaced
+    m0 = measure(swing)
+    c, n, fps = m0["contact_frame"], len(swing["frames"]), m0["fps_real"]
+    curve = _wrist_curve(kind, n, c, fps)
+    monkeypatch.setattr("coach.measure_extra.wrist_angle", lambda P, hand: curve.copy())
+
+    m = measure_swing(swing, stroke)
+    got = WRIST_FAULT in {f["id"] for f in detect_faults(swing, metrics=m)}
+    assert got is fires, (kind, m["wrist_uncock_deg"], m["wrist_uncock_ms"])
+    if kind in ("held", "increasing"):
+        # The old unsigned range (max - min = 60 deg) would have called this an early snap.
+        assert np.nanmax(curve[: c + 1]) - np.nanmin(curve[: c + 1]) >= 60
+        assert m["wrist_uncock_deg"] < 1 and m["wrist_uncock_ms"] is None
+    if kind == "early_release":
+        assert m["wrist_uncock_deg"] > 55 and 60 < m["wrist_uncock_ms"] < 140
+    if kind == "after_contact":
+        assert m["wrist_uncock_ms"] is None or m["wrist_uncock_ms"] <= 0
+
+
+def test_directional_release_matches_physics_on_a_clean_swing(sample: dict) -> None:
+    m = measure_swing(sample, "backhand")
+    assert m["wrist_uncock_ms"] == pytest.approx(m["wrist_release_ms"])  # 56.1 ms: a real opening
