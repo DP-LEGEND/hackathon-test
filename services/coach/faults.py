@@ -40,7 +40,8 @@ from physics.skeleton import L_SH, R_SH, to_array
 from pipeline.features import swing_features
 
 from coach.measure_extra import (
-    STROKES, guessed_measurements, recorded_hand, stance_joints_filled, stroke_side, wrist_index_filled,
+    STROKES, guessed_measurements, recorded_hand, stance_ankles_guessed, stance_joints_filled,
+    stance_open_front_wall_deg, stroke_side, wrist_index_filled,
     wrist_uncock,
 )
 from coach.wrist_sensor import sensor_metrics
@@ -293,6 +294,21 @@ def measure_swing(swing: dict, stroke: Optional[Stroke] = None, fps_real: Option
     # approximated, marked filled on a frame it uses (#39 flags), or saw at visibility
     # below 0.5 at contact is unmeasured, so its fault is skipped (see unmeasured_faults).
     m["guessed_joints"] = guessed_measurements(swing, m["hand"], m["contact_frame"], m["fps_real"])
+    m["stance_direction"] = "hitting_direction" if _finite(m.get("stance_open_deg")) else None
+    # Stance is a feet measurement. When only the shot direction (the hitting wrist around
+    # contact) is guessed and the ankles were seen, judge the feet against the front-wall
+    # axis instead of dropping the stance check. Only where stance_open_deg is the rule's
+    # own measurement (backhand): on the forehand it only sizes the close_stance ghost,
+    # which edits the hitting-direction angle, so there it stays unmeasured.
+    stance_rule = THRESHOLDS.get(m["stroke"], {}).get("stance_too_open", {})
+    if ("stance_open_deg" in m["guessed_joints"] and not m["stance_skipped"]
+            and stance_rule.get("measurement") == "stance_open_deg"
+            and stance_ankles_guessed(swing, m["contact_frame"]) is None):
+        front = stance_open_front_wall_deg(swing, m["contact_frame"])
+        if _finite(front):
+            m["guessed_joints"].pop("stance_open_deg")
+            m["stance_open_deg"] = front
+            m["stance_direction"] = "front_wall_axis"
     for key in m["guessed_joints"]:
         m[key] = None
     return m

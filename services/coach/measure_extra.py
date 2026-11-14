@@ -229,6 +229,40 @@ def guessed_measurements(swing: dict, hand: str, contact: int, fps: float) -> di
     return out
 
 
+def stance_ankles_guessed(swing: dict, contact: int) -> str | None:
+    """Why an ankle at contact is guessed (approximated, filled or low visibility), or None."""
+    frames = swing.get("frames") or []
+    if not frames:
+        return None
+    c = int(np.clip(contact, 0, len(frames) - 1))
+    listed = set((swing.get("metadata") or {}).get("approximatedJoints") or [])
+    vis = _per_joint(frames[c], "visibility")
+    return next((w for j in (L_ANKLE, R_ANKLE)
+                 if (w := _guessed_why(j, listed, frames, range(c, c + 1), vis))), None)
+
+
+def stance_open_front_wall_deg(swing: dict, contact: int) -> float:
+    """Feet line vs the front-wall axis at contact, folded to 0..90 degrees. NaN if unmeasurable.
+
+    Reads only the ankles (and the body's up vector). The shot is taken to travel along the
+    front-wall axis: pipeline swings face camera-forward (+z, the phone behind the player)
+    and court-frame swings face -z, and the fold to 0..90 makes the sign irrelevant. Used
+    when the hitting wrist is guessed around contact, so stance is still judged honestly.
+    """
+    P = to_array(swing)
+    if len(P) == 0:
+        return float("nan")
+    c = int(np.clip(contact, 0, len(P) - 1))
+    up = up_vector(P)
+    axis = _flat(np.array([0.0, 0.0, 1.0]), up)
+    feet = _flat(P[c, R_ANKLE] - P[c, L_ANKLE], up)
+    na, nf = np.linalg.norm(axis), np.linalg.norm(feet)
+    if not (np.isfinite(na) and np.isfinite(nf)) or na < 1e-9 or nf < 1e-9:
+        return float("nan")
+    cos = abs(float(axis @ feet)) / (na * nf)
+    return float(np.degrees(np.arccos(np.clip(cos, 0.0, 1.0))))
+
+
 def _flat(v: np.ndarray, up: np.ndarray) -> np.ndarray:
     """Project vector(s) onto the floor plane."""
     return v - np.outer(v @ up, up) if v.ndim > 1 else v - (v @ up) * up
