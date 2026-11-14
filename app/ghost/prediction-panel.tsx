@@ -74,11 +74,12 @@ export function PredictionPanel({ you, compare }: { you: LoadedSwing; compare: C
 
         <Part title="4. Faded joints">
           <p>
-            Faded, dashed joints were filled in: the camera couldn&apos;t see them on those frames, so the pipeline
-            interpolated them from nearby frames or copied them from a neighbouring joint. They keep the skeleton whole but
-            they aren&apos;t measurements. The coach skips any check that would read one, physics leaves those body
-            measurements out of the ghost comparison and flags a racket or ball speed that reads one, and the page lists
-            each of them with the reason instead of hiding it.
+            A joint is faded and dashed on a frame when the camera couldn&apos;t see it well enough there: the file marks
+            it as filled in (interpolated from nearby frames or copied from a neighbouring joint), its visibility is below{" "}
+            {MIN_VISIBILITY}, or it&apos;s listed as approximated. Faded joints keep the skeleton whole, but they aren&apos;t
+            measurements. The coach skips any check that would read one, physics leaves those body measurements out of the
+            ghost comparison and flags a racket or ball speed that reads one, and the page lists each of them with the
+            reason instead of hiding it.
           </p>
           <GuessStats summary={guesses} />
         </Part>
@@ -194,7 +195,8 @@ function GuessStats({ summary }: { summary: GuessSummary }) {
       )}
       {recordedFrames > 0 && recordedFrames < totalFrames && (
         <p className="text-xs text-muted-foreground">
-          {totalFrames - recordedFrames} frames don&apos;t say which joints were guessed, so they count as measured here.
+          {totalFrames - recordedFrames} frames don&apos;t say which joints were guessed, so on those frames solid joints are
+          unknown, not confirmed measurements.
         </p>
       )}
       {recordedFrames === 0 && (
