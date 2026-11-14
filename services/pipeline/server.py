@@ -8,15 +8,19 @@ from __future__ import annotations
 import csv
 import json
 import os
+import tempfile
+import uuid
 from pathlib import Path
+from typing import Annotated, Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 
 from coach.agent import coach_swing
 from physics.compare import compare
 from physics.ghost import FIXES
+from pipeline.live import LiveOptions, process_live_clip
 
 app = FastAPI(title="Ghost local service")
 app.add_middleware(
@@ -39,8 +43,7 @@ def catalogue() -> dict[str, Path]:
     if not root.is_dir():
         return {}
     grouped: dict[str, list[Path]] = {}
-    manifests = ([root / "manifest.json"] if (root / "manifest.json").is_file()
-                 else sorted(root.glob("*/manifest.json")))
+    manifests = ([root / "manifest.json"] if (root / "manifest.json").is_file() else []) + sorted(root.glob("*/manifest.json"))
     try:
         for manifest in manifests:
             if not manifest.resolve().is_relative_to(root):
@@ -149,7 +152,7 @@ def measurement_swing(identifier: str) -> dict:
 @app.post("/coach/{identifier}")
 def coach(identifier: str) -> dict:
     swing = measurement_swing(identifier)
-    side = swing.get("stroke") or swing.get("side")
+    side = (swing.get("metadata") or {}).get("stroke") or swing.get("stroke") or swing.get("side")
     stroke = side if side in ("forehand", "backhand") else None
     try:
         # coach_swing measures, calls detect_faults, and selects its top fault.
@@ -162,3 +165,43 @@ def coach(identifier: str) -> dict:
             "amount": result["fix_amount"] if ready else None,
             "ghost_ready": ready, "contactFrame": swing["contactFrame"],
             "contactMethod": swing.get("metadata", {}).get("contactMethod", "provided-contact-estimate")}
+
+
+@app.post("/process", status_code=201)
+def process_video(
+    file: Annotated[UploadFile, File(description="One local MOV, MP4, AVI or M4V clip")],
+    slowdown: Annotated[float | None, Form(gt=0, le=16, allow_inf_nan=False)] = None,
+    hand: Annotated[Literal["R", "L", "auto"] | None, Form()] = None,
+    stroke: Annotated[Literal["forehand", "backhand", "auto"] | None, Form()] = None,
+) -> dict:
+    """Blocking worker-thread job; publish only after pose, coach and ghost succeed."""
+    suffix = Path(file.filename or '').suffix.lower()
+    if suffix not in ('.mov', '.mp4', '.m4v', '.avi'):
+        raise HTTPException(422, 'Upload a MOV, MP4, M4V or AVI video')
+    root = Path(os.environ.get('GHOST_SWINGS_DIR', str(
+        Path(__file__).resolve().parents[2] / 'data' / 'processed'))).resolve()
+    options = LiveOptions(slowdown=slowdown, hand=None if hand == 'auto' else hand,
+                          stroke=None if stroke == 'auto' else stroke,
+                          model_path=os.environ.get('GHOST_POSE_MODEL', LiveOptions.model_path))
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix='ghost-upload-') as temporary:
+            upload = Path(temporary) / f'clip{suffix}'
+            size = 0
+            with upload.open('wb') as stream:
+                while chunk := file.file.read(1024 * 1024):
+                    size += len(chunk)
+                    if size > 250 * 1024 * 1024:
+                        raise HTTPException(413, 'Video exceeds the 250 MB upload limit')
+                    stream.write(chunk)
+            if not size:
+                raise HTTPException(422, 'Video upload is empty')
+            return process_live_clip(upload, root / f'live-{uuid.uuid4().hex}', options)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from None
+    except RuntimeError:
+        raise HTTPException(503, 'Live pipeline unavailable; configure the pose model and ffmpeg/ffprobe') from None
+    except OSError:
+        raise HTTPException(503, 'Live processing output is unavailable') from None
+    finally:
+        file.file.close()
