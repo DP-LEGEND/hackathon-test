@@ -54,7 +54,16 @@ export function BodyChanges({
   );
 }
 
-export function BallChanges({ compare }: { compare: CompareResult }) {
+export const SAME_PATH_MESSAGE = "This fix changes your body position, not the ball";
+
+export function BallChanges({
+  compare,
+  samePath,
+}: {
+  compare: CompareResult;
+  /** Both PREDICTED paths are the same points (compare.ts sameBallPath). */
+  samePath: boolean;
+}) {
   const { ball, you, ghost } = compare;
   const rows: Row[] = [
     {
@@ -77,10 +86,9 @@ export function BallChanges({ compare }: { compare: CompareResult }) {
       changed: false,
     },
   ];
-  const note =
-    ball.speedKmh.change === 0
-      ? "There is no real ball in this demo. This fix doesn't change the estimated racket speed, so both PREDICTED paths are the same."
-      : "There is no real ball in this demo. Both paths come from the ball model.";
+  const note = samePath
+    ? `${SAME_PATH_MESSAGE}: both PREDICTED paths are the same. There is no real ball in this demo.`
+    : "There is no real ball in this demo. Both paths come from the ball model.";
   return (
     <DeltaCard
       id="delta-ball"
