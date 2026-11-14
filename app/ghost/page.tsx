@@ -1,4 +1,4 @@
-// Ghost demo screen. Owner: Teammate A.
+// Ghost demo screen. Owner: Sammy.
 // Placeholder only. This becomes the 3D replay: your swing (orange) beside the
 // ghost (cyan), the 3D court with two PREDICTED ball paths, and the coach caption.
 // Build against mock data first; data shapes are in lib/ghost/types.ts.

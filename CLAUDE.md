@@ -27,9 +27,9 @@ Only edit the folders that belong to the person you're helping. If you don't kno
 | `services/pipeline/` | Dev | Clip in, MediaPipe pose plus racket tape tracking, skeleton JSON out. Local API server. |
 | `services/physics/` | aryan | Metrics, fault library, ghost skeleton edits, predicted ball flight. Pure Python functions with pytest tests. |
 | `services/coach/` | aryan and Dev | Claude coach with tools (`get_metrics`, `apply_fix`, `simulate`, `compare_swings`) and the retest loop. |
-| `app/ghost/`, `components/ghost/` | Teammate A | The web demo: 3D replay, ghost overlay, court with two ball paths, captions. |
+| `app/ghost/`, `components/ghost/` | Sammy | The web demo: 3D replay, ghost overlay, court with two ball paths, captions. |
 | `app/api/` (Ghost routes) | Dev | Next.js routes that call the Python service. |
-| `demo/`, `data/labels/`, `lib/integrations/voice/` | Teammate B | Test clips and labels, demo script, pitch, ElevenLabs voice, backup video. |
+| `demo/`, `data/labels/`, `lib/integrations/voice/` | Henoch | Test clips and labels, demo script, pitch, ElevenLabs voice, backup video. |
 | `lib/ghost/types.ts`, `docs/interfaces.md` | Whole team | Data contracts. Change only after the team agrees. |
 | Shared files (`package.json`, lockfile, `app/layout.tsx`, `app/globals.css`, `components/ui/`, config, this file) | Dev only | Ask Dev in the team chat. |
 
