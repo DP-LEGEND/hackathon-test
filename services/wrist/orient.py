@@ -14,8 +14,8 @@ when that file is missing or its quaternions fail the gyro check (metrics.gyro_c
    (what Sensor Logger's gyro gives), starting from the identity. The absolute heading
    is arbitrary, and that's fine: the camera alignment (fuse.py) refits sensor-world ->
    camera for every swing, so a constant offset and slow leftover drift cancel there.
-3. Roll. With this orientation, metrics measures roll as the gyro integrated about the
-   forearm axis, not as the twist of the window's rotation. The forearm turns ~180 deg
+3. Roll. With this orientation, metrics measures roll as the gyro (less the bias from
+   step 1) integrated about the forearm axis, not as the twist of the window's rotation. The forearm turns ~180 deg
    about another axis in that window, where the twist is ill-conditioned: on the mock a
    0.5 deg error in the integrated rotation moved the twist 20-30 deg, while the axial
    integral matches the truth.
@@ -98,7 +98,12 @@ def integrate_gyro(rec: Recording, bias: np.ndarray, substeps: int = SUBSTEPS) -
     return Rotation.from_quat(q[::substeps])
 
 
-def gyro_orientation(rec: Recording, taps_s: Optional[Sequence[float]]) -> tuple[Rotation, dict[str, Any]]:
-    """(phone-to-world rotations, report) from the integrated gyro, bias removed."""
+def gyro_orientation(rec: Recording, taps_s: Optional[Sequence[float]]
+                     ) -> tuple[Rotation, dict[str, Any], np.ndarray]:
+    """(phone-to-world rotations, report, the bias removed in rad/s) from the integrated gyro.
+
+    The bias comes back so metrics can take the same one off the gyro before its axial roll
+    integrals (zero when still_bias found too few still samples, as the report says).
+    """
     bias, info = still_bias(rec, taps_s)
-    return integrate_gyro(rec, bias), {"source": "integrated gyro", **info}
+    return integrate_gyro(rec, bias), {"source": "integrated gyro", **info}, bias

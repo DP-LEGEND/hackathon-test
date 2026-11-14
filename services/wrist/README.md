@@ -83,7 +83,7 @@ Windows: same commands, `python` inside the activated venv.
 | Key in `wrist_metrics.json` | Coach measurement | Meaning |
 |---|---|---|
 | `roll_change_deg` / `roll_change_abs_deg` | `forearm_roll_deg` (the size) | Forearm roll over the window. With the phone's orientation: the twist about the forearm axis, so the swing itself doesn't count. With the integrated-gyro fallback: the gyro integrated about the forearm axis. `roll_method` says which. |
-| `roll_change_gyro_deg` | (cross-check) | The same roll, from integrating the gyro about the forearm axis. It should agree with the orientation number. |
+| `roll_change_gyro_deg` | (cross-check) | The same roll, from integrating the gyro about the forearm axis (on the integrated-gyro fallback, with the estimated still bias removed first). It should agree with the orientation number. |
 | `peak_roll_rate_dps` / `_abs_dps` | `forearm_roll_rate_dps` | Fastest gyro rate about the forearm axis |
 | `peak_angular_speed_dps` | `forearm_speed_dps` | Fastest total turn rate of the forearm (context only) |
 
@@ -139,7 +139,9 @@ judged** (`"judged": false`): nobody has labelled real clean hits and mishits ye
 - `width_ms`: how long it stays above half that height.
 - `ring_down_ms`: from the peak until the shaking dies away, i.e. the last sample above
   `threshold_g` (10% of the peak, or the noise floor if higher) before 50 ms of quiet.
-  `ring_down_capped` means it was still shaking 300 ms later.
+  `ring_down_capped` means no 50 ms of quiet was found before the search stopped: either
+  it was still shaking 300 ms later, or the recording ended first (an impact less than
+  300 ms before the end). Either way `ring_down_ms` is only a floor.
 - `clipped`: true when the accelerometer hit its limit. `resolution_ms`: 10 at 100 Hz.
 
 A clean hit is one sharp knock; an off-centre hit keeps the racket and arm shaking. Mock

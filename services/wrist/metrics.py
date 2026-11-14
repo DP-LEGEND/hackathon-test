@@ -12,6 +12,7 @@ Per swing, in the window -150 ms .. +100 ms around contact:
   big swing about the elbow and shoulder doesn't leak in. Signed (+ = right-hand turn
   about the axis); the rolled_wrist fault uses its size.
 - roll_change_gyro_deg: the same from integrating the gyro about the axis, a cross-check.
+  On the integrated-gyro fallback the estimated still bias is taken off first.
 - peak_roll_rate_dps: the gyro about the forearm axis at its fastest (signed).
 - peak_angular_speed_dps: the forearm's fastest total turn rate (|gyro|), as seen by the
   phone on the wrist strap. Not used by the fault; context for the coach.
@@ -101,15 +102,19 @@ def body_rotations(rec: Recording, convention: str) -> Rotation:
     return R if convention == "body_to_world" else R.inv()
 
 
-def choose_orientation(rec: Recording, taps_s: Optional[list[float]] = None) -> tuple[Rotation, dict[str, Any]]:
-    """(phone-to-world rotations, report): the phone's own if it matches the gyro, else the integrated gyro."""
+def choose_orientation(rec: Recording, taps_s: Optional[list[float]] = None
+                       ) -> tuple[Rotation, dict[str, Any], np.ndarray]:
+    """(phone-to-world rotations, report, gyro bias in rad/s): the phone's own orientation if it
+    matches the gyro (bias zero: none is estimated), else the integrated gyro and the still
+    bias it removed, which the roll integrals must remove too."""
     conv = gyro_convention(rec)
     if conv["ok"]:
-        return body_rotations(rec, conv["convention"]), {"source": "phone", "convention": conv["convention"]}
+        return (body_rotations(rec, conv["convention"]), {"source": "phone", "convention": conv["convention"]},
+                np.zeros(3))
     why = ("the export has no Orientation.csv" if rec.quat is None else
            f"the phone's orientation doesn't match its gyro (mismatch {conv['mismatch']:.2f} >= {GYRO_MATCH_OK})")
-    rots, info = gyro_orientation(rec, taps_s)
-    return rots, {**info, "why_not_phone": why}
+    rots, info, bias = gyro_orientation(rec, taps_s)
+    return rots, {**info, "why_not_phone": why}, bias
 
 
 def twist_deg(rel: Rotation, axis: np.ndarray) -> np.ndarray:
@@ -137,23 +142,28 @@ ROLL_METHODS = {"orientation": "twist of the phone's orientation over the window
                 "gyro": "gyro integrated about the forearm axis (orientation from the integrated gyro)"}
 
 
-def _axial_deg(rec: Recording, axis: np.ndarray, a: float, b: float) -> float:
-    """The gyro about `axis`, integrated from a to b (deg; negative when b < a)."""
+def _axial_deg(rec: Recording, axis: np.ndarray, a: float, b: float,
+               bias: Optional[np.ndarray] = None) -> float:
+    """The gyro about `axis`, less `bias` (rad/s, phone axes), integrated from a to b (deg; negative when b < a)."""
     fine = np.linspace(a, b, 251)
-    return float(np.degrees(trapezoid(np.interp(fine, rec.t, rec.gyro @ axis), fine)))
+    rate = rec.gyro @ axis - (0.0 if bias is None else float(bias @ axis))
+    return float(np.degrees(trapezoid(np.interp(fine, rec.t, rate), fine)))
 
 
 def swing_metrics(rec: Recording, slerp: Slerp, impact_s: float, axis: np.ndarray,
-                  roll_from: str = "orientation") -> Optional[dict[str, Any]]:
+                  roll_from: str = "orientation", gyro_bias: Optional[np.ndarray] = None) -> Optional[dict[str, Any]]:
     """The wrist numbers for one swing, or None if the window runs off the recording.
 
     roll_from: "orientation" (the twist, the phone's own orientation) or "gyro" (the axial
     gyro integral, used with the integrated-gyro fallback: orient.py says why).
+    gyro_bias: the still bias the fallback removed (choose_orientation), taken off the gyro
+    before the axial integral, so roll_change_gyro_deg (and roll_change_deg on the fallback)
+    don't drift by bias x window. None or zero = the raw gyro (the phone path estimates none).
     """
     t0, t1 = impact_s + WINDOW_MS[0] / 1000, impact_s + WINDOW_MS[1] / 1000
     if t0 < rec.t[0] or t1 > rec.t[-1]:
         return None
-    roll_gyro = _axial_deg(rec, axis, t0, t1)
+    roll_gyro = _axial_deg(rec, axis, t0, t1, gyro_bias)
     if roll_from == "gyro":
         roll = roll_gyro
     else:
@@ -179,18 +189,18 @@ def swing_metrics(rec: Recording, slerp: Slerp, impact_s: float, axis: np.ndarra
 
 
 def roll_series(rec: Recording, slerp: Slerp, impact_s: float, axis: np.ndarray,
-                roll_from: str = "orientation") -> dict[str, Any]:
+                roll_from: str = "orientation", gyro_bias: Optional[np.ndarray] = None) -> dict[str, Any]:
     """Forearm roll every 10 ms from -300 to +200 ms, zeroed at the window start (-150 ms).
 
     So the value at +100 ms is exactly roll_change_deg: the graph ends the window on the
-    number the coach quotes. roll_from as in swing_metrics.
+    number the coach quotes. roll_from and gyro_bias as in swing_metrics.
     """
     t_ms = np.arange(SERIES_MS[0], SERIES_MS[1] + 1, SERIES_STEP_MS)
     times = impact_s + t_ms / 1000
     keep = (times >= rec.t[0]) & (times <= rec.t[-1])
     start = impact_s + WINDOW_MS[0] / 1000
     if roll_from == "gyro":
-        roll = np.array([_axial_deg(rec, axis, start, t) for t in times[keep]])
+        roll = np.array([_axial_deg(rec, axis, start, t, gyro_bias) for t in times[keep]])
     else:
         roll = twist_deg(slerp(start).inv() * slerp(times[keep]), axis)
     # + 0.0 turns -0.0 into 0.0 for the graph.
@@ -233,7 +243,7 @@ def wrist_report(rec: Recording, sync: dict[str, Any], axis: str = "y",
     and occlusion_fill isn't applied (both say why). Filled swings come back only for swings
     whose fill was applied.
     """
-    rots, orient = choose_orientation(rec, sync.get("taps_s"))
+    rots, orient, gyro_bias = choose_orientation(rec, sync.get("taps_s"))
     conv = gyro_convention(rec)
     roll_from = "orientation" if orient["source"] == "phone" else "gyro"
     slerp = Slerp(rec.t, rots)
@@ -260,7 +270,7 @@ def wrist_report(rec: Recording, sync: dict[str, Any], axis: str = "y",
         if contact is None:
             out[sid] = base
             continue
-        m = swing_metrics(rec, slerp, contact, ax, roll_from)
+        m = swing_metrics(rec, slerp, contact, ax, roll_from, gyro_bias)
         if m is None:
             out[sid] = {**base, "skip_reason": "the window runs off the recording"}
             continue
@@ -285,7 +295,8 @@ def wrist_report(rec: Recording, sync: dict[str, Any], axis: str = "y",
         out[sid] = {**base, "impact_s": round(contact, 3) if has_impact else None, **m, "usable": True,
                     "skip_reason": None, "orientation_source": orient["source"], "tempo": tempo_block,
                     "impact": impact, "racket_speed_sensor": racket, "occlusion_fill": fill_info}
-        series[sid] = {**roll_series(rec, slerp, contact, ax, roll_from), "roll_change_deg": m["roll_change_deg"],
+        series[sid] = {**roll_series(rec, slerp, contact, ax, roll_from, gyro_bias),
+                       "roll_change_deg": m["roll_change_deg"],
                        "usable": True, "contact_source": base["contact_source"],
                        "tempo": {k: tempo_block[k] for k in ("estimate", "label", "backswing_start_ms",
                                                               "forward_start_ms", "contact_ms",

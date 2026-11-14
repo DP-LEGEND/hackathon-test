@@ -9,8 +9,10 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation, Slerp
 
+from wrist.load import Recording
 from wrist.metrics import (
-    SERIES_MS, WINDOW_MS, axis_vector, body_rotations, gyro_convention, swing_metrics, twist_deg, wrist_metrics,
+    SERIES_MS, WINDOW_MS, _axial_deg, axis_vector, body_rotations, gyro_convention, swing_metrics, twist_deg,
+    wrist_metrics,
 )
 
 
@@ -102,6 +104,34 @@ def test_no_orientation_file_uses_the_biased_gyro_and_still_matches_the_truth(no
     for sid, m in s.metrics["swings"].items():
         assert m["usable"] and m["roll_change_deg"] == pytest.approx(s.truth["swings"][sid]["roll_change_deg"], abs=1.5)
     json.dumps(s.metrics, allow_nan=False)
+
+
+def test_fallback_roll_has_the_gyro_bias_removed() -> None:
+    # Still arm apart from one big swing about z (across the forearm, so no roll), and a
+    # constant 5 deg/s gyro offset along the forearm (y). No Orientation.csv: the fallback.
+    rate, c, taps = 100.0, 5.0, [2.0, 2.45]
+    t = np.arange(800) / rate
+    gyro = np.zeros((t.size, 3))
+    gyro[:, 1] = np.radians(5.0)
+    gyro[:, 2] = np.radians(800.0) * np.exp(-0.5 * ((t - c) / 0.08) ** 2)
+    acc = np.tile([0.0, 9.81, 0.0], (t.size, 1))
+    acc[int(c * rate):int(c * rate) + 2, 1] += 80.0  # the impact knock
+    rec = Recording(t=t, acc=acc, gyro=gyro, quat=None, rate_hz=rate, orientation="none", mock=True, source="test")
+    sync = {"taps_s": taps, "warnings": [], "alignment": {
+        "pairs": [{"swing": "s1", "contact_video_s": c, "impact_s": c, "ok": True, "error_ms": 0.0}],
+        "tolerance_ms": 60.0, "unpaired_swings": [], "tap_only": []}}
+
+    metrics, series = wrist_metrics(rec, sync)
+    used = metrics["sensor"]["orientation_used"]
+    assert used["source"] == "integrated gyro" and used["bias_dps"] == pytest.approx([0.0, 5.0, 0.0], abs=1e-3)
+    m, ser = metrics["swings"]["s1"], series["swings"]["s1"]
+    window_s = (WINDOW_MS[1] - WINDOW_MS[0]) / 1000
+    raw = _axial_deg(rec, axis_vector("y"), c + WINDOW_MS[0] / 1000, c + WINDOW_MS[1] / 1000)
+    assert raw == pytest.approx(5.0 * window_s, abs=0.01), "uncorrected, the offset alone reads as 1.25 deg of roll"
+    assert m["usable"] and "gyro integrated" in m["roll_method"]
+    assert m["roll_change_deg"] == pytest.approx(0.0, abs=0.1)
+    assert m["roll_change_gyro_deg"] == pytest.approx(0.0, abs=0.1)
+    assert ser["roll_deg"] == pytest.approx([0.0] * len(ser["roll_deg"]), abs=0.1), "the whole graph, -300..+200 ms"
 
 
 def test_a_shadow_swing_gets_every_number_but_the_impact(shadow, fused) -> None:

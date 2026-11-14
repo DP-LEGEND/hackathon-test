@@ -64,5 +64,6 @@ def test_integrated_gyro_tracks_the_phone_orientation_over_a_swing(session) -> N
 
 
 def test_choose_orientation_prefers_the_phone(session) -> None:
-    _, used = choose_orientation(session.rec, session.sync["taps_s"])
+    _, used, bias = choose_orientation(session.rec, session.sync["taps_s"])
     assert used == {"source": "phone", "convention": "body_to_world"}
+    assert not bias.any(), "the phone path estimates no bias, so its roll integrals are unchanged"

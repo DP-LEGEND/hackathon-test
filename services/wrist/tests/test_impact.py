@@ -71,6 +71,25 @@ def test_ring_down_stops_at_the_noise_floor_and_ignores_a_later_blip() -> None:
     assert capped["ring_down_capped"] is True and capped["ring_down_ms"] == RING_LIMIT_MS
 
 
+def test_an_impact_near_the_end_of_the_recording_is_marked_capped_unless_it_settles() -> None:
+    # 200 samples at 100 Hz end at 1.99 s; the impact is at 1.89 s, 100 ms before the last sample.
+    rec, clip = _rec(np.zeros((200, 3))), np.full(3, np.inf)
+    ringing = np.zeros(200)
+    ringing[189:] = 10.0 * np.exp(-np.arange(11) / 300)  # still shaking when the recording stops
+    cut = impact_shape(rec, ringing, 1.89, clip)
+    assert cut["ring_down_capped"] is True, "the recording ended mid-ring: a floor, not a completed decay"
+    assert cut["ring_down_ms"] == pytest.approx(100.0)
+
+    short_quiet = np.zeros(200)
+    short_quiet[189:197] = 10.0  # dips below the threshold for the last 30 ms only: < 50 ms of quiet
+    assert impact_shape(rec, short_quiet, 1.89, clip)["ring_down_capped"] is True
+
+    clean = np.zeros(200)
+    clean[189:191] = 10.0  # a clean knock that dies with 90 ms of quiet left: a real, settled ring-down
+    settled = impact_shape(rec, clean, 1.89, clip)
+    assert settled["ring_down_capped"] is False and settled["ring_down_ms"] == pytest.approx(19.0)
+
+
 def test_a_saturated_accelerometer_is_reported() -> None:
     acc = np.random.default_rng(0).normal(0, 0.1, (200, 3))
     acc[100:104, 0] = 156.9  # a flat top at 16 g

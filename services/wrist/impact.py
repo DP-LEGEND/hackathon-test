@@ -15,7 +15,9 @@ swing's own smooth acceleration removed):
   before the signal stays below it for RING_QUIET_MS. Ringing passes through zero between
   shakes, so short dips don't end it, and a lone noise blip after a quiet stretch doesn't
   extend it. A clean knock dies in a sample or two; an off-centre hit keeps the racket and
-  arm shaking. ring_down_capped: still shaking at RING_LIMIT_MS.
+  arm shaking. ring_down_capped: no RING_QUIET_MS quiet run was found before the search
+  stopped, either RING_LIMIT_MS after the peak or at the end of the recording (an impact
+  near the end), so ring_down_ms is only a floor.
 - clipped: the accelerometer reached its range limit during the spike, so peak_g is only
   a floor.
 """
@@ -94,7 +96,9 @@ def impact_shape(rec: Recording, hp: np.ndarray, impact_s: float, clip: np.ndarr
     near = rec.acc[max(0, i - 2): i + 3]
     return {"peak_g": round(peak / G, 2), "width_ms": round(float(t_right - t_left) * 1000, 1),
             "ring_down_ms": round(min(float(t_end - t[i]) * 1000, RING_LIMIT_MS), 1),
-            "ring_down_capped": not settled and end == i + ring_lim,  # still shaking at the limit
+            # No 50 ms quiet run before the search stopped, at the 300 ms limit or at the end of
+            # the recording: ring_down_ms is only a floor, never a completed decay.
+            "ring_down_capped": not settled,
             "threshold_g": round(thr / G, 2),
             "clipped": bool((np.abs(near) >= CLIP_FRACTION * clip).any())}
 
