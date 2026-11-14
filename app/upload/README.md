@@ -24,12 +24,12 @@ Choosing or dropping a file the page can't use clears the clip chosen before it,
 | 429 | "A clip is already processing" |
 | 413, or a file over 250 MB before it's sent | "Clip too large" |
 | 502 soon after the upload | The service isn't running, with the command to start it |
-| 502 after the proxy's 30 s wait | Still processing: the swing should appear in `/ghost`'s list |
+| 502 long after the upload (the proxy's timeout) | Still processing: the swing should appear in `/ghost`'s list |
 | 404 or 405 | The running service has no upload route yet (it predates PR #41) |
 | Anything else (e.g. 422 "No fully tracked swing found…") | The server's message and a slowdown suggestion |
 
 The 250 MB limit and the accepted extensions (MOV, MP4, M4V, AVI) mirror `server.py`.
 
-## Known limit: the proxy's 30-second timeout
+## Known limit: the proxy's timeout
 
-The catch-all proxy (Dev's file) aborts any request 30 seconds after it has the whole upload. Processing a clip on CPU can take longer, as `services/pipeline/README.md` warns. A long clip then ends in the "still processing" message, although the service carries on and saves the swing. The fix is a longer timeout for `process` in the proxy.
+The catch-all proxy (Dev's file) stops waiting for the service after a fixed time, and processing a clip on CPU can take longer, as `services/pipeline/README.md` warns. A long clip then ends in the "still processing" message, although the service carries on and saves the swing. The page treats a 502 that arrives 25 s or more after the upload finished as that timeout, so it doesn't depend on the proxy's exact wait, as long as that wait is over 25 s. The fix for long clips is a longer timeout for `process` in the proxy.

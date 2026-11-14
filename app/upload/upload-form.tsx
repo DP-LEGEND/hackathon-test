@@ -289,7 +289,7 @@ function describe(failure: ProcessFailure, slowdown: Slowdown): FailureCopy {
       return {
         title: "Still processing, but this page stopped waiting",
         message:
-          "The web proxy waits 30 seconds and this clip is taking longer. The Python service keeps going, so your swing should appear in Ghost’s swing list when it’s done.",
+          "The web proxy stopped waiting before the service finished this clip. The Python service keeps going, so your swing should appear in Ghost’s swing list when it’s done.",
         swingList: true,
         waiting: true,
       };

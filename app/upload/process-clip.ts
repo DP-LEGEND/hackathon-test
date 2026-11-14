@@ -15,8 +15,9 @@ const CLIP_EXTENSIONS: readonly string[] = [".mov", ".mp4", ".m4v", ".avi"];
 export const CLIP_ACCEPT = ["video/*", ...CLIP_EXTENSIONS].join(",");
 
 /**
- * The proxy gives up 30 s after it has the whole upload and answers 502, the same status as
- * "service not running". A 502 that arrives this long after the upload finished is that timeout.
+ * The proxy stops waiting for the service after a fixed time (longer than this) and answers 502,
+ * the same status as "service not running". A 502 that arrives this long after the upload
+ * finished is that timeout, whatever the proxy's exact wait.
  */
 const PROXY_GAVE_UP_MS = 25_000;
 
