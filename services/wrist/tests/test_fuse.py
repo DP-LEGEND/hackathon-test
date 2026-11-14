@@ -9,10 +9,10 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Slerp
 
-from physics.compare import estimate_racket_speed
-from physics.skeleton import ARM, to_array
+from physics.compare import GRIP_OFFSET_M, RACKET_LEVER_M, SENSOR_MOCK_LABEL, estimate_racket_speed
+from physics.skeleton import ARM, RACKET_HEAD_M, to_array
 from wrist.fuse import (
-    AGREE_OK_DEG, _elbow_on_circle, align_swing, attach_racket_speed, fill_swing, racket_speed, read_swings,
+    AGREE_OK_DEG, LEVER_M, _elbow_on_circle, align_swing, attach_wrist_entries, fill_swing, racket_speed, read_swings,
 )
 from wrist.metrics import axis_vector, body_rotations, gyro_convention
 from wrist.synth import R_EL, R_SH, R_WR
@@ -75,7 +75,29 @@ def test_fill_keeps_bone_lengths_flags_and_the_original(fused) -> None:
         assert [f["filled"] for f in filled["frames"]] == [f["filled"] for f in fused.swings[sid]["frames"]]
         meta = filled["metadata"]["wristSensorFill"]
         assert meta["label"] == "ESTIMATE" and meta["mock"] is True and meta["frames"] == frames
+        assert meta["orientationSource"] == "phone" and fill["orientation_source"] == "phone"
     assert fused.swings == before, "the camera swings are never mutated"
+
+
+def test_sensor_assisted_marks_exactly_the_joints_the_phone_set(fused) -> None:
+    for sid, filled in fused.filled.items():
+        fill = fused.metrics["swings"][sid]["occlusion_fill"]
+        assisted = np.array([f["sensorAssisted"] for f in filled["frames"]])
+        assert assisted.shape == (len(filled["frames"]), 33) and assisted.dtype == bool
+        frames = np.flatnonzero(assisted.any(axis=1)).tolist()
+        assert frames == fill["frames"], "only the filled frames, all of them"
+        hit = sorted({int(j) for j in np.flatnonzero(assisted.any(axis=0))})
+        if fill["joints"] == ["elbow"]:
+            assert hit == [R["el"]]
+        else:
+            assert hit == sorted([R["wr"], R["pinky"], R["index"], R["thumb"]]), "the wrist and the hand it carried"
+        flags = np.array([f["filled"] for f in filled["frames"]])
+        assert flags[frames][:, R["wr"] if fill["joints"] != ["elbow"] else R["el"]].all(), "filled stays true"
+    assert all("sensorAssisted" not in f for s in fused.swings.values() for f in s["frames"]), "inputs untouched"
+
+
+def test_lever_is_the_racket_head_plus_the_grip_offset() -> None:
+    assert LEVER_M == RACKET_LEVER_M == pytest.approx(RACKET_HEAD_M + GRIP_OFFSET_M) == pytest.approx(0.55)
 
 
 def test_racket_speed_matches_the_truth_and_physics_shape(fused) -> None:
@@ -83,8 +105,8 @@ def test_racket_speed_matches_the_truth_and_physics_shape(fused) -> None:
     for sid, m in fused.metrics["swings"].items():
         r = m["racket_speed_sensor"]
         assert r["value"] == pytest.approx(fused.truth["swings"][sid]["camera"]["racket_speed_ms"], rel=0.06)
-        assert r["label"] == "ESTIMATE" and r["estimate"] is True and r["unit"] == "m/s" and r["mock"] is True
-        assert "vectors" in r["method"] and r["leverM"] == 0.65
+        assert r["label"] == SENSOR_MOCK_LABEL and r["estimate"] is True and r["unit"] == "m/s" and r["mock"] is True
+        assert "vectors" in r["method"] and r["leverM"] == 0.55 and r["source"] == "wrist sensor"
         assert r["wristFromSensorFill"] is True, "the occlusion covers contact, so the filled wrist is used"
         assert set(pose) - {"wristSpeedMs", "forearmM", "racketLeverM"} <= set(r), "drop-in for compare()"
 
@@ -139,12 +161,40 @@ def test_elbow_on_circle_keeps_both_lengths_or_says_it_could_not() -> None:
     assert _elbow_on_circle(np.full(3, np.nan), wr, 0.3, 0.26, target)[1] is False       # no shoulder
 
 
-def test_attach_racket_speed(fused) -> None:
-    swing = fused.swings["synth-02"]
-    attached = attach_racket_speed(swing, fused.metrics)
-    assert attached["racketSpeedSensor"] == fused.metrics["swings"]["synth-02"]["racket_speed_sensor"]
-    assert "racketSpeedSensor" not in swing
-    assert "racketSpeedSensor" not in attach_racket_speed({**swing, "id": "nope"}, fused.metrics)
+def test_attach_wrist_entries_puts_each_entry_on_its_filled_swing(fused) -> None:
+    before = copy.deepcopy(fused.swings)
+    extra = {**fused.swings, "unseen": {**fused.swings["synth-01"], "id": "unseen"}}
+    out = attach_wrist_entries(extra, fused.metrics, fused.filled)
+    assert set(out) == set(extra)
+    for sid in fused.swings:
+        assert out[sid]["wrist"] == fused.metrics["swings"][sid]
+        assert out[sid]["frames"] == fused.filled[sid]["frames"], "the sensor-filled swing, not the raw one"
+    assert out["unseen"]["wrist"]["usable"] is False and "no video contact" in out["unseen"]["wrist"]["skip_reason"]
+    assert out["unseen"]["wrist"]["mock"] is True
+    out["synth-01"]["wrist"]["usable"] = False
+    assert fused.metrics["swings"]["synth-01"]["usable"] is True and fused.swings == before, "copies only"
+
+
+def test_gyro_fallback_still_fills_the_occlusion(no_orientation) -> None:
+    s = no_orientation
+    for sid, filled in s.filled.items():
+        cam = s.truth["swings"][sid]["camera"]
+        fill = s.metrics["swings"][sid]["occlusion_fill"]
+        assert fill["orientation_source"] == "integrated gyro"
+        assert filled["metadata"]["wristSensorFill"]["orientationSource"] == "integrated gyro"
+        assert fill["agreement_deg"]["median"] < 2.0
+        joint = R_WR if cam["occluded"] == "wrist" else R_EL
+        true = np.array(cam["true_positions"][str(joint)])
+        error = np.linalg.norm(to_array(filled)[cam["filled_frames"], joint] - true, axis=1).max()
+        interpolated = np.linalg.norm(to_array(s.swings[sid])[cam["filled_frames"], joint] - true, axis=1).max()
+        assert error < 0.03, "a couple of cm (vs < 1 cm with the phone's own orientation)"
+        if cam["occluded"] == "wrist":  # interpolation is 12-15 cm off here
+            assert error < 0.3 * interpolated
+        else:  # a short elbow gap: interpolation is already ~1.5 cm, and the fill matches it
+            assert error < interpolated + 0.005
+        r = s.metrics["swings"][sid]["racket_speed_sensor"]
+        assert r["value"] == pytest.approx(cam["racket_speed_ms"], rel=0.06)
+    assert len(s.filled) == len(s.truth["swings"])
 
 
 def test_read_swings_reads_a_folder_or_a_file(fused, tmp_path) -> None:
@@ -161,7 +211,7 @@ def test_series_carries_the_fill_points(fused) -> None:
         pts = ser["forearm_fill"]
         assert pts["label"] == "ESTIMATE" and len(pts["frames"]) == len(pts["t_ms"]) == len(pts["wrist"])
         assert pts["frames"] == fused.truth["swings"][sid]["camera"]["filled_frames"]
-        assert ser["racket_speed_sensor"]["label"] == "ESTIMATE" and ser["racket_speed_sensor"]["value"] > 0
+        assert ser["racket_speed_sensor"]["label"] == SENSOR_MOCK_LABEL and ser["racket_speed_sensor"]["value"] > 0
     assert len(json.dumps(fused.series, separators=(",", ":"))) < 30_000
 
 

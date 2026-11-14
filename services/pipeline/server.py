@@ -21,6 +21,7 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from coach.agent import coach_swing
+from coach.live_voice import voice_for_swing
 from physics.compare import GuessedFixError, compare
 from physics.ghost import FIXES
 from pipeline.live import LiveOptions, process_live_clip, ghost_choice
@@ -213,6 +214,12 @@ def coach(identifier: str) -> dict:
     return {**result, "fix": fix, "amount": amount,
             "ghost_ready": fix is not None, "contactFrame": swing["contactFrame"],
             "contactMethod": swing.get("metadata", {}).get("contactMethod", "provided-contact-estimate")}
+
+
+@app.get("/coach/{identifier}/voice")
+def coach_voice(identifier: str) -> dict:
+    """{cue, audioUrl, source} for /coach's result (coach/live_voice.py); missing keys never error."""
+    return dict(voice_for_swing(identifier, coach(identifier)))
 
 
 @app.post("/process", status_code=201)

@@ -4,7 +4,7 @@ Sensor Logger (iOS/Android) exports one CSV per sensor, as a folder or a .zip:
 
     Accelerometer.csv   time,seconds_elapsed,z,y,x            m/s^2, gravity removed
     Gyroscope.csv       time,seconds_elapsed,z,y,x            rad/s, phone axes
-    Orientation.csv     time,seconds_elapsed,qz,qy,qx,qw,roll,pitch,yaw   (radians)
+    Orientation.csv     time,seconds_elapsed,qz,qy,qx,qw,roll,pitch,yaw   (radians); optional
     Metadata.csv        optional; our synthetic exports mark themselves mock here
 
 Columns are read by NAME, so their order doesn't matter. `time` is Unix nanoseconds;
@@ -18,6 +18,8 @@ setting). Orientation is kept as unit quaternions (x, y, z, w), sign-continuous,
 interpolating between neighbours is safe at 100 Hz. If there are no quaternion
 columns, roll/pitch/yaw are converted assuming iOS's Z-X-Y order; Recording.orientation
 says which was used, and metrics.gyro_convention() checks it against the gyro anyway.
+Without Orientation.csv, quat is None (orientation "none") and metrics integrates the gyro
+instead (orient.py).
 
 Never commit real exports: put them in data/raw/ (git-ignored).
 """
@@ -50,9 +52,9 @@ class Recording:
     t: np.ndarray        # (N,) seconds since Start Recording, uniform grid
     acc: np.ndarray      # (N, 3) phone x, y, z acceleration, m/s^2
     gyro: np.ndarray     # (N, 3) phone x, y, z angular velocity, rad/s
-    quat: np.ndarray     # (N, 4) orientation x, y, z, w (unit, sign-continuous)
+    quat: Optional[np.ndarray]  # (N, 4) orientation x, y, z, w (unit, sign-continuous); None without one
     rate_hz: float
-    orientation: str     # "quaternion" or "euler (assumed ZXY)"
+    orientation: str     # "quaternion", "euler (assumed ZXY)" or "none" (no Orientation.csv)
     mock: bool           # True for synthetic exports: say so on screen
     source: str
 
@@ -141,11 +143,13 @@ def _interp(t_new: np.ndarray, t: np.ndarray, v: np.ndarray) -> np.ndarray:
 
 
 def load_recording(path: str | Path) -> Recording:
-    """Load accelerometer, gyroscope and orientation onto one uniform time grid."""
+    """Load accelerometer, gyroscope and (if exported) orientation onto one uniform time grid."""
     src = _Source(Path(path))
     streams = {}
     for key, stems in (("acc", ACCEL_FILES), ("gyro", GYRO_FILES), ("orient", ORIENT_FILES)):
         stem, text = src.read(stems)
+        if text is None and key == "orient":
+            continue  # optional: metrics integrates the gyro instead
         if text is None:
             raise LoadError(f"{path}: no {' or '.join(s + '.csv' for s in stems)} in the export")
         cols = _read_table(text, f"{stem}.csv")
@@ -158,35 +162,40 @@ def load_recording(path: str | Path) -> Recording:
 
     acc_cols, t_acc, acc_name = streams["acc"]
     gyro_cols, t_gyro, gyro_name = streams["gyro"]
-    o_cols, t_o, o_name = streams["orient"]
     acc = _need(acc_cols, ("x", "y", "z"), acc_name)
     gyro = _need(gyro_cols, ("x", "y", "z"), gyro_name)
-    if all(k in o_cols for k in QUAT_COLS):
-        quat = _need(o_cols, QUAT_COLS, o_name)
-        orientation = "quaternion"
-    else:
-        rpy = _need(o_cols, EULER_COLS, o_name)
-        # iOS CMAttitude: yaw about z, pitch about x, roll about y, applied in that order.
-        quat = Rotation.from_euler("ZXY", rpy[:, [2, 1, 0]]).as_quat()
-        orientation = "euler (assumed ZXY)"
+    quat: Optional[np.ndarray] = None
+    orientation = "none"
+    if "orient" in streams:
+        o_cols, t_o, o_name = streams["orient"]
+        if all(k in o_cols for k in QUAT_COLS):
+            quat = _need(o_cols, QUAT_COLS, o_name)
+            orientation = "quaternion"
+        else:
+            rpy = _need(o_cols, EULER_COLS, o_name)
+            # iOS CMAttitude: yaw about z, pitch about x, roll about y, applied in that order.
+            quat = Rotation.from_euler("ZXY", rpy[:, [2, 1, 0]]).as_quat()
+            orientation = "euler (assumed ZXY)"
 
     dt = np.median(np.diff(np.sort(t_acc)))
     if not np.isfinite(dt) or dt <= 0:
         raise LoadError(f"{acc_name}: timestamps don't increase")
     rate = float(round(1.0 / dt))
-    start = max(t_acc.min(), t_gyro.min(), t_o.min())
-    end = min(t_acc.max(), t_gyro.max(), t_o.max())
+    times = [t for _, t, _ in streams.values()]
+    start = max(t.min() for t in times)
+    end = min(t.max() for t in times)
     if end - start < 1.0:
-        raise LoadError(f"{path}: the three sensors overlap for less than a second")
+        raise LoadError(f"{path}: the sensors overlap for less than a second")
     t = start + np.arange(int(np.floor((end - start) * rate)) + 1) / rate
 
-    order = np.argsort(t_o, kind="stable")
-    q_sorted = _continuous(quat[order])
-    q = _interp(t, t_o[order], q_sorted)
-    q /= np.linalg.norm(q, axis=1, keepdims=True)
+    q = None
+    if quat is not None:
+        order = np.argsort(t_o, kind="stable")
+        q = _interp(t, t_o[order], _continuous(quat[order]))
+        q = _continuous(q / np.linalg.norm(q, axis=1, keepdims=True))
 
     _, meta = src.read(("Metadata",))
     return Recording(
-        t=t, acc=_interp(t, t_acc, acc), gyro=_interp(t, t_gyro, gyro), quat=_continuous(q),
+        t=t, acc=_interp(t, t_acc, acc), gyro=_interp(t, t_gyro, gyro), quat=q,
         rate_hz=rate, orientation=orientation, mock=_is_mock(meta), source=str(path),
     )

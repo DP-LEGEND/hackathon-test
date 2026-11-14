@@ -26,11 +26,19 @@ Where the ball model's inputs come from (physics/ball.py):
   mirrored for a left-hander). The ghost's is wherever its racket head ends up with your
   placement. The racket head itself is an ESTIMATE until racket tracking exists
   (skeleton.racket_head: wrist + 0.45 m along the forearm).
-- Racket speed is an ESTIMATE until racket tracking exists. The forearm and racket are
-  treated as one straight lever turning about the elbow, so the racket's sweet spot
-  moves (forearm + racket) / forearm times faster than the wrist:
-      racket speed = wrist speed x (forearm + RACKET_LEVER_M) / forearm
-  It ignores the wrist snap, so the hold_wrist_cock fix doesn't change it.
+- Racket speed is an ESTIMATE until racket tracking exists, from one of two sources:
+  - Wrist sensor, when the swing carries a usable swing["wrist"] entry with a racket speed
+    (services/wrist: camera wrist velocity + the forearm phone's gyro x RACKET_LEVER_M).
+    Labelled "ESTIMATE (sensor)", or "MOCK (sensor)" for synthetic recordings. The ghost has
+    no sensor, so its speed is yours scaled by the fix's change in the video estimate
+    (ghost / you): only the fix changes it, never the switch of method.
+  - Video otherwise ("ESTIMATE (video)"). The forearm and racket are treated as one
+    straight lever turning about the elbow, so the racket's sweet spot moves
+    (forearm + racket) / forearm times faster than the wrist:
+        racket speed = wrist speed x (forearm + RACKET_LEVER_M) / forearm
+    It ignores the wrist snap, so the hold_wrist_cock fix doesn't change it.
+  RACKET_LEVER_M = RACKET_HEAD_M (0.45 m, the launch point) + GRIP_OFFSET_M, for both.
+  assumptions.racketSpeed says which source was used, and why.
 - Azimuth (aim across the court) is an ESTIMATE: the floor-plane direction of the hitting
   wrist's velocity at contact, in court axes, clamped to +-AZIMUTH_LIMIT_DEG. Only within
   AZIMUTH_TRUST_DEG of straight, as on a drive; further off (a backhand's wrist moves
@@ -68,7 +76,12 @@ from physics.skeleton import (
 )
 
 # ---- Racket speed estimate ----
-RACKET_LEVER_M = 0.55          # estimate: wrist to the sweet spot of a 686 mm (WSF maximum) racket
+GRIP_OFFSET_M = 0.10           # estimate: the extra lever from the grip, beyond RACKET_HEAD_M
+# Wrist to the sweet spot of a 686 mm (WSF maximum) racket: 0.55 m. services/wrist uses it too.
+RACKET_LEVER_M = round(RACKET_HEAD_M + GRIP_OFFSET_M, 3)
+VIDEO_LABEL = "ESTIMATE (video)"
+SENSOR_LABEL = "ESTIMATE (sensor)"
+SENSOR_MOCK_LABEL = "MOCK (sensor)"   # synthetic wrist recording: mock data is labelled mock
 SPEED_WINDOW_MS = 25.0         # median wrist speed over this window around contact (skips one-frame spikes)
 RACKET_SPEED_RANGE_MS = (1.0, 80.0)  # what ball.py accepts; anything outside is clamped and flagged
 
@@ -140,7 +153,8 @@ def estimate_racket_speed(swing: dict, fps_real: float | None = None, hand: str 
         "value": round(min(max(raw, lo), hi), 1),
         "unit": "m/s",
         "estimate": True,
-        "label": "ESTIMATE",
+        "label": VIDEO_LABEL,
+        "source": "video",
         "method": "wrist speed x (forearm + racket) / forearm",
         "wristSpeedMs": round(wrist, 2),
         "forearmM": round(forearm, 3),
@@ -148,6 +162,61 @@ def estimate_racket_speed(swing: dict, fps_real: float | None = None, hand: str 
         "clamped": not lo <= raw <= hi,
         "rawValue": round(raw, 1),
     }
+
+
+def sensor_racket_speed(swing: dict) -> tuple[dict | None, str]:
+    """Your racket speed from the forearm phone, or (None, why not).
+
+    Reads swing["wrist"] (python -m wrist.run writes it; docs/interfaces.md): used only when
+    it's usable and its racket_speed_sensor has a value. The label comes from the entry's
+    own mock flag, so a synthetic recording always says MOCK.
+    """
+    wrist = swing.get("wrist")
+    if not isinstance(wrist, dict):
+        return None, "no wrist sensor data for this swing"
+    if not wrist.get("usable"):
+        return None, f"wrist sensor data unusable: {wrist.get('skip_reason') or 'marked unusable'}"
+    rs = wrist.get("racket_speed_sensor")
+    value = rs.get("value") if isinstance(rs, dict) else None
+    if not (isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value > 0):
+        why = rs.get("reason") if isinstance(rs, dict) else None
+        return None, "the wrist sensor gave no racket speed" + (f": {why}" if why else "")
+    raw = rs.get("rawValue")
+    raw = float(raw) if isinstance(raw, (int, float)) and math.isfinite(raw) and raw > 0 else float(value)
+    mock = bool(wrist.get("mock") or rs.get("mock"))
+    return {**rs, "rawValue": raw, "estimate": True, "label": SENSOR_MOCK_LABEL if mock else SENSOR_LABEL,
+            "source": "wrist sensor", "mock": mock, "contactSource": wrist.get("contact_source")}, ""
+
+
+def _clamped_speed(raw: float) -> dict:
+    lo, hi = RACKET_SPEED_RANGE_MS
+    return {"value": round(min(max(raw, lo), hi), 1), "clamped": not lo <= raw <= hi, "rawValue": round(raw, 1)}
+
+
+def racket_speeds(swing: dict, you_video: dict, ghost_video: dict) -> tuple[dict, dict, dict]:
+    """(your racket speed, the ghost's, assumptions.racketSpeed): the sensor's when usable, else video.
+
+    The ghost never borrows your measured number: it gets yours x (ghost / you) video
+    estimates, so the change between you and the ghost is the fix's alone.
+    """
+    sensor, why = sensor_racket_speed(swing)
+    if sensor is not None and not you_video["rawValue"] > 0:
+        sensor, why = None, "the video estimate is zero, so the fix's change can't scale the sensor speed"
+    if sensor is None:
+        return you_video, ghost_video, {"source": "video", "label": VIDEO_LABEL, "why": why}
+    scale = ghost_video["rawValue"] / you_video["rawValue"]
+    you = {**sensor, **_clamped_speed(sensor["rawValue"])}
+    ghost = {
+        "unit": "m/s", "estimate": True, "label": sensor["label"], "source": "wrist sensor, scaled by the fix",
+        "mock": sensor["mock"], **_clamped_speed(sensor["rawValue"] * scale),
+        "method": "your sensor racket speed x (ghost / you) video estimates, so only the fix changes it",
+        "scale": round(scale, 3), "videoYouMs": you_video["value"], "videoGhostMs": ghost_video["value"],
+    }
+    note = {"source": "wrist sensor", "label": sensor["label"],
+            "why": "your speed from the forearm phone (camera wrist velocity + gyro x lever, "
+                   f"{RACKET_LEVER_M:g} m); the ghost's is yours scaled by the fix's change in the video estimate",
+            "videoEstimateMs": you_video["value"]}
+    return you, ghost, note
 
 
 def ball_contact(swing: dict, P: np.ndarray, hand: str) -> tuple[int, str]:
@@ -297,15 +366,14 @@ def _in_court_frame(swing: dict) -> bool:
 
 
 def _on_court(swing: dict, fps_real, hand: str, contact: int, shift: np.ndarray,
-              elevation_deg: float) -> tuple[dict, dict]:
-    """One swing: metrics, racket speed, the swing on the court, its PREDICTED ball, and its launch.
+              elevation_deg: float, racket: dict) -> tuple[dict, dict]:
+    """One swing: metrics, the swing on the court, its PREDICTED ball (from `racket`), and its launch.
 
     `shift` is the player's court_shift, so you and the ghost stand in exactly the same place.
-    Metrics and speed are measured on the swing as given; they don't depend on where it stands.
+    Metrics are measured on the swing as given; they don't depend on where it stands.
     """
     m = measure(swing, fps_real, hand)
     metrics = {k: _num(m[k]) for k in METRICS}
-    racket = estimate_racket_speed(swing, fps_real, hand)
     Pc = court_axes(to_array(swing)) + shift
     point = [round(float(c), 3) for c in racket_head(Pc, hand)[contact]]
     if not 0 < point[1] < 3:
@@ -454,9 +522,12 @@ def compare(swing: dict, fix_name: str, amount: float, fps_real: float | None = 
         raise GuessedFixError(f"Not available on this swing: the camera couldn't see the {side_name} {target[1]} "
                               "around contact (guessed joints), so a ghost of this fix would edit a guess.")
     ghost_swing = apply_fix(played, fix_name, amount, fps_real, hand)
+    ghost_swing.pop("wrist", None)  # your forearm phone's data isn't the ghost's: nothing may coach it
 
-    you, you_launch = _on_court(played, fps_real, hand, contact, shift, elevation)
-    ghost, ghost_launch = _on_court(ghost_swing, fps_real, hand, contact, shift, elevation)
+    you_racket, ghost_racket, racket_note = racket_speeds(
+        swing, estimate_racket_speed(played, fps_real, hand), estimate_racket_speed(ghost_swing, fps_real, hand))
+    you, you_launch = _on_court(played, fps_real, hand, contact, shift, elevation, you_racket)
+    ghost, ghost_launch = _on_court(ghost_swing, fps_real, hand, contact, shift, elevation, ghost_racket)
     # The ghost inherits your frames' flags, so the same metrics are left out on both sides.
     _drop_guessed(you, guessed)
     _drop_guessed(ghost, guessed)
@@ -491,11 +562,13 @@ def compare(swing: dict, fix_name: str, amount: float, fps_real: float | None = 
                 "you": you_launch,
                 "ghost": ghost_launch,
             },
+            "racketSpeed": racket_note,
             "launchElevationDeg": elevation,
             "contactSpot": you_launch["point"],  # kept for app/ghost/compare.ts: your launch point
             "note": "Ball paths are PREDICTED. The launch angle and the spot on court are assumed; racket "
-                    "speed, racket head and aim are estimated from the wrist and forearm until racket "
-                    "tracking exists.",
+                    "speed (from the forearm phone when the swing has usable wrist data, else the video), "
+                    "racket head and aim are estimated from the wrist and forearm until racket tracking "
+                    "exists.",
         },
     }
 
