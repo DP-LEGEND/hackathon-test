@@ -2,6 +2,10 @@
 TODO (9 AM freeze): written against main at 34b9298 (wrist sensor #44 merged).
 The upload page (#48) is NOT on main, so the fresh clip goes in from the terminal (beat 3).
 If #48 merges, swap beat 3 for the /upload page and re-check every number below.
+If #53 (ghost honesty: measured vs guessed joints) merges, re-check beat 2 and the
+"What each screen should show" table.
+If #54 (honest backhand sample) merges, re-check beat 2 and the table: the backhand coach call
+becomes "Nothing to fix" (stance 27°, judged from the feet), so beat 2 needs rewriting.
 -->
 
 # Ghost live demo runbook
@@ -50,6 +54,14 @@ This Mac has Node 22, and the repo targets Node 26. Rehearse with the same Node 
 
 **4. Have the fresh clip ready.** Film one swing at **60 fps (normal video, not slow motion)**: a few seconds, one player, whole body in frame. AirDrop it to the Mac and rename it `~/Downloads/fresh.mov`. Upload it once in rehearsal to time it: the app gives up after **120 seconds**.
 
+**Rehearse in a separate folder.** Every upload is saved under `GHOST_SWINGS_DIR/live-<id>/`, and the service lists every saved swing. So a rehearsal upload in the stage folder would show up on stage. For rehearsal, start tab 1 (below) with the same `cd ~/hackathon-demo/services`, then this instead:
+
+```
+GHOST_SWINGS_DIR=~/ghost-rehearsal ~/ghost-env/bin/python -m uvicorn pipeline.server:app --port 8000
+```
+
+Stop it with Ctrl+C when you're done, then start tab 1 for the show as below.
+
 **5. Optional: make the mock wrist-sensor data (once).**
 
 ```
@@ -61,13 +73,22 @@ cd ~/hackathon-demo/services
 
 ## Start Ghost (three terminal tabs)
 
-**Tab 1: Python service**
+**Tab 1: Python service, with a fresh empty folder for the show**
 
 ```
 cd ~/hackathon-demo/services
 ```
 ```
-~/ghost-env/bin/python -m uvicorn pipeline.server:app --port 8000
+mkdir -p ~/ghost-stage
+```
+```
+ls ~/ghost-stage
+```
+
+`ls` should print nothing. If `~/ghost-stage` has anything in it from an earlier run, use a new folder name (for example `~/ghost-stage2`) in both commands. Then:
+
+```
+GHOST_SWINGS_DIR=~/ghost-stage ~/ghost-env/bin/python -m uvicorn pipeline.server:app --port 8000
 ```
 
 Don't add `--reload` for the demo, so a saved file can't restart the service mid-upload. To check it's up:
@@ -101,7 +122,7 @@ cd ~/hackathon-demo/services
 2. **http://localhost:8000/health**: shows `{"ok":true}`. Reload it if you're unsure whether the service is up.
 3. **The backup video**, once it's recorded at the freeze.
 
-**Warm up:** in tab 1, click through the forehand and the backhand all the way to the court, then click **Try another swing**. The dashed box under the swing list should say *"The live service is running but has no processed swings…"* (or *"1 live swing…"* after a rehearsal upload). If it says *"The live Python service isn't running"*, terminal tab 1 isn't up.
+**Warm up:** in tab 1, click through the forehand and the backhand all the way to the court, then click **Try another swing**. The dashed box under the swing list should say *"The live service is running but has no processed swings…"*. That's right for the show: `~/ghost-stage` stays empty until the stage upload. If it lists live swings, tab 1 isn't running with an empty `~/ghost-stage`. If it says *"The live Python service isn't running"*, tab 1 isn't up.
 
 ## The 3-minute click path
 
@@ -113,7 +134,7 @@ The page has four steps: **Pick a swing → Coach's call → The ghost → On co
 |---|---|---|
 | The top card, **"Forehand · over-rotation (acted and flagged) · iPhone 120 fps (IMG_2115 16:55)"** (badges *Saved sample*, *Demo swing*) | **The coach's call:** *"Over-rotation: hips turn 157°"*, cue *"Turn a little less and stay balanced through the ball."* | Code measured the swing; the coach names one fix and only quotes numbers the code measured. |
 | **Show the ghost** | **Your ghost makes the fix.** Fix *Turn shoulders less*, badge *Coach's pick*. *What the fix changes:* Shoulder turn 137.6° → 85°. Click **Play**, then **0.25× slow-mo** | Orange is the swing they played, cyan is the same body with one fix. |
-| **Show the court** | **Where the ball goes:** two paths, each labelled *PREDICTED · … · in*. Panel: ball speed 133.2 → 119.1 km/h, **front wall height 1.92 → 1.88 m** | These are **PREDICTED**; there's no real ball. Launch angle is **assumed, 12° for a forehand**. Checked against the video, the real ball hit about 1.8 m. |
+| **Show the court** | **Where the ball goes:** two paths, each labelled *PREDICTED · … · in*. Panel: ball speed 133.2 → 119.1 km/h, **front wall height 1.92 → 1.88 m** | These are **PREDICTED**; there's no real ball. Launch angle is **assumed, 12° for a forehand**. Checked by eye against the video, the real ball hit about 1.8 m. |
 
 ### Beat 2: backhand ghost (1:10–1:50)
 
@@ -123,7 +144,7 @@ The page has four steps: **Pick a swing → Coach's call → The ghost → On co
 |---|---|---|
 | **Try another swing**, then **"Backhand · two-camera stereo · 120 fps"** | **The coach's call:** *"Stance too open: stance 80° open to the shot"*, cue *"Step across so you stand side-on to the front wall."* | Two cameras, 120 fps, rebuilt in 3D. |
 | **Show the ghost** | Fix *Close stance*, *Coach's pick*. Stance open to the shot 79.9° → 15° | Same swing, stance closed. |
-| **Show the court** | **One** path. Note: *"This fix changes your body position, not the ball: both PREDICTED paths are the same."* Ball speed 130.4 km/h, **front wall height 0.78 m**, no change | This fix is about stance, so the predicted ball doesn't move. Launch angle **assumed, 3° for a backhand**. The video showed 0.5–0.8 m. |
+| **Show the court** | **One** path. Note: *"This fix changes your body position, not the ball: both PREDICTED paths are the same."* Ball speed 130.4 km/h, **front wall height 0.78 m**, no change | This fix is about stance, so the predicted ball doesn't move. Launch angle **assumed, 3° for a backhand**. Checked by eye against the video, the real ball hit 0.5–0.8 m. |
 
 ### Beat 3: the coach's call on a fresh 60 fps clip (1:50–2:45)
 
@@ -167,7 +188,7 @@ All of these come from the saved samples in `public/swings/` and are the same on
 | Racket speed (ESTIMATE) | 28.3 → 25.3 m/s | 27.7 m/s, no change |
 | **Launch angle (ASSUMED)** | **12°**, not on screen | **3°**, not on screen |
 | Court | Two paths | One path, with the "changes your body position, not the ball" note |
-| Video check | Real ball hit about 1.8 m high | Real ball hit 0.5–0.8 m high |
+| Video check (checked by eye, not on screen) | Real ball hit about 1.8 m high | Real ball hit 0.5–0.8 m high |
 
 The launch angle isn't shown as a number. The court panel's footnote says the launch angle and the spot on court are assumed, so say the angle out loud and call it assumed.
 
@@ -175,10 +196,10 @@ The launch angle isn't shown as a number. The court panel's footnote says the la
 
 | If | You'll see | Do this |
 |---|---|---|
-| **Python service down** | *"The live Python service isn't running, so these are the saved samples."* The health tab doesn't load | Beats 1 and 2 don't need it: the saved swings always work. Re-run the tab 1 command, then click **Check again**. If it won't start, skip beat 3 and say the upload needs the service. |
+| **Python service down** | *"The live Python service isn't running, so these are the saved samples."* The health tab doesn't load | Beats 1 and 2 don't need it: the saved swings always work. Re-run the tab 1 command with the same `GHOST_SWINGS_DIR=~/ghost-stage` (so the stage upload is kept), then click **Check again**. If it won't start, skip beat 3 and say the upload needs the service. |
 | **Upload times out** | curl prints **502** after about 2 minutes (the app's 120 s limit) | Python usually keeps working on the clip after the app gives up, and saves it when done. Carry on with the demo and click **Check again** in a minute. If it never appears, resend straight to Python, which has no 120 s limit: the same command with `http://localhost:8000/process` instead of `http://localhost:3000/api/process`. A **429** means the first clip is still processing. |
 | **Upload refused** | **429**, *"A clip is already processing"* | Only one clip at a time. Wait for the first one, then click **Check again**. |
-| **Slow-mo clip fails** | **422**, *"No fully tracked swing found; keep the whole body in frame and film one clear swing"*, or a swing with a wildly wrong speed | Resend with the speed set by hand: add `-F slowdown=1` for a normal 60 fps video, or `-F slowdown=4` for an AirDropped iPhone slow-mo. Add `-F stroke=forehand` or `-F hand=R` if those were misread. Otherwise pick the swing from rehearsal: it's still in the list after **Check again**. |
+| **Slow-mo clip fails** | **422**, *"No fully tracked swing found; keep the whole body in frame and film one clear swing"*, or a swing with a wildly wrong speed | Resend with the speed set by hand: add `-F slowdown=1` for a normal 60 fps video, or `-F slowdown=4` for an AirDropped iPhone slow-mo. Add `-F stroke=forehand` or `-F hand=R` if those were misread. To show the rehearsal swing instead, stop tab 1 (Ctrl+C), restart it with `GHOST_SWINGS_DIR=~/ghost-rehearsal ~/ghost-env/bin/python -m uvicorn pipeline.server:app --port 8000`, then click **Check again**. |
 | **Pipeline missing** | **503**, *"Live pipeline unavailable; configure the pose model and ffmpeg/ffprobe"* | Pre-flight step 3 failed. Skip beat 3 and use the saved swings. |
 | **Wi-Fi dies** | Nothing, as long as the app is already running | Keep going: the service, the coach and the ghost all run on this Mac. Don't restart the app or run a build while offline (the fonts come from Google Fonts). If anything misbehaves, **use the saved swings** (beats 1 and 2) and skip beat 3. |
 | **A ghost won't load** | *"Couldn't make this ghost: …"* | Click **Try again**. If it fails again, click **Try another swing** and pick a saved sample. |
@@ -186,7 +207,9 @@ The launch angle isn't shown as a number. The court panel's footnote says the la
 
 ## Rules on stage
 
-- Only say numbers that are on screen. The one exception is the launch angle, which you say is **assumed**.
+- Only say numbers that are on screen. There are two named exceptions:
+  - the **launch angle** (12° forehand, 3° backhand), which you always call **assumed**
+  - the **video-check heights** (about 1.8 m forehand, 0.5–0.8 m backhand), which you always say were **checked by eye against the video**
 - Every ball path is **PREDICTED**. Say the word the first time a path appears.
 - Anything mock is **MOCK**: today that's the wrist sensor.
 
