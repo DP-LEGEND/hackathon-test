@@ -202,7 +202,7 @@ def test_each_missing_iphone_key_joint_rejects_even_with_good_stereo(stereo_pair
     a, b, *_ = stereo_pair
     # Keep segmentation fixed so a missing detection joint cannot hide the gate.
     monkeypatch.setattr(process, 'find_swings', lambda *args, **kw: [
-        {'start': 30, 'end': 110, 'peak': 70}])
+        {'start': 30, 'end': 110, 'peak': 70, 'speed': 10}])
     a['vis'][30:111, joint] = 0
     a['world'][30:111, joint] = np.nan
     a['img'][30:111, joint] = np.nan
