@@ -54,4 +54,6 @@ venv/
 *.mp4
 *.mov
 data/raw/
+data/processed/
+*.npz
 models/
