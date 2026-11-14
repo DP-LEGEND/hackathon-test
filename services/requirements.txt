@@ -1,0 +1,13 @@
+# One Python environment for pipeline, physics and coach.
+# Use Python 3.11 or 3.12 (MediaPipe may not have wheels for newer versions yet).
+# Only Dev changes this file. Ask in the team chat if you need a package.
+mediapipe>=0.10.14
+opencv-python>=4.9
+numpy>=1.26
+scipy>=1.11
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+python-dotenv>=1.0
+anthropic>=0.40
+pytest>=8
