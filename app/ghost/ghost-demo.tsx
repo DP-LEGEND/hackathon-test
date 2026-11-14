@@ -3,9 +3,11 @@
 // The /ghost demo flow: 1 pick a swing, 2 the coach's call, 3 the ghost makes the fix,
 // 4 both PREDICTED ball paths on the court. Owns which swing, step and fix are shown;
 // data comes from sources.ts (live service or saved samples), the 3D view from ghost-stage.tsx.
+// /ghost?swing=<id> opens on that swing at the coach's call (how /upload shows a new swing).
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { ArrowLeft, ArrowRight, RotateCcw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -36,12 +38,14 @@ import {
   loadCoachFor,
   loadCompareFor,
   loadSwingFor,
+  loadWristFor,
   type ApiState,
   type FixOption,
 } from "./sources";
 import type { SwingCoordinates } from "./swing";
 import { SwingPicker, type CatalogueState } from "./swing-picker";
 import { useAsync, type Async } from "./use-async";
+import { WristSensorPanel } from "./wrist-panel";
 
 const STEPS = [
   {
@@ -88,8 +92,16 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export function GhostDemo() {
-  const [step, setStep] = useState<Step>("swing");
+/** Reads ?swing=<id>. page.tsx wraps this in Suspense, as useSearchParams needs when prerendering. */
+export function GhostDemoFromUrl() {
+  const requested = useSearchParams().get("swing")?.trim() || null;
+  // Keyed, so a new ?swing= starts the flow fresh (and re-reads the live list) even when Next
+  // kept this page alive in the background.
+  return <GhostDemo key={requested ?? ""} requestedSwing={requested} />;
+}
+
+export function GhostDemo({ requestedSwing }: { requestedSwing: string | null }) {
+  const [step, setStep] = useState<Step>(requestedSwing ? "coach" : "swing");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [chosenFix, setChosenFix] = useState<string | null>(null);
   const [view, setView] = useState<CameraView>("player");
@@ -97,6 +109,7 @@ export function GhostDemo() {
   const [swingAttempt, setSwingAttempt] = useState(0);
   const [coachAttempt, setCoachAttempt] = useState(0);
   const [compareAttempt, setCompareAttempt] = useState(0);
+  const [wristAttempt, setWristAttempt] = useState(0);
   const [catalogueAttempt, setCatalogueAttempt] = useState(0);
   const [catalogue, setCatalogue] = useState<Async<Catalogue>>({ status: "loading" });
   const [apiAttempt, setApiAttempt] = useState(0);
@@ -136,18 +149,33 @@ export function GhostDemo() {
     [catalogue, api],
   );
   const demoEntry = useMemo(() => entries.find((e) => e.isDefault) ?? null, [entries]);
-  // The demo swing only while nothing is picked; never a silent switch away from a picked swing.
+  // The linked swing (?swing=) or the demo swing only while nothing is picked; never a silent
+  // switch away from a picked swing.
   const selection = useMemo(
-    () => resolveSelection(entries, selectedKey, { samples: catalogue.status === "ready", live: api.status !== "checking" }),
-    [entries, selectedKey, catalogue.status, api.status],
+    () =>
+      resolveSelection(
+        entries,
+        selectedKey,
+        { samples: catalogue.status === "ready", live: api.status !== "checking" },
+        requestedSwing,
+      ),
+    [entries, selectedKey, catalogue.status, api.status, requestedSwing],
   );
   const entry = selection.entry;
+  // The linked swing isn't in either list: say which one and offer a re-check of the live list.
+  const missing =
+    selection.gone && selectedKey === null && requestedSwing !== null
+      ? { id: requestedSwing, offline: api.status === "offline", onRetry: retryApi }
+      : null;
 
   // Per swing: the swing itself, the coach's verdict and the ghost for the active fix.
   const swingPromise = useMemo(() => (entry ? loadSwingFor(entry, swingAttempt) : null), [entry, swingAttempt]);
   const coachPromise = useMemo(() => (entry ? loadCoachFor(entry, coachAttempt) : null), [entry, coachAttempt]);
   const swing = useAsync(swingPromise);
   const coach = useAsync(coachPromise);
+  // Forearm-sensor series, only for swings that have one (null hides the Wrist sensor panel).
+  const wristPromise = useMemo(() => (entry ? loadWristFor(entry, wristAttempt) : null), [entry, wristAttempt]);
+  const wrist = useAsync(wristPromise);
   const coachCaption = coach.status === "ready" ? coach.value : null;
   const coachSettled = coach.status === "ready" || coach.status === "error";
   const faults = useMemo(() => coachCaption?.faults ?? [], [coachCaption]);
@@ -256,7 +284,7 @@ export function GhostDemo() {
 
       {step === "swing" ? (
         <>
-          {selection.gone && <SwingGone hasDemo={demoEntry !== null} onLeave={leaveGoneSwing} />}
+          {selection.gone && <SwingGone hasDemo={demoEntry !== null} onLeave={leaveGoneSwing} missing={missing} />}
           <SwingPicker
             catalogue={catalogueState}
             entries={entries}
@@ -268,7 +296,16 @@ export function GhostDemo() {
         </>
       ) : !entry ? (
         selection.gone ? (
-          <SwingGone hasDemo={demoEntry !== null} onLeave={leaveGoneSwing} />
+          <SwingGone hasDemo={demoEntry !== null} onLeave={leaveGoneSwing} missing={missing} />
+        ) : catalogue.status === "error" ? (
+          // Reachable when a ?swing= link opens on this step: without the catalogue there are no swings.
+          <div role="alert" className="flex flex-col items-start gap-3 rounded-xl border bg-card p-6">
+            <p className="text-sm">The swings couldn&apos;t load: {catalogue.message}</p>
+            <Button variant="outline" onClick={retryCatalogue}>
+              <RotateCcw data-icon="inline-start" />
+              Try again
+            </Button>
+          </div>
         ) : (
           <p role="status" className="rounded-xl border bg-card p-6 text-sm text-muted-foreground">
             Loading swings…
@@ -352,6 +389,14 @@ export function GhostDemo() {
           </GhostStage>
 
           {step === "coach" && <CoachDetails state={caption} />}
+          {step === "coach" && (
+            <WristSensorPanel
+              state={wrist}
+              expected={entry.wristFile !== null}
+              caption={caption}
+              onRetry={() => setWristAttempt((n) => n + 1)}
+            />
+          )}
           {showGhost && compare && (
             <div className={cn("grid gap-3", onCourt && "lg:grid-cols-2")}>
               {onCourt && <BallChanges compare={compare} samePath={samePath} />}
@@ -370,15 +415,43 @@ export function GhostDemo() {
   );
 }
 
-/** A picked swing dropped out of the list. Says so instead of switching swings behind the user's back. */
-function SwingGone({ hasDemo, onLeave }: { hasDemo: boolean; onLeave: () => void }) {
+/**
+ * A picked swing dropped out of the list, or the ?swing= one (`missing`) isn't in it. Says so
+ * instead of switching swings behind the user's back.
+ */
+function SwingGone({
+  hasDemo,
+  onLeave,
+  missing,
+}: {
+  hasDemo: boolean;
+  onLeave: () => void;
+  missing: { id: string; offline: boolean; onRetry: () => void } | null;
+}) {
   return (
     <div role="alert" className="flex flex-col items-start gap-3 rounded-xl border bg-card p-6">
-      <p className="text-sm">That swing isn&apos;t available any more.</p>
-      <Button variant="outline" onClick={onLeave}>
-        <ArrowLeft data-icon="inline-start" />
-        {hasDemo ? "Back to the demo swing" : "Pick a swing"}
-      </Button>
+      {missing ? (
+        <p className="text-sm">
+          Swing <span className="font-mono break-all">{missing.id}</span> isn&apos;t in the list.{" "}
+          {missing.offline
+            ? "The live Python service isn't answering, so only the saved samples are listed."
+            : "The live Python service doesn't list it, so the link may be out of date."}
+        </p>
+      ) : (
+        <p className="text-sm">That swing isn&apos;t available any more.</p>
+      )}
+      <div className="flex flex-wrap gap-2">
+        {missing && (
+          <Button variant="outline" onClick={missing.onRetry}>
+            <RotateCcw data-icon="inline-start" />
+            Check again
+          </Button>
+        )}
+        <Button variant="outline" onClick={onLeave}>
+          <ArrowLeft data-icon="inline-start" />
+          {hasDemo ? "Back to the demo swing" : "Pick a swing"}
+        </Button>
+      </div>
     </div>
   );
 }
@@ -395,7 +468,7 @@ function StepNav({ step, canAdvance, onGo }: { step: Step; canAdvance: boolean; 
               <button
                 type="button"
                 onClick={() => onGo(s.id)}
-                disabled={i > 0 && !canAdvance}
+                disabled={i > 0 && !canAdvance && !isCurrent}
                 aria-current={isCurrent ? "step" : undefined}
                 className={cn(
                   "flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm transition-colors outline-none",
