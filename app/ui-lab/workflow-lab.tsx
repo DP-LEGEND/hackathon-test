@@ -12,9 +12,9 @@ import { ResultPreview } from "./result-preview";
 type RunState = "empty" | "running" | "success" | "error";
 const example = "Help our four-person team turn a hackathon idea into a focused, demo-ready plan.";
 const steps = [
-  { title: "Understand the brief", detail: "Identify the intended outcome and constraints." },
-  { title: "Shape the approach", detail: "Prioritise the smallest complete user journey." },
-  { title: "Prepare the handoff", detail: "Organise recommendations for human review." },
+  { title: "Understand the brief", detail: "Clarify the outcome and constraints." },
+  { title: "Shape the approach", detail: "A focused, end-to-end user journey." },
+  { title: "Prepare the handoff", detail: "Recommendations ready for review." },
 ];
 
 export function WorkflowLab() {
@@ -88,41 +88,48 @@ export function WorkflowLab() {
   }
 
   return (
-    <div className="grid min-w-0 items-start gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] [&_.text-muted-foreground]:text-foreground/75">
-        <section aria-labelledby="brief-heading" className="rounded-xl border bg-card p-5 sm:p-6">
-          <div className="mb-4 flex items-center justify-between gap-3"><h2 id="brief-heading" className="text-base font-semibold">01 <span className="ml-2">Define the task</span></h2><Badge variant="secondary">Mock mode</Badge></div>
+    <div className="lab-workspace" data-state={state}>
+        <section aria-labelledby="brief-heading" className={cn("lab-panel", "lab-composerPanel")}>
+          <div className="lab-sectionHeader"><h2 id="brief-heading"><span className="lab-sectionIndex">01</span> Request</h2><Badge variant="secondary" className="lab-mockBadge">Mock mode</Badge></div>
           <form onSubmit={startRun}>
-            <label htmlFor="agent-brief" className="text-sm font-medium">What would you like to accomplish?</label>
-            <p id="brief-help" className="mt-2 text-sm leading-5 text-muted-foreground">Describe a goal and any constraints. This prototype returns a fixed sample plan for every brief.</p>
-            <textarea ref={composerRef} id="agent-brief" value={brief} onChange={event => setBrief(event.target.value.slice(0, 2000))} disabled={running} required maxLength={2000} aria-describedby="brief-help brief-count" placeholder="Start with an outcome, not a list of tools…" className="mt-4 min-h-28 w-full resize-y rounded-lg border bg-background p-4 text-sm leading-6 placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-60" />
-            <div className="mt-2 flex flex-wrap items-center justify-between gap-2"><Button type="button" variant="ghost" disabled={running} onClick={() => setBrief(example)} className="min-h-11 px-0 text-sm">Use example brief <ArrowRight aria-hidden="true" /></Button><span id="brief-count" className="font-mono text-sm text-muted-foreground">{brief.length}/2000</span></div>
-            <div className="my-3 border-t pt-3"><label className="flex min-h-11 cursor-pointer items-center gap-3 text-sm text-muted-foreground"><input type="checkbox" checked={simulateError} disabled={running} onChange={event => setSimulateError(event.target.checked)} className="size-4 accent-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring" />Simulate a failure to test recovery</label></div>
-            <div className="flex flex-wrap gap-3"><Button type="submit" disabled={running || !brief.trim()} className="h-11 flex-1 px-5">{running ? <LoaderCircle aria-hidden="true" className="motion-safe:animate-spin" /> : <ArrowRight aria-hidden="true" />}{running ? "Working on your brief" : "Run mock workflow"}</Button>{running && <Button type="button" ref={cancelRef} variant="outline" onClick={() => reset(true)} className="h-11"><Square aria-hidden="true" />Cancel</Button>}</div>
+            <label htmlFor="agent-brief" className="lab-fieldLabel">What would you like to accomplish?</label>
+            <p id="brief-help" className="lab-fieldHelp">Start with a goal and constraints. Every brief returns the same sample plan.</p>
+            <textarea ref={composerRef} id="agent-brief" value={brief} onChange={event => setBrief(event.target.value.slice(0, 2000))} disabled={running} required maxLength={2000} aria-describedby="brief-help brief-count" placeholder="What would a useful outcome look like?" className="lab-textarea" />
+            <div className="lab-composerMeta"><Button type="button" variant="ghost" disabled={running} onClick={() => setBrief(example)} className="lab-exampleButton">Use example brief <ArrowRight aria-hidden="true" /></Button><span id="brief-count" className="lab-characterCount">{brief.length}/2000</span></div>
+            <label className="lab-simulationToggle"><input type="checkbox" checked={simulateError} disabled={running} onChange={event => setSimulateError(event.target.checked)} />Simulate a failure to test recovery</label>
+            <div className="lab-controls"><Button type="submit" disabled={running || !brief.trim()} className="lab-runButton">{running ? <LoaderCircle aria-hidden="true" className="motion-safe:animate-spin" /> : <ArrowRight aria-hidden="true" />}{running ? "Working on your brief" : "Run mock workflow"}</Button>{running && <Button type="button" ref={cancelRef} variant="outline" onClick={() => reset(true)} className="lab-controlButton"><Square aria-hidden="true" />Cancel</Button>}</div>
           </form>
-          <p className="mt-4 flex items-center gap-2 text-sm text-muted-foreground"><ShieldCheck aria-hidden="true" className="size-3.5 shrink-0" />Your brief stays in this browser tab.</p>
+          <p className="lab-privacyNote"><ShieldCheck aria-hidden="true" className="size-3.5 shrink-0" />Your brief stays in this browser tab.</p>
         </section>
-        <section aria-labelledby="progress-heading" className="rounded-xl border bg-card p-5 sm:p-6">
-          <div className="flex flex-wrap items-center justify-between gap-3"><h2 id="progress-heading" className="text-base font-semibold">02 <span className="ml-2">Follow the work</span></h2><span className="font-mono text-sm text-muted-foreground">{state === "success" ? "3 / 3" : state === "error" ? "Failed" : running ? `${step} / 3` : "Standby"}</span></div>
-          <ol className="mt-4 space-y-4">
+      <div className="lab-panel lab-activityPanel">
+        <section aria-labelledby="progress-heading" className="lab-progressPanel">
+          <div className="lab-sectionHeader"><h2 id="progress-heading"><span className="lab-sectionIndex">02</span> Execution trace</h2><span className="lab-progressCount">{state === "success" ? "Complete · 3 / 3" : state === "error" ? "Interrupted" : running ? `In progress · ${step} / 3` : "Ready to begin"}</span></div>
+          <ol className="lab-stepList">
             {steps.map((item, index) => {
               const done = state === "success" || ((running || state === "error") && index < step && !(state === "error" && index === 2));
               const active = running && index === step;
               const failed = state === "error" && index === 2;
-              return <li key={item.title} className="flex gap-4"><span className={cn("mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full border", done && "border-primary bg-primary text-primary-foreground", active && "border-foreground", failed && "border-destructive text-destructive")} aria-hidden="true">{failed ? <CircleAlert className="size-3.5" /> : done ? <Check className="size-3.5" /> : active ? <LoaderCircle className="size-3.5 motion-safe:animate-spin" /> : <Circle className="size-2 text-muted-foreground" />}</span><div><p className="text-sm font-medium">{item.title}<span className="sr-only"> — {done ? "complete" : active ? "in progress" : state === "error" && index === 2 ? "failed" : "pending"}</span></p><p className="mt-1 hidden text-sm leading-5 text-muted-foreground sm:block">{item.detail}</p></div></li>;
+              return <li key={item.title} data-active={active} data-done={done} data-failed={failed} aria-current={active ? "step" : undefined}><div className="lab-stageTop"><span className={cn("lab-stepIcon", done && "lab-stepDone", active && "lab-stepActive", failed && "lab-stepFailed")} aria-hidden="true">{failed ? <CircleAlert className="size-3.5" /> : done ? <Check className="size-3.5" /> : active ? <LoaderCircle className="size-3.5 motion-safe:animate-spin" /> : <Circle className="size-2" />}</span><span className="lab-stageLabel">{["INTENT", "PLAN", "RESULT"][index]}</span><span className="lab-stageState">{done ? "Done" : active ? "Active" : failed ? "Failed" : "Pending"}</span></div><div className="lab-stageDescription"><p className="lab-stepTitle">{item.title}</p><p className="lab-stepDetail">{item.detail}</p></div></li>;
             })}
           </ol>
-          <p role="status" aria-live="polite" aria-atomic="true" className="mt-4 border-t pt-4 text-sm leading-5 text-muted-foreground">{message}</p>
+          <p role="status" aria-live="polite" aria-atomic="true" className="lab-statusMessage">{message}</p>
         </section>
-      <section aria-labelledby="result-heading" className="flex min-w-0 flex-col overflow-hidden rounded-xl border bg-card lg:col-span-2">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-4 sm:px-7"><h2 ref={resultRef} tabIndex={-1} id="result-heading" className="rounded-sm text-base font-semibold focus:outline-2 focus:outline-offset-4 focus:outline-ring">03 <span className="ml-2">Review the outcome</span></h2><Badge variant={state === "error" ? "destructive" : "outline"}>{state === "success" && !stale && <Check aria-hidden="true" />}{stale ? "Previous run" : state === "success" ? "Mock result · Ready" : state === "error" ? "Mock error" : "Result preview"}</Badge></div>
-        {stale && <p role="status" className="border-b bg-muted/40 px-5 py-4 text-sm sm:px-7">Previous run: your brief has changed. Run the workflow again to associate a new mock result with this brief.</p>}
-        <div aria-busy={running} className="flex flex-1 flex-col">
-          {state === "empty" && <div className="[&>div]:py-8"><EmptyState icon={<FileText />} title="A little clarity starts here." description="Run a mock workflow to see a structured brief, priorities, and a practical handoff. Your result will appear here." /></div>}
-          {running && <div className="flex flex-1 flex-col justify-center px-7 py-20"><LoaderCircle aria-hidden="true" className="mb-5 size-6 motion-safe:animate-spin" /><h3 className="text-xl font-medium tracking-tight">Turning the brief into a plan.</h3><p className="mt-3 text-sm leading-6 text-muted-foreground">Simulated step {step + 1} of 3. No external tools or models are being called.</p><div className="mt-8 space-y-4" aria-hidden="true">{["w-3/4", "w-full", "w-5/6"].map(width => <div key={width} className={cn("h-3 rounded bg-muted motion-safe:animate-pulse", width)} />)}</div></div>}
-          {state === "error" && <div className="flex flex-1 items-center justify-center"><ErrorState title="A deliberate bump in the road." description="This failure was simulated. Retry clears the failure setting and immediately starts a new mock run using your current brief." action={<Button variant="outline" disabled={!brief.trim()} className="h-11" onClick={() => { setSimulateError(false); run(false); }}><RotateCcw aria-hidden="true" />Retry mock workflow</Button>} /></div>}
+      <section aria-labelledby="result-heading" className="lab-resultPanel">
+        <div className={cn("lab-sectionHeader", "lab-resultHeader")}><h2 ref={resultRef} tabIndex={-1} id="result-heading"><span className="lab-sectionIndex">03</span> Review the outcome</h2><Badge className="lab-resultBadge" variant={state === "error" ? "destructive" : "outline"}>{state === "success" && !stale && <Check aria-hidden="true" />}{stale ? "Previous run" : state === "success" ? "Mock result · Ready" : state === "error" ? "Mock error" : "Result preview"}</Badge></div>
+        {stale && <p role="status" className="lab-staleNotice">Previous run: your brief has changed. Run the workflow again to associate a new mock result with this brief.</p>}
+        <div aria-busy={running} className="lab-resultBody">
+          {state === "empty" && <div className="lab-emptyLayout">
+            <p className="lab-documentLabel">FROM A FIRST THOUGHT TO A NEXT MOVE</p>
+            <div className="lab-emptyMessage"><EmptyState icon={<FileText />} title="Your next move, made clear." description="One focused brief. A visible path through the work. An outcome you can put into action." /></div>
+            <dl className="lab-outputOutline"><div><dt>01 / A focused brief</dt><dd>The goal, kept in view.</dd></div><div><dt>02 / Clear priorities</dt><dd>A smaller, ordered scope.</dd></div><div><dt>03 / A practical handoff</dt><dd>One useful next move.</dd></div></dl>
+            <p className="lab-emptyFootnote">Run the local simulation to explore a fixed sample outcome.</p>
+          </div>}
+          {running && <div className="lab-runningPreview"><p className="lab-documentLabel">LOCAL SIMULATION / IN PROGRESS</p><h3>Turning the brief into a plan.</h3><p className="lab-runningDescription">{steps[step].detail} Simulated step {step + 1} of 3. No external tools or models are being called.</p><progress className="lab-progressBar" max={3} value={step} aria-label="Completed mock stages" /><div className="lab-skeleton" aria-hidden="true">{["w-3/4", "w-full", "w-5/6"].map(width => <div key={width} className={width} />)}</div><p className="lab-emptyFootnote">Your brief stays in view. Cancel whenever you need.</p></div>}
+          {state === "error" && <div className="lab-errorLayout"><ErrorState title="A deliberate bump in the road." description="This failure was simulated. Retry clears the failure setting and immediately starts a new mock run using your current brief." action={<Button variant="outline" disabled={!brief.trim()} className="lab-controlButton" onClick={() => { setSimulateError(false); run(false); }}><RotateCcw aria-hidden="true" />Retry mock workflow</Button>} /></div>}
           {state === "success" && <ResultPreview brief={submittedBrief} onReset={() => reset()} />}
         </div>
       </section>
+      </div>
     </div>
   );
 }
