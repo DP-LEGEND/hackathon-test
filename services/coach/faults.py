@@ -36,7 +36,7 @@ from physics.skeleton import L_SH, R_SH, to_array
 from pipeline.features import swing_features
 
 from coach.measure_extra import (
-    STROKES, stance_joints_filled, stance_open_deg, stroke_side, wrist_index_filled, wrist_uncock,
+    STROKES, stance_joints_filled, stroke_side, swing_hand, wrist_index_filled, wrist_uncock,
 )
 
 Stroke = Literal["forehand", "backhand"]
@@ -68,8 +68,12 @@ THRESHOLDS: dict[str, dict[str, dict[str, Any]]] = {
                          "severe_at": 175.0, "target": 140.0, "source": GUESS},
         # Labelled clips: feet spacing roughly halves with an open stance. Width is in
         # shoulder widths; the normal 1.7 comes from the one real clip (sample backhand).
+        # The close_stance ghost edits the stance ANGLE (physics), not feet spacing, so its
+        # amount is the angle's excess over 25 deg; the angle falls as the stance closes.
         "stance_too_open": {"measurement": "stance_width_ratio", "threshold": 1.275,
-                            "severe_at": 0.85, "target": 1.7, "source": LABELLED},
+                            "severe_at": 0.85, "target": 1.7, "source": LABELLED,
+                            "amount_from": {"measurement": "stance_open_deg", "target": 25.0,
+                                            "fix_lowers": True}},
         "rolling_wrist": {"measurement": "forearm_roll_deg", "threshold": 30.0,
                           "severe_at": 60.0, "target": 0.0, "source": GUESS},
     },
@@ -122,7 +126,8 @@ MEASUREMENTS: dict[str, dict[str, Any]] = {
 # rotation, wrist (the coaching order in agent.py).
 FAULTS: dict[str, dict[str, Any]] = {
     "stance_too_open": {"title": "Stance too open", "fix": "close_stance", "priority": 0,
-                        "cue": "Step across so you stand side-on to the front wall."},
+                        "cue": "Your open stance lets your hips fly open early. Close it so you can hold the turn.",
+                        "tip": "A compact, closed stance is more deceptive: your opponent can't read the direction early."},
     "straight_arm": {"title": "Straight arm, no elbow lead", "fix": "bend_elbow", "priority": 1,
                      "cue": "Lead with a bent elbow, then extend through the ball."},
     "under_rotation": {"title": "Under-rotation", "fix": "turn_shoulders_more", "priority": 2,
@@ -155,6 +160,7 @@ class Fault(TypedDict):
     fix_unit: str
     ghost_ready: bool
     cue: str
+    tip: Optional[str]  # an optional second coaching point, e.g. why the fix matters
 
 
 def _finite(x: Any) -> bool:
@@ -184,8 +190,9 @@ def fix_amount(fix: str, value: float, rule: dict[str, Any], metrics: dict[str, 
     if not _finite(measured):
         return None, unit
     # A "too high" fault (severe_at above threshold) is fixed by lowering, and vice versa.
-    too_high = rule["severe_at"] > rule["threshold"]
-    amount = max(0.0, (measured - src["target"]) if too_high else (src["target"] - measured))
+    # amount_from can say otherwise ("fix_lowers") when its measurement runs the other way.
+    lowers = src.get("fix_lowers", rule["severe_at"] > rule["threshold"])
+    amount = max(0.0, (measured - src["target"]) if lowers else (src["target"] - measured))
     if fix in FIXES:
         amount = min(amount, EDITS[FIXES[fix][0]]["max_abs"])
     return round(amount, 2 if unit == "shoulder widths" else 1), unit
@@ -215,7 +222,10 @@ def _shoulder_width_m(P: np.ndarray, contact: int) -> float:
 
 def measure_swing(swing: dict, stroke: Optional[Stroke] = None, fps_real: Optional[float] = None) -> dict[str, Any]:
     """All numbers the fault rules use, plus which stroke and where it came from."""
-    m = measure(swing, fps_real)
+    # The pipeline records the hitting hand; guessing from wrist speed is the fallback.
+    recorded = swing_hand(swing)
+    m = measure(swing, fps_real, recorded)
+    m["hand_source"] = "metadata" if recorded else "detected"
     given = stroke or swing.get("stroke")
     if given is not None and given not in STROKES:
         raise ValueError(f"stroke must be one of {STROKES}, got {given!r}")
@@ -223,7 +233,8 @@ def measure_swing(swing: dict, stroke: Optional[Stroke] = None, fps_real: Option
     m["stroke"] = given or detected
     m["stroke_source"] = "given" if given else "detected"  # detected = low confidence
     m["wrist_side_offset"] = side_offset
-    m["stance_open_deg"] = stance_open_deg(swing, m["hand"])
+    # stance_open_deg comes from physics measure() (the same angle the close_stance
+    # ghost edits), so the ghost's stance amount matches what the edit changes.
 
     P = to_array(swing)
     feats = swing_features(P[:, :33], m["contact_frame"], real_fps(swing, fps_real), m["hand"])
@@ -267,6 +278,8 @@ def detect_faults(swing: dict, stroke: Optional[Stroke] = None, fps_real: Option
     m = metrics if metrics is not None else measure_swing(swing, stroke, fps_real)
     found: list[Fault] = []
     for fault_id, rule in THRESHOLDS[m["stroke"]].items():
+        if rule.get("disabled"):
+            continue  # switched off: its measurement can't tell good from faulty swings
         spec = FAULTS[fault_id]
         meas = MEASUREMENTS[rule["measurement"]]
         value = m.get(rule["measurement"])
@@ -292,6 +305,7 @@ def detect_faults(swing: dict, stroke: Optional[Stroke] = None, fps_real: Option
             fix_unit=amount_unit,
             ghost_ready=ghost_ready(spec["fix"], amount, amount_unit, m),
             cue=spec["cue"],
+            tip=spec.get("tip"),
         ))
     found.sort(key=lambda f: (-f["severity"], FAULTS[f["id"]]["priority"]))
     return found
@@ -300,4 +314,10 @@ def detect_faults(swing: dict, stroke: Optional[Stroke] = None, fps_real: Option
 def unmeasured_faults(metrics: dict[str, Any]) -> list[str]:
     """Fault ids we couldn't check on this stroke because their measurement is missing."""
     rules = THRESHOLDS[metrics["stroke"]]
-    return [fid for fid, rule in rules.items() if not _finite(metrics.get(rule["measurement"]))]
+    return [fid for fid, rule in rules.items()
+            if not rule.get("disabled") and not _finite(metrics.get(rule["measurement"]))]
+
+
+def disabled_faults(stroke: Stroke) -> dict[str, str]:
+    """Fault ids switched off for this stroke, with why (set "disabled": "<reason>" in THRESHOLDS)."""
+    return {fid: rule["disabled"] for fid, rule in THRESHOLDS[stroke].items() if rule.get("disabled")}

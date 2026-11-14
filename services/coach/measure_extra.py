@@ -147,10 +147,27 @@ def wrist_side_offset(P: np.ndarray, hand: str, contact: int, up: np.ndarray) ->
     return float(np.median(offsets)) if offsets else float("nan")
 
 
+def swing_hand(swing: dict) -> str | None:
+    """The hitting hand the pipeline recorded (metadata.hand, "R" or "L"), or None.
+
+    Prefer this to guessing: hitting_hand() picks the faster wrist, which can be the
+    wrong one on a two-handed preparation or a noisy clip.
+    """
+    hand = (swing.get("metadata") or {}).get("hand")
+    return hand if hand in ("R", "L") else None
+
+
+def resolve_hand(swing: dict, hand: str | None = None, P: np.ndarray | None = None) -> str:
+    """Explicit hand, else metadata.hand, else the faster wrist (a guess)."""
+    if hand in ("R", "L"):
+        return hand
+    return swing_hand(swing) or hitting_hand(to_array(swing) if P is None else P)
+
+
 def stroke_side(swing: dict, hand: str | None = None) -> tuple[str, float]:
     """("forehand" | "backhand", wrist side offset). Defaults to forehand if unmeasurable."""
     P = to_array(swing)
-    hand = hand or hitting_hand(P)
+    hand = resolve_hand(swing, hand, P)
     c = contact_frame(swing, P, hand)
     offset = wrist_side_offset(P, hand, c, up_vector(P))
     stroke = "backhand" if np.isfinite(offset) and offset < 0 else "forehand"
@@ -164,7 +181,7 @@ def stance_open_deg(swing: dict, hand: str | None = None) -> float:
     else the hitting wrist's velocity, both flattened onto the floor.
     """
     P = to_array(swing)
-    hand = hand or hitting_hand(P)
+    hand = resolve_hand(swing, hand, P)
     c = contact_frame(swing, P, hand)
     up = up_vector(P)
     tip = P[:, RACKET_TIP]

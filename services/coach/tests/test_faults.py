@@ -50,7 +50,8 @@ def expected_amount(fault_id: str, stroke: str, m: dict) -> float:
     rule = THRESHOLDS[stroke][fault_id]
     src = rule.get("amount_from") or rule
     gap = m[src["measurement"]] - src["target"]
-    amount = max(0.0, gap if rule["severe_at"] > rule["threshold"] else -gap)  # faulty side only
+    lowers = src.get("fix_lowers", rule["severe_at"] > rule["threshold"])
+    amount = max(0.0, gap if lowers else -gap)  # faulty side only
     fix = FAULTS[fault_id]["fix"]
     return min(amount, EDITS[FIXES[fix][0]]["max_abs"]) if fix in FIXES else amount
 
@@ -89,12 +90,21 @@ def test_labelled_values_from_real_data() -> None:
 
 
 @pytest.mark.parametrize("fault_id", sorted(FAULTS))
-def test_each_fault_has_fix_and_one_line_cue(fault_id: str) -> None:
+def test_each_fault_has_fix_and_short_cue(fault_id: str) -> None:
     spec = FAULTS[fault_id]
     assert spec["fix"] and spec["title"]
-    cue = spec["cue"].strip()
-    assert cue.endswith(".") and cue.count(".") == 1, "one sentence"
-    assert not any(ch.isdigit() for ch in cue), "cues quote no numbers"
+    for text, max_sentences in ((spec["cue"], 2), (spec.get("tip"), 1)):
+        if text is None:
+            continue
+        text = text.strip()
+        assert text.endswith(".") and 1 <= text.count(".") <= max_sentences
+        assert not any(ch.isdigit() for ch in text), "cues and tips quote no numbers"
+
+
+def test_stance_cue_and_tip_wording() -> None:
+    spec = FAULTS["stance_too_open"]
+    assert spec["cue"] == "Your open stance lets your hips fly open early. Close it so you can hold the turn."
+    assert spec["tip"] == "A compact, closed stance is more deceptive: your opponent can't read the direction early."
 
 
 def test_fix_names_match_physics_and_aryans_planned_fixes() -> None:
@@ -248,7 +258,8 @@ def test_ghost_never_moves_past_the_target(stroke: str, fault_id: str) -> None:
     m = neutral_metrics(stroke)
     m[rule["measurement"]] = rule["severe_at"]  # the fault fires
     if "amount_from" in rule:
-        good_side = -1.0 if rule["severe_at"] > rule["threshold"] else 1.0
+        lowers = src.get("fix_lowers", rule["severe_at"] > rule["threshold"])
+        good_side = -1.0 if lowers else 1.0
         m[src["measurement"]] = src["target"] + good_side * 5.0
         f = _fault(m, fault_id)
         assert f["fix_amount"] == 0.0 and f["ghost_ready"] is False
@@ -550,3 +561,109 @@ def test_early_wrist_snap_only_for_a_release_before_contact(
 def test_directional_release_matches_physics_on_a_clean_swing(sample: dict) -> None:
     m = measure_swing(sample, "backhand")
     assert m["wrist_uncock_ms"] == pytest.approx(m["wrist_release_ms"])  # 56.1 ms: a real opening
+
+
+# ---- Hitting hand comes from metadata.hand when the pipeline recorded it ------------
+
+@pytest.mark.parametrize("hand", ["R", "L"])
+def test_metadata_hand_is_used_instead_of_guessing(sample: dict, hand: str) -> None:
+    m = measure_swing(_with(sample, metadata={"hand": hand}), "backhand")
+    assert m["hand"] == hand and m["hand_source"] == "metadata"
+
+
+@pytest.mark.parametrize("metadata", [None, {}, {"hand": "X"}, {"hand": None}])
+def test_hand_is_guessed_only_without_valid_metadata(sample: dict, metadata) -> None:
+    swing = dict(sample) if metadata is None else _with(sample, metadata=metadata)
+    m = measure_swing(swing, "backhand")
+    assert m["hand"] == "R" and m["hand_source"] == "detected"  # the sample's faster wrist
+
+
+def test_stroke_side_and_stance_use_the_recorded_hand(sample: dict) -> None:
+    from coach.measure_extra import resolve_hand, stance_open_deg, stroke_side
+
+    lefty = _with(sample, metadata={"hand": "L"})
+    assert resolve_hand(lefty) == "L" and resolve_hand(lefty, "R") == "R"  # explicit still wins
+    assert stroke_side(lefty) == stroke_side(sample, "L")
+    assert stance_open_deg(lefty) == stance_open_deg(sample, "L")
+
+
+# ---- Forehand stance ghost and pairing with turn_shoulders_less --------------------
+
+def test_forehand_stance_ghost_amount_is_in_stance_degrees() -> None:
+    m = neutral_metrics("forehand")
+    m["stance_width_ratio"] = 0.85  # fault measured on feet spacing...
+    m["stance_open_deg"] = 70.0  # ...ghost amount from the angle close_stance edits
+    f = _fault(m, "stance_too_open")
+    assert f["fix"] == "close_stance" and f["fix_unit"] == "deg"
+    assert f["fix_amount"] == pytest.approx(45.0)  # 70 - 25
+    assert f["ghost_ready"] is ("close_stance" in FIXES)
+    assert f["tip"] == FAULTS["stance_too_open"]["tip"]
+
+    m["stance_open_deg"] = 20.0  # already closed by angle: nothing to animate
+    f = _fault(m, "stance_too_open")
+    assert f["fix_amount"] == 0.0 and f["ghost_ready"] is False
+
+
+def _coach_on(monkeypatch: pytest.MonkeyPatch, sample: dict, m: dict) -> dict:
+    m.setdefault("stroke_source", "given")
+    monkeypatch.setattr("coach.agent.measure_swing", lambda swing, stroke, fps_real: m)
+    return coach_swing(sample, stroke=m["stroke"])
+
+
+def test_close_stance_pairs_with_turn_shoulders_less(monkeypatch: pytest.MonkeyPatch, sample: dict) -> None:
+    monkeypatch.setitem(FIXES, "close_stance", ("stance_open", -1.0))
+    monkeypatch.setitem(FIXES, "turn_shoulders_less", ("shoulder_turn", -1.0))
+    m = neutral_metrics("forehand")
+    m.update(stance_width_ratio=0.85, stance_open_deg=70.0,  # open stance
+             hip_turn_range_deg=110.0, shoulder_turn_deg=100.0)  # over-rotation
+    result = _coach_on(monkeypatch, sample, m)
+    assert result["fault"]["id"] == "stance_too_open" and result["ghost_fix"] == "close_stance"
+    assert result["ghost_fixes"] == [{"fix": "close_stance", "amount": 45.0},
+                                     {"fix": "turn_shoulders_less", "amount": 15.0}]
+    assert result["ghost_edits"] == {"stance_open": -45.0, "shoulder_turn": -15.0}
+    assert result["tip"] == FAULTS["stance_too_open"]["tip"]
+    json.dumps(result, allow_nan=False)
+
+
+def test_no_pair_when_partner_cannot_be_animated(monkeypatch: pytest.MonkeyPatch, sample: dict) -> None:
+    monkeypatch.setitem(FIXES, "close_stance", ("stance_open", -1.0))
+    m = neutral_metrics("forehand")
+    m.update(stance_width_ratio=0.85, stance_open_deg=70.0,
+             hip_turn_range_deg=110.0, shoulder_turn_deg=80.0)  # hips over-rotate, shoulders don't
+    result = _coach_on(monkeypatch, sample, m)
+    assert "over_rotation" in result["other_faults"]
+    assert result["ghost_fixes"] == [{"fix": "close_stance", "amount": 45.0}]
+    assert result["ghost_edits"] == {"stance_open": -45.0}
+
+
+def test_paired_edits_run_in_physics_on_the_real_sample(sample: dict) -> None:
+    from physics.ghost import edit_swing
+
+    ghost = edit_swing(sample, {"stance_open": -45.0, "shoulder_turn": -15.0})
+    assert ghost["synthetic"] is True
+    assert [e["id"] for e in ghost["edits"]] == ["stance_open", "shoulder_turn"]
+    assert measure(ghost)["stance_open_deg"] < measure(sample)["stance_open_deg"]
+
+
+def test_single_ghost_has_one_fix_and_matching_edits(sample: dict) -> None:
+    result = coach_swing(sample, stroke="backhand")
+    assert len(result["ghost_fixes"]) == 1
+    assert result["ghost_fixes"][0] == {"fix": result["ghost_fix"], "amount": result["ghost_fix_amount"]}
+    edit, sign = FIXES[result["ghost_fix"]]
+    assert result["ghost_edits"] == {edit: sign * result["ghost_fix_amount"]}
+
+
+# ---- A rule can be switched off when it can't separate good from faulty swings -----
+
+def test_disabled_rule_never_fires(monkeypatch: pytest.MonkeyPatch, sample: dict) -> None:
+    from coach.faults import disabled_faults
+
+    rule = THRESHOLDS["forehand"]["early_wrist_snap"]
+    monkeypatch.setitem(rule, "disabled", "good and early-wrist blocks overlap")
+    m = neutral_metrics("forehand")
+    m[rule["measurement"]] = rule["severe_at"]
+    assert detect_faults({}, metrics=m) == []
+    assert "early_wrist_snap" not in unmeasured_faults(m)
+    assert disabled_faults("forehand") == {"early_wrist_snap": "good and early-wrist blocks overlap"}
+    assert coach_swing(sample, stroke="forehand")["disabled_faults"] == disabled_faults("forehand")
+    assert disabled_faults("backhand") == {}
