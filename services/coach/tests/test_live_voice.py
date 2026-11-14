@@ -285,3 +285,69 @@ def test_route_with_keys_returns_claudes_cue_and_audio_once(env, api) -> None:
 
 def test_route_unknown_swing_is_404(env, api) -> None:
     assert api.get("/coach/nope/voice").status_code == 404
+
+
+# ---- Review fix on #60: numbers must match the coach's EXACTLY as written ---------------
+# Same sign, same digits, same unit. Spellings of one unit are equal (degrees, deg, °).
+
+STANCE_FACTS = {"measured": "Stance too open: stance 80 degrees open to the shot",
+                "coach_cue": "Close it so you can hold the turn."}
+RELEASE_FACTS = {"measured": "Early wrist snap: wrist releases -20 milliseconds before contact",
+                 "coach_cue": "Keep your wrist cocked until the racket meets the ball."}
+
+
+@pytest.mark.parametrize("facts, cue", [
+    (STANCE_FACTS, "Your stance is -80 degrees open, so close it and hold the turn."),
+    (STANCE_FACTS, "Your stance is minus 80 degrees open, so close it and hold the turn."),
+    (STANCE_FACTS, "Your stance is −80 degrees open, so close it and hold the turn."),  # the minus sign
+    (RELEASE_FACTS, "You release 20 milliseconds before contact, so hold the cock longer."),  # sign dropped
+])
+def test_a_sign_flip_falls_back(facts: dict, cue: str) -> None:
+    with pytest.raises(CoachError, match="as written"):
+        check_worded_cue(cue, facts)
+
+
+@pytest.mark.parametrize("cue", [
+    "Your stance is 80 percent open, so close it and hold the turn.",
+    "Your stance is 80% open, so close it and hold the turn.",
+    "Wait 80 milliseconds longer, then close your stance.",
+    "Your stance is 80 open, so close it and hold the turn.",  # unit dropped
+    "Your stance is 80.0 degrees open, so close it.",  # digits not as written
+    "Your stance is 8e1 degrees open, so close it.",
+])
+def test_a_unit_change_or_reformatted_number_falls_back(cue: str) -> None:
+    with pytest.raises(CoachError, match="as written"):
+        check_worded_cue(cue, STANCE_FACTS)
+
+
+@pytest.mark.parametrize("cue", [
+    "Your stance is 80 degrees open, so close it and hold the turn.",
+    "Your stance is 80 deg open, so close it and hold the turn.",
+    "Your stance is 80° open, so close it and hold the turn.",
+    "An 80-degree open stance lets the hips fly, so close it.",
+])
+def test_the_same_number_and_unit_in_another_spelling_passes(cue: str) -> None:
+    assert check_worded_cue(cue, STANCE_FACTS) == cue
+
+
+def test_a_negative_measurement_quoted_with_its_sign_passes() -> None:
+    for cue in ("You release -20 milliseconds before contact, so hold the cock.",
+                "You release minus 20 ms before contact, so hold the cock."):
+        assert check_worded_cue(cue, RELEASE_FACTS) == cue
+
+
+def test_spelled_out_numbers_with_a_unit_fall_back() -> None:
+    for cue in ("Your stance is eighty degrees open, so close it.", "Close your stance one degree more."):
+        with pytest.raises(CoachError, match="spelled out"):
+            check_worded_cue(cue, STANCE_FACTS)
+    assert check_worded_cue("Hold one stance and close it before you swing.", STANCE_FACTS)  # "one" alone is fine
+
+
+@pytest.mark.parametrize("cue", [
+    "Your stance is -80 degrees open, so close it and hold the turn.",
+    "Your stance is 80 percent open, so close it and hold the turn.",
+])
+def test_the_live_voice_uses_the_caption_after_a_sign_or_unit_change(env, result: dict, cue: str) -> None:
+    env.keys("ANTHROPIC_API_KEY")
+    env.claude.cue = cue
+    assert voice_for_swing("sample", result) == {"cue": result["cue"], "audioUrl": None, "source": "caption"}

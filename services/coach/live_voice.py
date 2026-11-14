@@ -43,7 +43,7 @@ from pydantic import BaseModel, Field
 from coach import voice
 from coach.agent import NO_FAULT_CUE
 from coach.avatar import _spoken
-from coach.cue import MODEL, CoachError, _is_measured, _numbers_in
+from coach.cue import MODEL, CoachError
 from coach.env import load_env, require_env
 
 log = logging.getLogger(__name__)
@@ -91,10 +91,54 @@ def coach_facts(result: dict[str, Any]) -> Optional[dict[str, str]]:
     return facts
 
 
+# Unit spellings that mean the same unit; anything else after a number means no unit.
+UNIT_ALIASES: dict[str, str] = {
+    "°": "deg", "deg": "deg", "degs": "deg", "degree": "deg", "degrees": "deg",
+    "%": "%", "percent": "%", "per cent": "%",
+    "ms": "ms", "millisecond": "ms", "milliseconds": "ms",
+    "s": "s", "sec": "s", "secs": "s", "second": "s", "seconds": "s",
+    "cm": "cm", "centimetre": "cm", "centimetres": "cm", "centimeter": "cm", "centimeters": "cm",
+    "m": "m", "metre": "m", "metres": "m", "meter": "m", "meters": "m",
+    "shoulder width": "shoulder widths", "shoulder widths": "shoulder widths",
+}
+_UNIT = "|".join(sorted(map(re.escape, UNIT_ALIASES), key=len, reverse=True))
+# A number as written: an optional sign (-, the minus sign, "minus", "negative"), the digits
+# (decimals and exponents kept as written), then an optional unit right after it ("80
+# degrees", "80-degree", "80°", "15%"). A hyphen after a letter or digit ("70-80") isn't a sign.
+_QUOTED = re.compile(
+    r"(?<![\w.])(?P<sign>[-\u2212]|(?:minus|negative)\s+)?"
+    r"(?P<num>(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?)"
+    rf"(?:(?:\s*|-)(?P<unit>{_UNIT})(?!\w))?",
+    re.IGNORECASE,
+)
+# Spelled-out numbers can't be matched to the coach's digits, so with a unit they never pass
+# ("eighty degrees", "twenty-five percent"). Only number words may sit between them.
+_NUMBER_WORD = (r"(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|"
+                r"fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|"
+                r"sixty|seventy|eighty|ninety|hundred|thousand)")
+_SPELLED = re.compile(
+    rf"\b(?:minus\s+|negative\s+)?{_NUMBER_WORD}(?:[\s-]+(?:and\s+|point\s+)?{_NUMBER_WORD})*"
+    rf"[\s-]+(?:{_UNIT})(?!\w)",
+    re.IGNORECASE,
+)
+
+
+def quoted_numbers(text: str) -> list[tuple[str, str, Optional[str]]]:
+    """Every number in `text` as (sign, digits as written, unit or None), e.g. ("-", "80", "deg")."""
+    out = []
+    for m in _QUOTED.finditer(text):
+        unit = m.group("unit")
+        out.append(("-" if m.group("sign") else "", m.group("num"),
+                    UNIT_ALIASES[unit.lower()] if unit else None))
+    return out
+
+
 def check_worded_cue(cue: str, facts: dict[str, str]) -> str:
     """The cleaned cue if it's one short sentence quoting only numbers in the facts.
 
-    Raises CoachError otherwise (the caller then uses the plain caption).
+    Every number must match one in the coach facts EXACTLY: same sign, same digits as
+    written and same unit (80 degrees is fine; -80 degrees, 80.0 degrees, 80 percent or
+    a bare 80 aren't). Raises CoachError otherwise (the caller then uses the plain caption).
     """
     cue = " ".join(cue.split())
     if not cue:
@@ -103,10 +147,14 @@ def check_worded_cue(cue: str, facts: dict[str, str]) -> str:
         raise CoachError(f"Cue must be one sentence: {cue!r}")
     if len(cue.split()) > MAX_SPOKEN_WORDS:
         raise CoachError(f"Cue has more than {MAX_SPOKEN_WORDS} words: {cue!r}")
-    allowed = [abs(float(n)) for text in facts.values() for n in _numbers_in(text)]
-    invented = [n for n in _numbers_in(cue) if not _is_measured(n, allowed)]
+    allowed = {n for text in facts.values() for n in quoted_numbers(text)}
+    invented = [n for n in quoted_numbers(cue) if n not in allowed]
     if invented:
-        raise CoachError(f"Cue used numbers the coach didn't measure: {invented}")
+        shown = [f"{sign}{num}{' ' + unit if unit else ''}" for sign, num, unit in invented]
+        raise CoachError(f"Cue used numbers the coach didn't measure as written: {shown}")
+    spelled = _SPELLED.search(cue)
+    if spelled:
+        raise CoachError(f"Cue spelled out a measured number: {spelled.group(0)!r}")
     return cue
 
 
