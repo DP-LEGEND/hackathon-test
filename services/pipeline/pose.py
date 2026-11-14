@@ -124,8 +124,20 @@ def to_swing(raw: dict, f0: int = 0, f1: int | None = None, smooth_win: int = 3,
 
     contact_frame is relative to the selected window. Without a measured contact,
     the fastest right-wrist frame is an explicitly approximate contact proxy.
+    Each frame includes 33 boolean filled flags, preserving upstream provenance
+    and marking missing input joints reconstructed by smoothing.
     """
-    world = smooth(raw["world"][f0:f1], smooth_win)
+    original = np.asarray(raw["world"])
+    if original.ndim != 3 or original.shape[1:] != (33, 3):
+        raise ValueError("A swing needs at least two frames of 33 joints")
+    filled = ~np.isfinite(original).all(axis=2)
+    if "filled" in raw:
+        provided = np.asarray(raw["filled"])
+        if provided.shape != original.shape[:2] or provided.dtype != np.bool_:
+            raise ValueError("filled must be a boolean array of shape (frames, 33)")
+        filled |= provided
+    filled = filled[f0:f1]
+    world = smooth(original[f0:f1], smooth_win)
     t = raw["t"][f0:f1]
     if len(t) < 2 or world.shape != (len(t), 33, 3):
         raise ValueError("A swing needs at least two frames of 33 joints")
@@ -137,8 +149,8 @@ def to_swing(raw: dict, f0: int = 0, f1: int | None = None, smooth_win: int = 3,
     if not 0 <= contact_frame < len(t):
         raise ValueError("Contact frame is outside the swing")
     frames = [
-        {"t": float(ti - t[0]), "joints": wj.round(6).tolist()}
-        for ti, wj in zip(t, world)
+        {"t": float(ti - t[0]), "joints": wj.round(6).tolist(), "filled": mask.tolist()}
+        for ti, wj, mask in zip(t, world, filled)
     ]
     return {"id": swing_id, "fps": float(raw["fps"]),
             "contactFrame": int(contact_frame), "frames": frames}

@@ -72,6 +72,11 @@ def check(swing) -> tuple[list[str], list[str]]:
         if bad:
             errors.append(f"frame {i}: joints {bad[:5]} are not [x, y, z] finite numbers (no NaN, no null)")
             break
+        if "filled" in f:
+            filled = f["filled"]
+            if (not isinstance(filled, list) or len(filled) != N_JOINTS
+                    or not all(isinstance(value, bool) for value in filled)):
+                errors.append(f'frame {i}: "filled" must have {N_JOINTS} boolean flags')
         for key in ("racketTip", "racketThroat"):
             if f.get(key) is not None and not _is_vec3(f[key]):
                 errors.append(f'frame {i}: "{key}" must be [x, y, z] or null')

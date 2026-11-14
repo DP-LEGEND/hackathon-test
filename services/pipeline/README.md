@@ -158,7 +158,8 @@ accepted swing, **`manifest.json`** listing files and rejected windows, and a
 local **`raw_cache.npz`** pose cache (see below).
 Load an individual swing file into the web replay, not the manifest or a wrapper.
 Required fields match `lib/ghost/types.ts`; `source`, `fpsReal`, `side` and
-`metadata` are additive.
+`metadata` are additive. New frames also include optional `filled` provenance
+(see below and `docs/interfaces.md`); legacy files without it remain valid.
 Shared TypeScript contracts and the frontend are unchanged.
 
 ```json
@@ -170,16 +171,33 @@ Shared TypeScript contracts and the frontend are unchanged.
   "contactFrame": 54,
   "side": "forehand",
   "frames": [
-    {"t": 0.0, "joints": [[0.1, 0.2, 0.3]]}
+    {"t": 0.0, "joints": [[0.1, 0.2, 0.3]], "filled": [false]}
   ]
 }
 ```
 
-The example abbreviates `frames` and `joints`: real output has at least two
+The example abbreviates `frames`, `joints` and `filled`: real output has at least two
 frames and **33 finite `[x,y,z]` joints per frame in MediaPipe order**, metres,
 +y up, hips centred separately in each frame. Time starts at zero for each swing;
 `contactFrame` is a zero-based index **inside that swing**. Metadata retains the
 source start and contact frame indices for comparison with the source video.
+
+## Filled joint flags
+
+Every newly serialized frame includes `filled`: 33 booleans parallel to `joints`.
+True means that joint used temporal interpolation, bounded gap filling, or a
+parent copy. Partial-coordinate repairs mark the whole joint. Stereo joints that
+use camera B interpolated between recorded timestamps are also marked. Fallback
+to mono uses the original camera-A observation mask. Flags are recorded before
+cleaning, so smoothing cannot hide a gap; copying optional children marks each
+copied joint at exactly the affected frames.
+
+Observed joints remain false after ordinary smoothing, bone-length constraints
+or coordinate transforms. Flags describe reconstruction rather than confidence,
+3D accuracy or ghost edits. Old frames may omit `filled`; absence means unknown
+provenance. `scripts/check_swing.py` accepts old files and checks that present
+flags contain exactly 33 booleans. Shared frontend types remain unchanged; the
+additive wire field is documented in `docs/interfaces.md`.
 
 ## Measurement limits and quality
 
@@ -319,11 +337,15 @@ Audio transients are candidate hits, not a semantic classifier of ball sounds.
 ## Swing and coach API
 
 With the services Python environment active, start the API from the repository
-root with one command (same command on Windows and Mac):
+root with one command (same command on Windows and Mac; no clips/model needed
+to start the server or check health):
 
 ```sh
 python -m uvicorn pipeline.server:app --app-dir services --port 8000
 ```
+
+`GET http://localhost:8000/health` returns `{"ok":true}` independently of the
+swing catalogue, label CSV, clips, and model weights.
 
 Set `GHOST_SWINGS_DIR` to an absolute processed-session folder or its parent.
 The default processed directory is resolved relative to this source file.
@@ -333,11 +355,14 @@ Missing output lists no swings. Unknown IDs return 404; corrupt catalogue data
 returns 503; invalid measurement inputs return 422.
 
 - `GET /swings` returns `{"swings":[{"id":"...","label":"early_wrist"}]}`.
-  Labels come from `data/labels/labels.csv` (`swing`, `intended_fault` columns).
+  Labels come from `data/labels/labels.csv` (`pipeline_run`, `swing`,
+  `intended_fault` columns). The join always uses run folder + swing file stem.
   `none` maps to `good`; accepted labels are good, early_wrist, over_rotation,
   straight_arm, open_stance and rolled_wrist. Missing/unlabelled rows return null.
-  A matching `<id>@<run-folder>` row takes precedence over an unsuffixed row.
-  Override the CSV location with `GHOST_LABELS_CSV`. Bad columns or duplicate IDs
+  A legacy `<id>@<run-folder>` value can supply the run; if `pipeline_run` is
+  also present they must agree. Unscoped rows are ignored, never applied to an
+  arbitrary run. Override the CSV location with `GHOST_LABELS_CSV`. Bad columns,
+  conflicting run declarations, or duplicate (run, swing) pairs
   return 503. Labels describe the intended filming block, not measured faults.
 - `GET /swings/{id}` returns the saved skeleton JSON.
 - `POST /coach/{id}` runs deterministic `coach_swing` (which calls `detect_faults`).

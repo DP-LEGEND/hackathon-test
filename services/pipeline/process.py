@@ -139,14 +139,24 @@ def swings_from_raw(a: dict, b: dict | None = None, options: Options = Options()
     # Keep finite mono joints above .1 visibility; expose confidence in metadata.
     observed = np.isfinite(a["img"][:, :, :2]).all(axis=2) & (a["vis"] > .1)
     mono[~observed] = np.nan
+    mono_filled = ~np.isfinite(mono).all(axis=2)
     mono = clean_sections(mono)
     cal, calibration_error = None, None
     stereo = np.full_like(mono, np.nan)
+    stereo_filled = np.ones(mono.shape[:2], dtype=bool)
     try:
         if b is None:
             raise ValueError("Single camera: depth is estimated from MediaPipe")
         cal = calibrate(synced_a, synced_b, 1.0, real_offset, f_a=focal_a, f_b=focal_b)
-        stereo = clean_sections(triangulate(synced_a, synced_b, cal, 0, len(a["t"])))
+        reconstructed = triangulate(synced_a, synced_b, cal, 0, len(a["t"]))
+        # A stereo sample between B frames uses a temporally interpolated view.
+        # Use the same fractional-frame exact-match tolerance as sample_b_at_a.
+        target = real_a + real_offset
+        index = np.clip(np.searchsorted(real_b, target, side="right") - 1, 0, len(real_b) - 2)
+        weight = (target - real_b[index]) / (real_b[index + 1] - real_b[index])
+        exact_b = np.isclose(weight, 0, rtol=0, atol=1e-9) | np.isclose(weight, 1, rtol=0, atol=1e-9)
+        stereo_filled = ~np.isfinite(reconstructed).all(axis=2) | ~exact_b[:, None]
+        stereo = clean_sections(reconstructed)
     except (ValueError, cv2.error) as exc:
         # A cropped/unusable second view must not prevent usable iPhone swings.
         cal = None
@@ -243,8 +253,10 @@ def swings_from_raw(a: dict, b: dict | None = None, options: Options = Options()
                 source = "mono"
                 fallback_reason = f"Stereo normalisation failed: {exc}"
                 normalised = normalise(mono[start:end], options.torso_m)
+            joint_filled = (stereo_filled if source == "stereo" else mono_filled)[start:end].copy()
+            joint_filled |= ~np.isfinite(normalised).all(axis=2)
             world, filled = complete_optional_joints(normalised)
-            raw = {"world": world, "t": real_a[start:end],
+            raw = {"world": world, "filled": joint_filled, "t": real_a[start:end],
                    "fps": fps_real}
             swing = to_swing(raw, smooth_win=1, swing_id=f"swing-{number:04d}", contact_frame=contact)
         except ValueError as exc:
