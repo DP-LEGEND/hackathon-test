@@ -311,9 +311,14 @@ def measure_swing(swing: dict, stroke: Optional[Stroke] = None, fps_real: Option
             m["guessed_joints"].pop("stance_open_deg")
             m["stance_open_deg"] = front
             m["stance_direction"] = "front_wall_axis"
+            m["stance_note"] = FRONT_WALL_STANCE_NOTE
     for key in m["guessed_joints"]:
         m[key] = None
     return m
+
+
+FRONT_WALL_STANCE_NOTE = ("Stance measured from the feet against the camera's forward direction "
+                          "(assumes the phone filmed from behind); not used as a fault.")
 
 
 def detect_faults(swing: dict, stroke: Optional[Stroke] = None, fps_real: Optional[float] = None,
@@ -327,6 +332,9 @@ def detect_faults(swing: dict, stroke: Optional[Stroke] = None, fps_real: Option
     for fault_id, rule in THRESHOLDS[m["stroke"]].items():
         if rule.get("disabled"):
             continue  # switched off: its measurement can't tell good from faulty swings
+        if (rule["measurement"] == "stance_open_deg"
+                and m.get("stance_direction") == "front_wall_axis"):
+            continue  # feet vs the camera's forward axis: reported, never a fault
         spec = FAULTS[fault_id]
         meas = MEASUREMENTS[rule["measurement"]]
         value = m.get(rule["measurement"])
