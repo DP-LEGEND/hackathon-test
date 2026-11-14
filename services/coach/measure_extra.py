@@ -16,7 +16,11 @@ from __future__ import annotations
 
 import numpy as np
 
-from physics.metrics import contact_frame, shoulder_coil, shoulder_yaw
+# _smooth, WRIST_SMOOTH_MS and RELEASE_WINDOW_MS: the exact smoothing and window physics
+# uses for wrist_release_ms, so the directional timing below matches it on clean swings.
+from physics.metrics import (
+    RELEASE_WINDOW_MS, WRIST_SMOOTH_MS, _smooth, contact_frame, shoulder_coil, shoulder_yaw, wrist_angle,
+)
 from physics.skeleton import (
     ARM, L_ANKLE, L_KNEE, L_SH, R_ANKLE, R_KNEE, R_SH, RACKET_TIP, hitting_hand, to_array, up_vector,
 )
@@ -52,6 +56,44 @@ def stance_joints_filled(swing: dict, contact: int) -> dict[int, str]:
         elif np.isfinite(k).all() and np.array_equal(a, k):
             out[ankle] = "copied from knee at contact"
     return out
+
+
+def wrist_uncock(swing: dict, hand: str, contact: int, fps: float) -> tuple[float, float | None]:
+    """(uncock_deg, uncock_ms): how the wrist RELEASES before contact, with direction.
+
+    The wrist angle is elbow-wrist-index: smaller = more cocked, 180 = racket in line,
+    so uncocking (releasing) makes it grow. Cocking, or holding the cock, never counts.
+    - uncock_deg: how far the angle has opened by contact from its most-cocked point
+      before contact (>= 0). A held or still-increasing cock gives ~0. Never more than
+      the max - min range of the same curve; on a real release it is close to the
+      range pipeline.features reports (which smooths slightly differently).
+    - uncock_ms: ms before contact of the fastest OPENING of the angle, in the same
+      window and smoothing as physics wrist_release_ms (negative = after contact).
+      None if the angle never opens there.
+    """
+    P = to_array(swing)
+    win = max(1, int(round(WRIST_SMOOTH_MS * fps / 1000)) | 1)
+    th = _smooth(wrist_angle(P, hand), win)
+    c = int(np.clip(contact, 0, len(th) - 1))
+    before = th[: c + 1]
+    uncock_deg = (float(max(0.0, th[c] - np.nanmin(before)))
+                  if np.isfinite(th[c]) and np.isfinite(before).any() else float("nan"))
+
+    if len(th) < 3:
+        return uncock_deg, None
+    rate = np.gradient(th) * fps  # signed: + = opening (uncocking)
+    lo = max(1, c - int(round(RELEASE_WINDOW_MS[0] * fps / 1000)))
+    hi = min(len(th) - 2, c + int(round(RELEASE_WINDOW_MS[1] * fps / 1000)))
+    window = rate[lo : hi + 1]
+    if hi < lo or not np.isfinite(window).any() or np.nanmax(window) <= 0:
+        return uncock_deg, None
+    k = lo + int(np.nanargmax(window))
+    # Sub-frame peak, as physics does.
+    y0, y1, y2 = rate[k - 1], rate[k], rate[k + 1]
+    den = y0 - 2 * y1 + y2
+    off = 0.5 * (y0 - y2) / den if np.isfinite(den) and abs(den) > 1e-12 else 0.0
+    off = float(np.clip(off, -0.5, 0.5))
+    return uncock_deg, (c - (k + off)) / fps * 1000
 
 
 def wrist_index_filled(swing: dict, hand: str, contact: int) -> str | None:

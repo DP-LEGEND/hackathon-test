@@ -36,7 +36,7 @@ from physics.skeleton import L_SH, R_SH, to_array
 from pipeline.features import swing_features
 
 from coach.measure_extra import (
-    STROKES, stance_joints_filled, stance_open_deg, stroke_side, wrist_index_filled,
+    STROKES, stance_joints_filled, stance_open_deg, stroke_side, wrist_index_filled, wrist_uncock,
 )
 
 Stroke = Literal["forehand", "backhand"]
@@ -49,9 +49,13 @@ GUESS = "guess"
 THRESHOLDS: dict[str, dict[str, dict[str, Any]]] = {
     "forehand": {
         # Labelled clips: wrist angle change before contact, good 30 deg -> early snap 61 deg.
-        "early_wrist_snap": {"measurement": "wrist_angle_change_pre_deg", "threshold": 45.5,
+        # Read on the directional uncock (only the wrist OPENING by contact counts; a
+        # held or growing cock gives ~0). On a real release it matches the unsigned
+        # change the labels were measured on (143.3 vs 142.8 deg on the sample; the
+        # smoothing differs slightly), so the labelled thresholds still apply.
+        "early_wrist_snap": {"measurement": "wrist_uncock_deg", "threshold": 45.5,
                              "severe_at": 61.0, "target": 30.0, "source": LABELLED,
-                             "amount_from": {"measurement": "wrist_release_ms", "target": 10.0}},
+                             "amount_from": {"measurement": "wrist_uncock_ms", "target": 10.0}},
         # Labelled clips: hip turn range, good 65 deg -> over-rotated 110 deg.
         # The ghost's turn_shoulders_less only rotates the upper body, so its amount comes
         # from the shoulders' own excess over 85 deg, never from the hip number.
@@ -70,7 +74,8 @@ THRESHOLDS: dict[str, dict[str, dict[str, Any]]] = {
                           "severe_at": 60.0, "target": 0.0, "source": GUESS},
     },
     "backhand": {
-        "early_wrist_snap": {"measurement": "wrist_release_ms", "threshold": 40.0,
+        # Fastest wrist OPENING before contact; a fast cocking move never counts.
+        "early_wrist_snap": {"measurement": "wrist_uncock_ms", "threshold": 40.0,
                              "severe_at": 100.0, "target": 10.0, "source": GUESS},
         "over_rotation": {"measurement": "shoulder_turn_deg", "threshold": 115.0,
                           "severe_at": 140.0, "target": 100.0, "source": GUESS},
@@ -93,6 +98,10 @@ MEASUREMENTS: dict[str, dict[str, Any]] = {
                          "phrase": "wrist releases {v:.0f} ms before contact"},
     "wrist_angle_change_pre_deg": {"unit": "deg", "confidence": "low",
                                    "phrase": "wrist angle changes {v:.0f} deg before contact"},
+    "wrist_uncock_deg": {"unit": "deg", "confidence": "low",
+                         "phrase": "wrist uncocks {v:.0f} deg before contact"},
+    "wrist_uncock_ms": {"unit": "ms", "confidence": "low",
+                        "phrase": "wrist releases {v:.0f} ms before contact"},
     "shoulder_turn_deg": {"unit": "deg", "confidence": "medium",
                           "phrase": "shoulders turn {v:.0f} deg"},
     "hip_turn_range_deg": {"unit": "deg", "confidence": "medium",
@@ -221,6 +230,8 @@ def measure_swing(swing: dict, stroke: Optional[Stroke] = None, fps_real: Option
     m["wrist_angle_change_pre_deg"] = feats["wrist_angle_change_pre"]
     m["hip_turn_range_deg"] = feats["hip_turn_range"]
     m["elbow_min_before_deg"] = feats["elbow_min_before"]
+    m["wrist_uncock_deg"], m["wrist_uncock_ms"] = wrist_uncock(
+        swing, m["hand"], m["contact_frame"], m["fps_real"])
     shoulder_width = _shoulder_width_m(P, m["contact_frame"])
     m["stance_width_ratio"] = (
         feats["stance_width_m"] / shoulder_width
@@ -238,11 +249,12 @@ def measure_swing(swing: dict, stroke: Optional[Stroke] = None, fps_real: Option
         m["stance_open_deg"] = None
         m["stance_width_ratio"] = None
 
-    # The wrist angle needs the hitting-side index finger. A filled-in index sits on
-    # the wrist and gives a fake 90 deg angle, so the angle change is unmeasured.
+    # Every wrist number needs the hitting-side index finger. A filled-in index sits on
+    # the wrist and gives a fake 90 deg angle, so none of them is a measurement.
     m["wrist_skipped"] = wrist_index_filled(swing, m["hand"], m["contact_frame"])
     if m["wrist_skipped"]:
-        m["wrist_angle_change_pre_deg"] = None
+        for key in ("wrist_angle_change_pre_deg", "wrist_release_ms", "wrist_uncock_deg", "wrist_uncock_ms"):
+            m[key] = None
     return m
 
 

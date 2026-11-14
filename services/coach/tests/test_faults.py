@@ -153,7 +153,7 @@ def test_each_fault_fires_alone_past_its_threshold(stroke: str, fault_id: str) -
 def test_worst_fault_first_and_priority_breaks_ties() -> None:
     m = neutral_metrics("backhand")
     rules = THRESHOLDS["backhand"]
-    m["wrist_release_ms"] = rules["early_wrist_snap"]["severe_at"]  # severity 1, priority 4
+    m["wrist_uncock_ms"] = rules["early_wrist_snap"]["severe_at"]  # severity 1, priority 4
     m["elbow_min_before_deg"] = rules["straight_arm"]["severe_at"]  # severity 1, priority 1
     assert [f["id"] for f in detect_faults({}, metrics=m)] == ["straight_arm", "early_wrist_snap"]
 
@@ -165,7 +165,7 @@ def test_worst_fault_first_and_priority_breaks_ties() -> None:
 @pytest.mark.parametrize("missing", [None, float("nan")])
 def test_unmeasured_values_never_fire(missing) -> None:
     m = neutral_metrics("forehand")
-    m["wrist_angle_change_pre_deg"] = missing
+    m["wrist_uncock_deg"] = missing
     assert detect_faults({}, metrics=m) == []
     assert "early_wrist_snap" in unmeasured_faults(m)
 
@@ -178,8 +178,8 @@ def _fault(m: dict, fault_id: str) -> dict:
 
 def test_wrist_ghost_amount_is_in_ms_even_when_detected_in_degrees() -> None:
     m = neutral_metrics("forehand")
-    m["wrist_angle_change_pre_deg"] = 61.0
-    m["wrist_release_ms"] = 56.0
+    m["wrist_uncock_deg"] = 61.0
+    m["wrist_uncock_ms"] = 56.0
     f = _fault(m, "early_wrist_snap")
     assert f["unit"] == "deg" and f["fix_unit"] == "ms"
     assert f["fix_amount"] == pytest.approx(46.0) and f["ghost_ready"] is True
@@ -230,12 +230,12 @@ def test_late_wrist_release_gets_no_hold_wrist_cock(monkeypatch: pytest.MonkeyPa
     # Codex P2 on #28: hold_wrist_cock always delays the release, so a release that's
     # already at or after the 10 ms target must not be pushed later.
     m = neutral_metrics("forehand")
-    m["wrist_angle_change_pre_deg"] = 61.0  # the angle rule fires
+    m["wrist_uncock_deg"] = 61.0  # the angle rule fires
     for release_ms in (10.0, 0.0, -20.0):
-        m["wrist_release_ms"] = release_ms
+        m["wrist_uncock_ms"] = release_ms
         f = _fault(m, "early_wrist_snap")
         assert f["fix_amount"] == 0.0 and f["ghost_ready"] is False
-    m["wrist_release_ms"] = 56.0
+    m["wrist_uncock_ms"] = 56.0
     assert _fault(m, "early_wrist_snap")["fix_amount"] == pytest.approx(46.0)
 
 
@@ -488,3 +488,65 @@ def test_other_faults_still_fire_when_wrist_is_skipped(sample: dict) -> None:
     swing = _with(sample, metadata={"approximatedJoints": [R_INDEX]})
     skipped = {f["id"] for f in detect_faults(swing, "forehand")}
     assert skipped == clean - {WRIST_FAULT}
+
+
+def test_filled_index_also_drops_release_timing(sample: dict) -> None:
+    swing = _with(sample, metadata={"approximatedJoints": [R_INDEX]})
+    m = measure_swing(swing, "backhand")
+    for key in ("wrist_angle_change_pre_deg", "wrist_release_ms", "wrist_uncock_deg", "wrist_uncock_ms"):
+        assert m[key] is None, key
+    assert WRIST_FAULT not in {f["id"] for f in detect_faults(swing, metrics=m)}  # backhand rule too
+    json.dumps(coach_swing(swing, stroke="backhand"), allow_nan=False)
+
+
+# ---- Early wrist snap needs the wrist to RELEASE (open) before contact ---------------
+
+def _wrist_curve(kind: str, n: int, c: int, fps: float) -> "np.ndarray":
+    """Inside wrist angle per frame (180 = in line, smaller = cocked)."""
+    import numpy as np
+
+    f = np.arange(n, dtype=float)
+    cocked = np.interp(f, [0, c - 60, c - 40], [170, 170, 110])  # cock to 110 deg during prep
+    if kind == "held":  # cock, then hold through contact and after
+        return cocked
+    if kind == "increasing":  # keeps cocking right up to contact, and after
+        return np.interp(f, [0, c, n - 1], [170, 110, 100])
+    if kind == "early_release":  # opens fully ~100 ms before contact
+        start, end = c - round(0.125 * fps), c - round(0.075 * fps)
+        return np.where(f < start, cocked, np.interp(f, [start, end], [110, 170]))
+    if kind == "after_contact":  # holds the cock until contact, opens just after
+        return np.where(f <= c, cocked, np.interp(f, [c, c + round(0.03 * fps)], [110, 170]))
+    raise ValueError(kind)
+
+
+@pytest.mark.parametrize("kind, fires", [
+    ("held", False), ("increasing", False), ("after_contact", False), ("early_release", True),
+])
+@pytest.mark.parametrize("stroke", STROKES)
+def test_early_wrist_snap_only_for_a_release_before_contact(
+    monkeypatch: pytest.MonkeyPatch, kind: str, fires: bool, stroke: str,
+) -> None:
+    import numpy as np
+
+    swing = make_swing()  # 240 fps mock forehand; only the wrist curve is replaced
+    m0 = measure(swing)
+    c, n, fps = m0["contact_frame"], len(swing["frames"]), m0["fps_real"]
+    curve = _wrist_curve(kind, n, c, fps)
+    monkeypatch.setattr("coach.measure_extra.wrist_angle", lambda P, hand: curve.copy())
+
+    m = measure_swing(swing, stroke)
+    got = WRIST_FAULT in {f["id"] for f in detect_faults(swing, metrics=m)}
+    assert got is fires, (kind, m["wrist_uncock_deg"], m["wrist_uncock_ms"])
+    if kind in ("held", "increasing"):
+        # The old unsigned range (max - min = 60 deg) would have called this an early snap.
+        assert np.nanmax(curve[: c + 1]) - np.nanmin(curve[: c + 1]) >= 60
+        assert m["wrist_uncock_deg"] < 1 and m["wrist_uncock_ms"] is None
+    if kind == "early_release":
+        assert m["wrist_uncock_deg"] > 55 and 60 < m["wrist_uncock_ms"] < 140
+    if kind == "after_contact":
+        assert m["wrist_uncock_ms"] is None or m["wrist_uncock_ms"] <= 0
+
+
+def test_directional_release_matches_physics_on_a_clean_swing(sample: dict) -> None:
+    m = measure_swing(sample, "backhand")
+    assert m["wrist_uncock_ms"] == pytest.approx(m["wrist_release_ms"])  # 56.1 ms: a real opening
