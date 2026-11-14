@@ -22,8 +22,9 @@ from physics.metrics import (
     RELEASE_WINDOW_MS, WRIST_SMOOTH_MS, _smooth, contact_frame, shoulder_coil, shoulder_yaw, wrist_angle,
 )
 from physics.skeleton import (
-    ARM, L_ANKLE, L_KNEE, L_SH, R_ANKLE, R_KNEE, R_SH, RACKET_TIP, hitting_hand, to_array, up_vector,
+    ARM, L_ANKLE, L_HIP, L_KNEE, L_SH, R_ANKLE, R_HIP, R_KNEE, R_SH, RACKET_TIP, to_array, up_vector,
 )
+from physics.skeleton import swing_hand as physics_swing_hand
 
 STROKES = ("forehand", "backhand")
 
@@ -41,8 +42,8 @@ def stance_joints_filled(swing: dict, contact: int) -> dict[int, str]:
     - "missing at contact": no finite position at the contact frame.
     - "copied from knee at contact": exactly the knee's position, the pipeline's fill
       signature (real ankle and knee points never coincide).
-    Short gaps the pipeline interpolates aren't flagged in the swing JSON, so they
-    can't be detected here.
+    Interpolated gaps only show in newer swings' frames[i].filled flags (PR #39);
+    guessed_measurements() reads those for every measurement, stance included.
     """
     listed = set((swing.get("metadata") or {}).get("approximatedJoints") or [])
     P = to_array(swing)
@@ -118,6 +119,116 @@ def wrist_index_filled(swing: dict, hand: str, contact: int) -> str | None:
     return None
 
 
+# A joint MediaPipe sees at less than this visibility at contact is a guess, not a measurement.
+MIN_VISIBILITY = 0.5
+
+
+# pipeline.features smooths every joint over 5 frames (centred), so a number it reads
+# up to contact also reads 2 frames past it.
+FEATURE_SMOOTH_HALF = 2
+
+
+def measurement_reads(swing: dict, hand: str, contact: int, fps: float) -> dict[str, list[tuple[list[int], range]]]:
+    """{measurement: [(joints, frames), ...]}: every joint each rule number reads, on every frame.
+
+    Frames include what smoothing and derivatives reach, not just the frames named in
+    the measurement: centred smoothing reads half its window either side, and a
+    gradient at frame k reads k-1 and k+1. Ranges are contiguous, so they may include
+    a frame a gradient skips (k itself); that only ever skips more, never less.
+    Not counted: the up direction (a whole-swing average of shoulders and ankles,
+    snapped to the vertical axis), which no single joint decides.
+    forearm_roll_deg isn't measured yet, so it has no entry.
+    """
+    n = len(swing.get("frames") or [])
+    c = int(np.clip(contact, 0, max(n - 1, 0)))
+
+    def frames(lo: int, hi: int) -> range:
+        return range(max(0, lo), min(n - 1, hi) + 1)
+
+    a = ARM[hand]
+    arm, wrist = [a["sh"], a["el"], a["wr"]], [a["el"], a["wr"], a["index"]]
+    shoulders, ankles = [L_SH, R_SH], [L_ANKLE, R_ANKLE]
+    fh = FEATURE_SMOOTH_HALF
+    # physics/wrist_uncock smooth the wrist angle over WRIST_SMOOTH_MS (centred).
+    wh = (max(1, int(round(WRIST_SMOOTH_MS * fps / 1000)) | 1)) // 2
+    # Release timing: the fastest change of the smoothed angle in physics' window [lo, hi];
+    # the rate at k reads the angle at k-1 and k+1, and the sub-frame peak reads the rate
+    # at k-1 and k+1, so the angle is read from lo-2 to hi+2.
+    lo = max(1, c - int(round(RELEASE_WINDOW_MS[0] * fps / 1000)))
+    hi = min(n - 2, c + int(round(RELEASE_WINDOW_MS[1] * fps / 1000)))
+    release = frames(lo - 2 - wh, hi + 2 + wh) if hi >= lo else range(0)
+    # Stance shot direction = np.gradient(point)[contact]: the racket tip when it's
+    # tracked (not a body joint, so no flags), else the hitting wrist, on the frames
+    # either side of contact.
+    tip = to_array(swing)[:, RACKET_TIP]
+    direction = [] if n and np.isfinite(tip).all(axis=1).mean() > 0.8 else [a["wr"]]
+    return {
+        "elbow_at_contact_deg": [(arm, frames(c, c))],  # physics, unsmoothed
+        "elbow_min_before_deg": [(arm, frames(0, c + fh))],  # pipeline.features
+        "wrist_angle_change_pre_deg": [(wrist, frames(0, c + fh))],  # pipeline.features
+        "wrist_uncock_deg": [(wrist, frames(0, c + wh))],
+        "wrist_uncock_ms": [(wrist, release)],
+        "wrist_release_ms": [(wrist, release)],  # physics, same window and smoothing
+        "shoulder_turn_deg": [(shoulders, frames(0, c))],  # physics shoulder coil, unsmoothed
+        "hip_turn_range_deg": [([L_HIP, R_HIP], frames(0, n - 1))],  # whole swing
+        "stance_width_ratio": [(ankles, frames(0, c + fh)), (shoulders, frames(0, c))],
+        "stance_open_deg": [(ankles, frames(c, c)), (direction, frames(c - 1, c + 1))],
+    }
+
+
+def _per_joint(frame: dict, key: str) -> list | None:
+    """frame[key] when it's a 33-long per-joint list (pipeline `filled`, `visibility`), else None.
+
+    Absent or malformed means unknown (docs/interfaces.md): it never marks a joint guessed.
+    """
+    values = frame.get(key)
+    return values if isinstance(values, list) and len(values) == 33 else None
+
+
+def _filled_frame(frames: list[dict], span: range, joint: int) -> int | None:
+    """First frame in span whose filled flags mark this joint true, or None."""
+    for f in span:
+        flags = _per_joint(frames[f], "filled")
+        if flags is not None and flags[joint] is True:
+            return f
+    return None
+
+
+def _guessed_why(joint: int, listed: set, frames: list[dict], span: range, vis: list | None) -> str | None:
+    if joint in listed:
+        return f"joint {joint} approximated"
+    f = _filled_frame(frames, span, joint)
+    if f is not None:
+        return f"joint {joint} filled at frame {f}"
+    v = vis[joint] if vis is not None else None
+    if isinstance(v, (int, float)) and not isinstance(v, bool) and v < MIN_VISIBILITY:
+        return f"joint {joint} visibility {v:.2f} at contact"
+    return None
+
+
+def guessed_measurements(swing: dict, hand: str, contact: int, fps: float) -> dict[str, str]:
+    """{measurement: why} for every rule measurement that reads a guessed joint. Empty = none.
+
+    A joint is guessed when it is listed in metadata.approximatedJoints (per swing, so any
+    frame), marked true in frames[i].filled on any frame the measurement reads, smoothing and
+    derivative neighbours included (measurement_reads; PR #39 provenance flags), or has frames[contact].visibility below MIN_VISIBILITY. Old swings
+    without filled/visibility aren't flagged by them: absence means unknown, not guessed.
+    """
+    frames = swing.get("frames") or []
+    if not frames:
+        return {}
+    c = int(np.clip(contact, 0, len(frames) - 1))
+    listed = set((swing.get("metadata") or {}).get("approximatedJoints") or [])
+    vis = _per_joint(frames[c], "visibility")
+    out: dict[str, str] = {}
+    for name, parts in measurement_reads(swing, hand, c, fps).items():
+        why = next((w for joints, span in parts for j in joints
+                    if (w := _guessed_why(j, listed, frames, span, vis))), None)
+        if why:
+            out[name] = why
+    return out
+
+
 def _flat(v: np.ndarray, up: np.ndarray) -> np.ndarray:
     """Project vector(s) onto the floor plane."""
     return v - np.outer(v @ up, up) if v.ndim > 1 else v - (v @ up) * up
@@ -147,10 +258,33 @@ def wrist_side_offset(P: np.ndarray, hand: str, contact: int, up: np.ndarray) ->
     return float(np.median(offsets)) if offsets else float("nan")
 
 
+def recorded_hand(swing: dict) -> str | None:
+    """The hand the pipeline recorded, or None if it would have to be guessed.
+
+    Same sources, in the same order, as physics.skeleton.swing_hand (metadata.hand, then
+    swing["hand"]); only used to report whether the hand was recorded or guessed.
+    """
+    meta = swing.get("metadata")
+    for hand in ((meta.get("hand") if isinstance(meta, dict) else None), swing.get("hand")):
+        if hand in ("R", "L"):
+            return hand
+    return None
+
+
+def resolve_hand(swing: dict, hand: str | None = None, P: np.ndarray | None = None) -> str:
+    """Explicit hand, else physics' swing_hand (recorded hand, else the faster wrist).
+
+    One source of truth with physics, so the coach and physics never pick different arms.
+    """
+    if hand in ("R", "L"):
+        return hand
+    return physics_swing_hand(swing, P)
+
+
 def stroke_side(swing: dict, hand: str | None = None) -> tuple[str, float]:
     """("forehand" | "backhand", wrist side offset). Defaults to forehand if unmeasurable."""
     P = to_array(swing)
-    hand = hand or hitting_hand(P)
+    hand = resolve_hand(swing, hand, P)
     c = contact_frame(swing, P, hand)
     offset = wrist_side_offset(P, hand, c, up_vector(P))
     stroke = "backhand" if np.isfinite(offset) and offset < 0 else "forehand"
@@ -164,7 +298,7 @@ def stance_open_deg(swing: dict, hand: str | None = None) -> float:
     else the hitting wrist's velocity, both flattened onto the floor.
     """
     P = to_array(swing)
-    hand = hand or hitting_hand(P)
+    hand = resolve_hand(swing, hand, P)
     c = contact_frame(swing, P, hand)
     up = up_vector(P)
     tip = P[:, RACKET_TIP]
