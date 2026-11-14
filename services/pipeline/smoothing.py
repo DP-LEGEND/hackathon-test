@@ -60,12 +60,13 @@ def slerp(u: np.ndarray, v: np.ndarray, s: np.ndarray) -> np.ndarray:
 
 def smooth_guessed_arms(P: np.ndarray, filled: np.ndarray, protect: tuple[int, int] | None = None,
                         window: int = 21, poly: int = 3, smooth_measured: bool = False,
+                        measured_window: int = 15,
                         blend: int = BLEND) -> np.ndarray:
     """P: (frames, 33, 3) joints; filled: (frames, 33) bool (guessed). Returns a smoothed copy.
 
     smooth_measured=True (the demo samples' "middle ground"): after the guessed runs are
-    re-drawn, every arm direction outside `protect` is also lightly filtered
-    (Savitzky-Golay over the whole arm track) and rebuilt at its median length, fading back
+    re-drawn, every arm joint outside `protect` is also lightly filtered (Savitzky-Golay,
+    `measured_window` frames, on hip-relative positions) and rebuilt at median bone lengths, fading back
     to the as-given data over `blend` frames at the edges of `protect`. Frames inside
     `protect` are still returned exactly as given.
     """
@@ -117,16 +118,17 @@ def smooth_guessed_arms(P: np.ndarray, filled: np.ndarray, protect: tuple[int, i
                 w[lo - k] = min(w[lo - k], k / (blend + 1))
             if hi + k < n:
                 w[hi + k] = min(w[hi + k], k / (blend + 1))
+    # light Savitzky-Golay on hip-relative arm positions, then lock each segment's length
+    hip = (out[:, 23] + out[:, 24]) / 2
     calm = out.copy()
-    for a, b in SEGMENTS:  # filter every arm direction, rebuild at median length, parents first
-        seg = out[:, b] - out[:, a]
-        measured = ~filled[:, b] & np.isfinite(seg).all(axis=1)
+    if n >= measured_window:
+        for j in LIMB_JOINTS:
+            calm[:, j] = savgol_filter(out[:, j] - hip, measured_window, poly, axis=0, mode="interp") + hip
+    for a, b in SEGMENTS:  # parents first
         L = np.linalg.norm(P[:, b] - P[:, a], axis=1)
+        measured = ~filled[:, b] & np.isfinite(L)
         length = float(np.median(L[measured])) if measured.any() else float(np.nanmedian(L))
-        d = _unit(seg)
-        if n >= window:
-            d = _unit(savgol_filter(d, window, poly, axis=0, mode="interp"))
-        calm[:, b] = calm[:, a] + d * length
+        calm[:, b] = calm[:, a] + _unit(calm[:, b] - calm[:, a]) * length
     res = out.copy()
     res[:, LIMB_JOINTS] = w[:, None, None] * calm[:, LIMB_JOINTS] + (1 - w[:, None, None]) * out[:, LIMB_JOINTS]
     return res
