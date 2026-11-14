@@ -323,7 +323,7 @@ def test_a_unit_change_or_reformatted_number_falls_back(cue: str) -> None:
 @pytest.mark.parametrize("cue", [
     "Your stance is 80 degrees open, so close it and hold the turn.",
     "Your stance is 80 deg open, so close it and hold the turn.",
-    "Your stance is 80° open, so close it and hold the turn.",
+    "Your stance is 80° open to the shot, so close it.",  # "close" kept >3 words from 80
     "An 80-degree open stance lets the hips fly, so close it.",
 ])
 def test_the_same_number_and_unit_in_another_spelling_passes(cue: str) -> None:
@@ -548,3 +548,86 @@ def test_voice_synthesize_default_timeout_is_unchanged() -> None:
     from coach import voice
 
     assert inspect.signature(voice.synthesize).parameters["timeout_s"].default == voice.TIMEOUT_S == 20
+
+
+# ---- Retry after a failure once it is 60 s old -------------------------------------------
+
+def test_a_failed_call_is_retried_after_60_seconds(env, result: dict, monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(live_voice, "_now", lambda: clock["t"])
+    env.keys("ANTHROPIC_API_KEY", "ELEVENLABS_API_KEY")
+    env.claude.error = anthropic.APITimeoutError(request=None)  # type: ignore[arg-type]
+    env.voice_error = VoiceError("Could not reach ElevenLabs.")
+    assert voice_for_swing("sample", result)["source"] == "caption"
+    assert len(env.claude.calls) == 1 and len(env.spoken) == 1
+
+    clock["t"] += 59  # still inside the window: no retry
+    voice_for_swing("sample", result)
+    assert len(env.claude.calls) == 1 and len(env.spoken) == 1
+
+    clock["t"] += 2  # 61 s after the failure: both APIs are tried again
+    env.claude.error, env.voice_error = None, None
+    out = voice_for_swing("sample", result)
+    assert out["source"] == "claude" and _audio(out["audioUrl"]) == MP3
+    assert len(env.claude.calls) == 2  # the cue retried
+    assert env.spoken[-1] == out["cue"]  # the audio retried, for the new cue
+
+
+def test_a_failed_audio_alone_is_retried_after_60_seconds(env, result: dict, monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = {"t": 0.0}
+    monkeypatch.setattr(live_voice, "_now", lambda: clock["t"])
+    env.keys("ELEVENLABS_API_KEY")
+    env.voice_error = VoiceError("quota")
+    assert voice_for_swing("sample", result)["audioUrl"] is None
+    clock["t"] = 61.0
+    env.voice_error = None
+    assert _audio(voice_for_swing("sample", result)["audioUrl"]) == MP3
+    assert env.spoken == [result["cue"], result["cue"]]
+
+
+# ---- Stricter cue check: no number as an amount, no negations, more number words ---------
+
+OVER95_FACTS = {"measured": "Over-rotation: hips turn 95 degrees",
+                "coach_cue": "Turn a little less and stay balanced through the ball."}
+UNDER_FACTS = {"measured": "Under-rotation: shoulders turn 40 degrees",
+               "coach_cue": "Turn your shoulders further before you swing."}
+
+
+def test_a_number_next_to_a_change_word_is_rejected() -> None:
+    with pytest.raises(CoachError, match="next to a change"):
+        check_worded_cue("Turn 95 degrees less", OVER95_FACTS)
+    with pytest.raises(CoachError, match="next to a change"):
+        check_worded_cue("Close your stance by 80 degrees.", STANCE_LIVE_FACTS)
+
+
+def test_restating_the_measurement_is_not_a_change() -> None:
+    assert check_worded_cue(LIVE_CUE, STANCE_LIVE_FACTS) == LIVE_CUE  # "80 degrees open" is the label's own phrase
+    ok = "Your hips turn 95 degrees, so turn a little less."  # "less" is more than 3 words from 95
+    assert check_worded_cue(ok, OVER95_FACTS) == ok
+
+
+@pytest.mark.parametrize("facts, cue", [
+    (UNDER_FACTS, "Don't turn your shoulders further"),
+    (STANCE_LIVE_FACTS, "Stop closing your stance so much"),
+    (UNDER_FACTS, "Don’t rush, turn your shoulders further."),  # curly apostrophe
+    (UNDER_FACTS, "Do not stop the turn early, go further."),
+    (OVER95_FACTS, "Never turn more than you need."),
+    (STANCE_LIVE_FACTS, "Avoid opening your stance, close it."),
+    (STANCE_LIVE_FACTS, "No longer leave your stance open, close it."),
+])
+def test_negations_are_rejected(facts: dict, cue: str) -> None:
+    with pytest.raises(CoachError, match="negates"):
+        check_worded_cue(cue, facts)
+
+
+@pytest.mark.parametrize("cue", [
+    "Close your stance twice as much.",
+    "Double the turn in your stance.",
+    "Triple your stance width.",
+    "Close your stance by a third.",
+    "Close it by thirds.",
+    "Close it a couple of inches.",
+])
+def test_the_new_number_words_are_rejected(cue: str) -> None:
+    with pytest.raises(CoachError, match="spelled out a number"):
+        check_worded_cue(cue, STANCE_LIVE_FACTS)
