@@ -177,7 +177,7 @@ It shows **"MOCK DATA. 100 Hz, 73 s recorded."** and *"10/10 pairs within 100 ms
 
 All of these come from the saved samples in `public/swings/` and are the same on every run.
 
-| | Forehand over-rotation | Backhand (with #54) |
+| | Forehand over-rotation | Backhand |
 |---|---|---|
 | Coach's call | Over-rotation: hips turn 157° | No fault found |
 | Cue | Turn a little less and stay balanced through the ball. | Nothing to fix on this swing. Hit the next one the same way. |
@@ -190,8 +190,6 @@ All of these come from the saved samples in `public/swings/` and are the same on
 | **Launch angle (ASSUMED)** | **12°**, not on screen | 3°, not said in beat 2 |
 | Court | Two paths | Not shown |
 | Video check (checked by eye, not on screen) | Real ball hit about 1.8 m high | Real ball hit 0.5–0.8 m high, not said in beat 2 |
-
-**Without #54 (main today),** the backhand still shows the old call: *"Stance too open: stance 80° open to the shot"*, ghost *Close stance* 64.9°, stance 79.9° → 15°, and one PREDICTED path at 130.4 km/h with front wall 0.78 m. For that case, use *Beat 2 without #54*.
 
 The launch angle isn't shown as a number. The court panel's footnote says the launch angle and the spot on court are assumed, so say the angle out loud and call it assumed.
 
