@@ -339,6 +339,15 @@ def guessed_metrics(swing: dict, hand: str, contact: int, fps: float) -> dict[st
                     if (w := _guessed_why(j, listed, frames, range(c, c + 1), vis))), None)
         if why:
             out["wrist_at_contact_deg"] = why
+        # Racket speed (and so the PREDICTED ball speed) reads the hitting wrist's speed over
+        # the frames around contact and the elbow->wrist forearm: if either is guessed there,
+        # the numbers are still shown but flagged as not measured.
+        span = range(max(0, c - 2), min(len(frames), c + 3))
+        why = next((w for j in (a["wr"], a["el"]) if (w := _guessed_why(j, listed, frames, span, vis))), None)
+        if why:
+            reason = f"racket speed reads the hitting wrist and elbow around contact; {why}"
+            out["racket_speed"] = reason
+            out["ball_speed"] = reason
     return out
 
 
