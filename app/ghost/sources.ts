@@ -214,6 +214,16 @@ export function fixOptionsFor(entry: SwingEntry, coach: CoachCaption | null): Fi
   });
 }
 
+/**
+ * The fix the coach starts the ghost on: its ghost_fix (#28), else (older coach files) the
+ * worst fault physics can fix on this swing. Null when the coach found none it can show.
+ */
+export function coachPickFix(fixes: FixOption[], coach: CoachCaption | null): FixOption | null {
+  const usable = fixes.filter((f) => f.unavailable === null);
+  const byId = (id: string | null | undefined) => usable.find((f) => f.id === id);
+  return byId(coach?.ghostFix) ?? (coach?.faults ?? []).map((f) => byId(f.fix)).find((f) => f !== undefined) ?? null;
+}
+
 export function loadSwingFor(entry: SwingEntry, attempt: number): Promise<LoadedSwing> {
   return cached(`swing:${entry.key}:${attempt}`, () =>
     entry.origin === "sample" && entry.swingFile

@@ -20,6 +20,7 @@ import type { BallPathView, CameraView } from "./skeleton-scene";
 import {
   buildEntries,
   checkApi,
+  coachPickFix,
   fixOptionsFor,
   loadCatalogue,
   loadCoachFor,
@@ -28,6 +29,7 @@ import {
   type ApiState,
   type FixOption,
 } from "./sources";
+import { hittingWristAtContact } from "./swing";
 import { SwingPicker, type CatalogueState } from "./swing-picker";
 import { useAsync, type Async } from "./use-async";
 
@@ -139,12 +141,7 @@ export function GhostDemo() {
   const faults = useMemo(() => coachCaption?.faults ?? [], [coachCaption]);
   const fixes = useMemo(() => (entry ? fixOptionsFor(entry, coachCaption) : []), [entry, coachCaption]);
 
-  // The coach's pick: its ghost_fix (#28), else (older coach files) the worst fault physics can fix.
-  const coachPick = useMemo<FixOption | null>(() => {
-    const usable = fixes.filter((f) => f.unavailable === null);
-    const byId = (id: string | null | undefined) => usable.find((f) => f.id === id);
-    return byId(coachCaption?.ghostFix) ?? faults.map((f) => byId(f.fix)).find((f) => f !== undefined) ?? null;
-  }, [fixes, faults, coachCaption]);
+  const coachPick = useMemo(() => coachPickFix(fixes, coachCaption), [fixes, coachCaption]);
 
   const activeFix = useMemo<FixOption | null>(() => {
     const usable = fixes.filter((f) => f.unavailable === null);
@@ -296,7 +293,7 @@ export function GhostDemo() {
             you={you}
             ghost={showGhost && compare ? compare.ghost.swing : null}
             balls={balls}
-            contactSpot={onCourt && compare ? compare.assumptions.contactSpot : null}
+            youWrist={onCourt && compare ? hittingWristAtContact(compare.you.swing, compare.hand) : null}
             view={view}
             onViewChange={setView}
             status={stageStatus}
@@ -315,7 +312,7 @@ export function GhostDemo() {
             />
             {onCourt && (
               <p className="pointer-events-none absolute top-3 right-3 hidden max-w-[34%] text-right text-xs text-muted-foreground md:block">
-                Court 6.40 × 9.75 m · player drawn beside the assumed contact spot (display only)
+                Court 6.40 × 9.75 m · player placed with the hitting hand over the ball&apos;s assumed start (display only)
               </p>
             )}
             <CoachCaptionBar state={caption} size={step === "coach" ? "large" : "compact"} />

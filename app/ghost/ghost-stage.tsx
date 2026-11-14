@@ -36,7 +36,7 @@ export function GhostStage({
   you,
   ghost,
   balls,
-  contactSpot,
+  youWrist,
   view,
   onViewChange,
   status,
@@ -47,7 +47,8 @@ export function GhostStage({
   ghost: LoadedSwing | null;
   /** Null hides the ball paths; ghost null draws one shared path. */
   balls: { you: BallPathView; ghost: BallPathView | null } | null;
-  contactSpot: Vec3 | null;
+  /** Your hitting wrist at contact (hip-centred). With ball paths, the player is placed so it meets the ball. */
+  youWrist: Vec3 | null;
   view: CameraView;
   onViewChange: (view: CameraView) => void;
   /** Covers the view while the swing loads or fails. */
@@ -78,9 +79,9 @@ export function GhostStage({
       you,
       ghost,
       timeline: buildTimeline(ghost ? [you, ghost] : [you]),
-      scene: { floor: { you: you.floorY, ghost: ghost?.floorY ?? you.floorY }, contactSpot, ballPaths: balls },
+      scene: { floor: { you: you.floorY, ghost: ghost?.floorY ?? you.floorY }, youWrist, ballPaths: balls },
     };
-  }, [you, ghost, balls, contactSpot]);
+  }, [you, ghost, balls, youWrist]);
 
   useEffect(() => {
     layoutRef.current = layout;

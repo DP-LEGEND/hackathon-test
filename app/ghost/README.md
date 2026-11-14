@@ -16,6 +16,10 @@ The demo flow has four steps: **pick a swing**, **the coach's call**, **the ghos
 
 The ghost starts on the coach's `ghost_fix` with `ghost_fix_amount`, and the caption shows `ghost_note` when the ghost shows a different fix from the top fault. Older coach files without those fields fall back to the worst fault physics can fix. Fixes the coach didn't flag use a small fixed demo size (`demoAmounts` in the catalogue). A fix physics can't apply to a swing shows its reason. When a fix leaves both PREDICTED paths identical, the court step draws one path and says so.
 
+## Where the player stands (display only)
+
+Pipeline skeletons are hip-centred, y up, and face +z. The court's front wall is at z = 0, so `skeleton-scene.ts` turns both figures 180° about y (`[x, y, z] -> [-x, y, -z]`). Seen from behind, a right-handed forehand then hits on the player's right, as in the phone video. On the court step, the player moves so the hitting wrist at the contact frame is exactly over the PREDICTED ball's first point in x and z. The wrist is joint 16 for `R` and 15 for `L`, from `metadata.hand`, else the hand compare used. The ghost moves by the same offset. Height isn't snapped: the wrist is about 0.9 m up at contact and the ball's assumed start is 0.6 m, so the feet stay on the floor and the ball leaves about 30 cm below the hand. Physics would need to start the ball at the measured hand height for both to line up.
+
 To try live swings, run this from the repo folder with the venv activated:
 
 ```
