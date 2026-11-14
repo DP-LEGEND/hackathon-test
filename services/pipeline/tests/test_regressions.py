@@ -58,3 +58,12 @@ def test_x_factor_wraps_boundary():
         x[:, j, 0] = np.cos(np.radians(angle))
         x[:, j, 2] = np.sin(np.radians(angle))
     assert swing_features(x, 2, 30)['x_factor_max'] == pytest.approx(2)
+
+
+def test_clean_only_fills_short_bounded_gaps():
+    from pipeline.stereo import clean
+    x = np.ones((20, 33, 3)); x[:3, 5] = np.nan; x[5:7, 5] = np.nan; x[10:17, 5] = np.nan
+    y = clean(x, max_gap=2)
+    assert np.isnan(y[:3, 5]).all()
+    assert np.isfinite(y[5:7, 5]).all()
+    assert np.isnan(y[10:17, 5]).all()

@@ -99,21 +99,29 @@ CHAIN = [(23, 11), (24, 12), (11, 13), (13, 15), (15, 19), (12, 14), (14, 16), (
          (23, 25), (25, 27), (27, 31), (24, 26), (26, 28), (28, 32), (11, 0)]
 
 
-def clean(X: np.ndarray, win: int = 5) -> np.ndarray:
-    """Fill short gaps, smooth over time, then force each bone to its median length."""
+def clean(X: np.ndarray, win: int = 5, max_gap: int = 12) -> np.ndarray:
+    """Fill only bounded short gaps, smooth, and constrain observed bone lengths.
+
+    Never extrapolate a limb through an occlusion or fill an entire missing joint.
+    """
     from pipeline.pose import smooth
 
     Y = X.copy()
     for j in range(Y.shape[1]):
         for d in range(3):
             v = Y[:, j, d]
-            ok = np.isfinite(v)
-            if ok.sum() >= 2:
-                Y[:, j, d] = np.interp(np.arange(len(v)), np.where(ok)[0], v[ok])
+            observed = np.flatnonzero(np.isfinite(v))
+            for left, right in zip(observed[:-1], observed[1:]):
+                if 1 < right - left <= max_gap + 1:
+                    v[left + 1:right] = np.interp(np.arange(left + 1, right), [left, right], v[[left, right]])
+    missing = ~np.isfinite(Y)
     Y = smooth(Y, win)
+    Y[missing] = np.nan
     for a, b in CHAIN:
-        L = np.nanmedian(np.linalg.norm(Y[:, b] - Y[:, a], axis=1))
         d = Y[:, b] - Y[:, a]
-        n = np.linalg.norm(d, axis=1, keepdims=True) + 1e-9
-        Y[:, b] = Y[:, a] + d / n * L
+        lengths = np.linalg.norm(d, axis=1)
+        valid = np.isfinite(lengths) & (lengths > 1e-9)
+        if valid.any():
+            length = np.median(lengths[valid])
+            Y[valid, b] = Y[valid, a] + d[valid] / lengths[valid, None] * length
     return Y
