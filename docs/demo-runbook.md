@@ -92,7 +92,16 @@ mkdir -p ~/ghost-stage
 ls ~/ghost-stage
 ```
 
-`ls` should print nothing. If `~/ghost-stage` has anything in it from an earlier run, use a new folder name (for example `~/ghost-stage2`) in both commands. Then:
+`ls` should print nothing. If it prints anything, move the old folder aside and make a fresh one, so every command below still uses `~/ghost-stage`:
+
+```
+mv ~/ghost-stage ~/ghost-stage-old-$(date +%H%M)
+```
+```
+mkdir -p ~/ghost-stage
+```
+
+Run `ls ~/ghost-stage` again; it must print nothing. Then:
 
 ```
 GHOST_SWINGS_DIR=~/ghost-stage ~/ghost-env/bin/python -m uvicorn pipeline.server:app --port 8000
