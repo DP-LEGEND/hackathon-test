@@ -1,34 +1,33 @@
-"""Calm the limbs where the camera couldn't see them. Owner: Dev (pipeline).
+"""Calm the arm on frames the camera couldn't see. Owner: Dev (pipeline).
 
-smooth_guessed_arms(P, filled, protect):
-1. Limb directions, not positions: every limb segment (upper arm, forearm, hand points,
-   hand points) is a unit direction from its parent joint. On a guessed run of a
-   joint, its direction is re-drawn with a shape-preserving spline (PCHIP) between the
-   last and next measured frames, so the arm swings along a natural arc instead of
-   following the noisy fill.
-2. A light Savitzky-Golay filter on those directions removes triangulation jitter.
-3. Bone-length lock: every arm segment is rebuilt at its median length over measured frames,
-   walking out from the torso, so limbs no longer stretch with jittery depth.
-The torso (shoulders, hips, head) and the legs are never moved, and frames inside `protect` (around
-contact) are returned exactly as given, so contact measurements, racket speed, the ball
-prediction and shoulder/hip metrics don't change. `blend` frames fade in either side.
+smooth_guessed_arms(P, filled, protect) only changes GUESSED frames (filled):
+- Each arm segment (upper arm, forearm, hand points) is a unit direction from its parent
+  joint. Over a guessed run with measured frames at both ends, the direction is slerped
+  from the measured direction before the run to the one after it (eased), so the arm moves
+  along a smooth arc and a bone can't collapse through the middle. If the two ends are more
+  than 120 degrees apart, a slerp would guess the wrong way round, so those frames keep the
+  pipeline's fill, only lightly filtered.
+- Guessed runs at the start or end of the clip (one measured end) keep the fill, lightly
+  filtered (Savitzky-Golay on the direction, guessed frames only).
+- Guessed frames are rebuilt at the segment's median measured length.
+Measured frames, the torso, the legs and frames inside `protect` (around contact) are
+returned exactly as given. Walking parent before child keeps a guessed wrist attached to a
+re-drawn elbow.
 """
 
 from __future__ import annotations
 
 import numpy as np
-from scipy.interpolate import PchipInterpolator
 from scipy.signal import savgol_filter
 
-# parent -> child segments, walked outwards from the (fixed) torso
 SEGMENTS = (
     (11, 13), (13, 15), (15, 17), (15, 19), (15, 21),   # left arm + hand
     (12, 14), (14, 16), (16, 18), (16, 20), (16, 22),   # right arm + hand
 )
-# Legs are left alone: they are seen well from behind, and the lowest foot sets the floor
-# (and so every court height), which must not move.
 LIMB_JOINTS = sorted({c for _, c in SEGMENTS})
-ARM_JOINTS = [j for j in LIMB_JOINTS if j <= 22]
+ARM_JOINTS = LIMB_JOINTS
+MAX_SLERP_DEG = 120.0
+BLEND = 4
 
 
 def _runs(mask: np.ndarray):
@@ -48,40 +47,56 @@ def _unit(v: np.ndarray) -> np.ndarray:
     return v / (np.linalg.norm(v, axis=-1, keepdims=True) + 1e-12)
 
 
+def slerp(u: np.ndarray, v: np.ndarray, s: np.ndarray) -> np.ndarray:
+    """Spherical interpolation between unit vectors u and v at fractions s (shape (k,))."""
+    u, v = _unit(u), _unit(v)
+    dot = float(np.clip(u @ v, -1.0, 1.0))
+    theta = np.arccos(dot)
+    s = np.asarray(s, float)[:, None]
+    if theta < 1e-6:
+        return np.repeat(u[None], len(s), axis=0)
+    return (np.sin((1 - s) * theta) * u + np.sin(s * theta) * v) / np.sin(theta)
+
+
 def smooth_guessed_arms(P: np.ndarray, filled: np.ndarray, protect: tuple[int, int] | None = None,
-                        window: int = 21, poly: int = 3, blend: int = 4) -> np.ndarray:
+                        window: int = 21, poly: int = 3) -> np.ndarray:
     """P: (frames, 33, 3) joints; filled: (frames, 33) bool (guessed). Returns a smoothed copy."""
     P = np.asarray(P, float)
     filled = np.asarray(filled, bool)
     n = len(P)
-    t = np.arange(n)
-    dirs, lengths = {}, {}
-    for a, b in SEGMENTS:
-        seg = P[:, b] - P[:, a]
-        measured = ~(filled[:, a] | filled[:, b]) & np.isfinite(seg).all(axis=1)
-        L = np.linalg.norm(seg, axis=1)
-        lengths[(a, b)] = float(np.median(L[measured])) if measured.any() else float(np.nanmedian(L))
-        d = _unit(seg)
-        if measured.sum() >= 2:
-            spline = PchipInterpolator(t[measured], d[measured], axis=0, extrapolate=False)
-            for i, j in _runs(~measured):
-                if i > 0 and j < n:  # interior gap: draw the arc between measured ends
-                    d[i:j] = spline(t[i:j])
-        if n >= window:
-            d = savgol_filter(d, window, poly, axis=0, mode="interp")
-        dirs[(a, b)] = _unit(d)
-    out = P.copy()
-    for a, b in SEGMENTS:  # parents before children, so lengths chain outwards
-        out[:, b] = out[:, a] + dirs[(a, b)] * lengths[(a, b)]
-    w = np.ones(n)
+    keep = np.zeros(n, bool)
     if protect is not None:
-        lo, hi = max(0, protect[0]), min(n - 1, protect[1])
-        w[lo:hi + 1] = 0.0
-        for k in range(1, blend + 1):
-            if lo - k >= 0:
-                w[lo - k] = min(w[lo - k], k / (blend + 1))
-            if hi + k < n:
-                w[hi + k] = min(w[hi + k], k / (blend + 1))
-    res = P.copy()
-    res[:, LIMB_JOINTS] = w[:, None, None] * out[:, LIMB_JOINTS] + (1 - w[:, None, None]) * P[:, LIMB_JOINTS]
-    return res
+        keep[max(0, protect[0]):min(n, protect[1] + 1)] = True
+    out = P.copy()
+    for a, b in SEGMENTS:  # parents first
+        seg = P[:, b] - P[:, a]
+        d = _unit(seg)
+        guessed = filled[:, b] & ~keep
+        measured = ~filled[:, b] & np.isfinite(seg).all(axis=1)
+        L = np.linalg.norm(seg, axis=1)
+        length = float(np.median(L[measured])) if measured.any() else float(np.nanmedian(L))
+        new = d.copy()
+        filtered = _unit(savgol_filter(d, window, poly, axis=0, mode="interp")) if n >= window else d
+        anchor = measured  # only seen directions anchor a slerp (a guessed frame kept for contact does not)
+        for i, j in _runs(guessed):
+            if i > 0 and j < n and anchor[i - 1] and anchor[j]:
+                u, v = d[i - 1], d[j]
+                if np.degrees(np.arccos(np.clip(u @ v, -1, 1))) <= MAX_SLERP_DEG:
+                    s = (np.arange(i, j) - (i - 1)) / (j - (i - 1))
+                    s = s * s * (3 - 2 * s)  # ease in/out: no kink at the measured ends
+                    new[i:j] = slerp(u, v, s)
+                    continue
+            # no usable slerp: the filtered fill, faded in over BLEND frames from each edge
+            # that touches as-given data, so the run doesn't jump at its ends
+            ramp = np.ones(j - i)
+            for k in range(min(BLEND, j - i)):
+                f = (k + 1) / (BLEND + 1)
+                if i > 0:
+                    ramp[k] = min(ramp[k], f)
+                if j < n:
+                    ramp[j - i - 1 - k] = min(ramp[j - i - 1 - k], f)
+            new[i:j] = _unit(ramp[:, None] * filtered[i:j] + (1 - ramp[:, None]) * d[i:j])
+        rebuilt = out[:, a] + new * length
+        out[guessed, b] = rebuilt[guessed]
+        # a measured child keeps its measured position; a re-drawn parent doesn't move it
+    return out

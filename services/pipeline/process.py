@@ -10,7 +10,6 @@ import numpy as np
 import cv2
 
 from pipeline.cache import extract_pair
-from pipeline.smoothing import smooth_guessed_arms
 from pipeline.pose import DEFAULT_MODEL, extract_raw, to_swing
 from pipeline.segment import audio_hits, find_swings, wrist_speed
 from pipeline.timing import Timeline
@@ -257,10 +256,6 @@ def swings_from_raw(a: dict, b: dict | None = None, options: Options = Options()
             joint_filled = (stereo_filled if source == "stereo" else mono_filled)[start:end].copy()
             joint_filled |= ~np.isfinite(normalised).all(axis=2)
             world, filled = complete_optional_joints(normalised)
-            # Calm guessed arm runs (PCHIP bridge + light Savitzky-Golay); contact +-7 frames untouched.
-            if np.isfinite(world).all():
-                world = smooth_guessed_arms(world, np.asarray(joint_filled, bool), protect=(contact - 12, contact + 12),
-                                            window=21 if len(world) >= 21 else max(5, len(world) // 2 * 2 - 1))
             raw = {"world": world, "filled": joint_filled, "t": real_a[start:end],
                    "fps": fps_real}
             swing = to_swing(raw, smooth_win=1, swing_id=f"swing-{number:04d}", contact_frame=contact)
