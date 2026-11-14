@@ -27,6 +27,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--model-path", default=Options.model_path)
     ap.add_argument("--no-cache", action="store_true", help="re-extract both poses and refresh raw_cache.npz")
     ap.add_argument("--cache-dir", help="reuse raw_cache.npz across fresh output directories (default: out_dir)")
+    for camera in ("a", "b"):
+        ap.add_argument(f"--{camera}-realtime-before", type=float, default=0,
+                        help="QuickTime seconds before which playback is real speed")
+        ap.add_argument(f"--{camera}-realtime-after", type=float,
+                        help="QuickTime seconds after which playback is real speed")
+    ap.add_argument("--hits-wav", help="camera A playback-time 16 kHz mono PCM16 WAV; require hit within 0.5 real s")
+    ap.add_argument("--tap-filter", action="store_true", help="require --hits-wav, speed >=7 torso/s and spacing >=2.5 real s")
     args = vars(ap.parse_args(argv))
     clip_a, clip_b, out_dir = (args.pop(key) for key in ("clip_a", "clip_b", "out_dir"))
     try:
