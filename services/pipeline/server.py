@@ -1,6 +1,6 @@
 """Local, read-only swing catalogue and measured physics comparison API.
 
-Run from services/: python -m uvicorn pipeline.server:app --port 8000
+Run from repo root: python -m uvicorn pipeline.server:app --app-dir services --port 8000
 GHOST_SWINGS_DIR points to a session or a directory of session folders.
 """
 from __future__ import annotations
@@ -8,17 +8,52 @@ from __future__ import annotations
 import csv
 import json
 import os
+import tempfile
+import uuid
+import threading
 from pathlib import Path
+from typing import Annotated, Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
+from starlette.responses import JSONResponse
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from coach.agent import coach_swing
 from physics.compare import compare
 from physics.ghost import FIXES
+from pipeline.live import LiveOptions, process_live_clip, ghost_choice
+
+MAX_UPLOAD_BYTES = 250 * 1024 * 1024
+PROCESS_SEMAPHORE = threading.Semaphore(1)
+
+
+class ProcessUploadGuard:
+    """Reject oversized declared bodies before FastAPI parses multipart data."""
+    def __init__(self, app: ASGIApp):
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if (scope['type'] != 'http' or scope.get('method') != 'POST'
+                or scope.get('path', '').rstrip('/') != '/process'):
+            await self.app(scope, receive, send)
+            return
+        try:
+            lengths = [int(value) for key, value in scope.get('headers', []) if key.lower() == b'content-length']
+            if any(length < 0 for length in lengths):
+                raise ValueError('Negative length')
+        except ValueError:
+            await JSONResponse({'detail': 'Invalid Content-Length'}, status_code=400)(scope, receive, send)
+            return
+        if any(length > MAX_UPLOAD_BYTES for length in lengths):
+            await JSONResponse({'detail': 'Video exceeds the 250 MB upload limit'}, status_code=413)(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
 
 app = FastAPI(title="Ghost local service")
+app.add_middleware(ProcessUploadGuard)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=list({"http://localhost:3000", os.environ.get("GHOST_WEB_ORIGIN", "http://localhost:3000")}),
@@ -39,8 +74,7 @@ def catalogue() -> dict[str, Path]:
     if not root.is_dir():
         return {}
     grouped: dict[str, list[Path]] = {}
-    manifests = ([root / "manifest.json"] if (root / "manifest.json").is_file()
-                 else sorted(root.glob("*/manifest.json")))
+    manifests = ([root / "manifest.json"] if (root / "manifest.json").is_file() else []) + sorted(root.glob("*/manifest.json"))
     try:
         for manifest in manifests:
             if not manifest.resolve().is_relative_to(root):
@@ -88,8 +122,7 @@ def list_swings() -> dict:
     entries = catalogue()
     labels = read_labels()
     return {"swings": [
-        {"id": identifier, "label": labels.get(f"{identifier}@{entries[identifier].parent.name}",
-                                               labels.get(identifier))}
+        {"id": identifier, "label": labels.get((entries[identifier].parent.name, entries[identifier].stem))}
         for identifier in sorted(entries)
     ]}
 
@@ -114,7 +147,7 @@ def compare_swing(identifier: str, request: CompareRequest) -> dict:
 LABELS = {"good", "early_wrist", "over_rotation", "straight_arm", "open_stance", "rolled_wrist"}
 
 
-def read_labels() -> dict[str, str | None]:
+def read_labels() -> dict[tuple[str, str], str | None]:
     path = Path(os.environ.get("GHOST_LABELS_CSV", str(
         Path(__file__).resolve().parents[2] / "data" / "labels" / "labels.csv")))
     if not path.exists():
@@ -127,11 +160,20 @@ def read_labels() -> dict[str, str | None]:
             labels = {}
             for row in reader:
                 identifier = row["swing"].strip()
+                run = (row.get("pipeline_run") or "").strip()
+                if "@" in identifier:
+                    identifier, suffix_run = identifier.rsplit("@", 1)
+                    if run and run != suffix_run:
+                        raise ValueError("Label run conflicts with swing suffix")
+                    run = suffix_run
+                if not run:
+                    continue  # An unscoped swing ID cannot safely label a run.
+                key = (run, identifier)
                 label = row["intended_fault"].strip()
                 label = "good" if label == "none" else label
-                if identifier in labels:
-                    raise ValueError("Duplicate label id")
-                labels[identifier] = label if label in LABELS else None
+                if key in labels:
+                    raise ValueError("Duplicate run/swing label")
+                labels[key] = label if label in LABELS else None
             return labels
     except (OSError, ValueError, TypeError, AttributeError, csv.Error):
         raise HTTPException(503, "Swing labels are invalid or unavailable") from None
@@ -149,7 +191,7 @@ def measurement_swing(identifier: str) -> dict:
 @app.post("/coach/{identifier}")
 def coach(identifier: str) -> dict:
     swing = measurement_swing(identifier)
-    side = swing.get("stroke") or swing.get("side")
+    side = (swing.get("metadata") or {}).get("stroke") or swing.get("stroke") or swing.get("side")
     stroke = side if side in ("forehand", "backhand") else None
     try:
         # coach_swing measures, calls detect_faults, and selects its top fault.
@@ -157,8 +199,54 @@ def coach(identifier: str) -> dict:
     except (ValueError, KeyError, IndexError, TypeError):
         raise HTTPException(422, "Swing cannot be measured for coaching") from None
     # Unsupported edits must not be presented as actionable ghost fixes.
-    ready = result["ghost_ready"] and result["fix"] in FIXES
-    return {**result, "fix": result["fix"] if ready else None,
-            "amount": result["fix_amount"] if ready else None,
-            "ghost_ready": ready, "contactFrame": swing["contactFrame"],
+    fix, amount = ghost_choice(result)
+    return {**result, "fix": fix, "amount": amount,
+            "ghost_ready": fix is not None, "contactFrame": swing["contactFrame"],
             "contactMethod": swing.get("metadata", {}).get("contactMethod", "provided-contact-estimate")}
+
+
+@app.post("/process", status_code=201)
+def process_video(
+    file: Annotated[UploadFile, File(description="One local MOV, MP4, AVI or M4V clip")],
+    slowdown: Annotated[float | None, Form(gt=0, le=16, allow_inf_nan=False)] = None,
+    hand: Annotated[Literal["R", "L", "auto"] | None, Form()] = None,
+    stroke: Annotated[Literal["forehand", "backhand", "auto"] | None, Form()] = None,
+) -> dict:
+    """Blocking worker-thread job; publish only after pose, coach and ghost succeed."""
+    suffix = Path(file.filename or '').suffix.lower()
+    if suffix not in ('.mov', '.mp4', '.m4v', '.avi'):
+        raise HTTPException(422, 'Upload a MOV, MP4, M4V or AVI video')
+    root = Path(os.environ.get('GHOST_SWINGS_DIR', str(
+        Path(__file__).resolve().parents[2] / 'data' / 'processed'))).resolve()
+    options = LiveOptions(slowdown=slowdown, hand=None if hand == 'auto' else hand,
+                          stroke=None if stroke == 'auto' else stroke,
+                          model_path=os.environ.get('GHOST_POSE_MODEL', LiveOptions.model_path))
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix='ghost-upload-') as temporary:
+            upload = Path(temporary) / f'clip{suffix}'
+            size = 0
+            with upload.open('wb') as stream:
+                while chunk := file.file.read(1024 * 1024):
+                    size += len(chunk)
+                    if size > MAX_UPLOAD_BYTES:
+                        raise HTTPException(413, 'Video exceeds the 250 MB upload limit')
+                    stream.write(chunk)
+            if not size:
+                raise HTTPException(422, 'Video upload is empty')
+            # A client still sending its body must never reserve the job slot.
+            # Admit only complete, size-checked uploads to expensive processing.
+            if not PROCESS_SEMAPHORE.acquire(blocking=False):
+                raise HTTPException(429, 'A clip is already processing')
+            try:
+                return process_live_clip(upload, root / f'live-{uuid.uuid4().hex}', options)
+            finally:
+                PROCESS_SEMAPHORE.release()
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from None
+    except RuntimeError:
+        raise HTTPException(503, 'Live pipeline unavailable; configure the pose model and ffmpeg/ffprobe') from None
+    except OSError:
+        raise HTTPException(503, 'Live processing output is unavailable') from None
+    finally:
+        file.file.close()

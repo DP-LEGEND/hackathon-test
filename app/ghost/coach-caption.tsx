@@ -1,15 +1,16 @@
-// Coach caption laid over the 3D view, like a subtitle: the top fault and its cue.
-// Orange = what the player did (the fault), cyan = the fix (the cue).
+// Coach caption laid over the 3D view, like a subtitle: the top fault, its cue and, when the
+// ghost shows a different fix, the coach's ghost_note. Orange = what the player did (the
+// fault), cyan = the fix (the cue).
 
+import { RotateCcw } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { GHOST_COLOUR, YOU_COLOUR } from "./colours";
 import type { CoachCaption } from "./compare";
 
 export type CaptionState =
   | { kind: "loading" }
-  | { kind: "error"; message: string }
-  /** Nobody has coached this swing (live swings: the swing API has no coach endpoint yet). */
-  | { kind: "none" }
+  | { kind: "error"; message: string; onRetry: () => void }
   | { kind: "ready"; caption: CoachCaption };
 
 /** "Stance 80 deg open" -> "Stance 80° open". Wording only; the number is the file's. */
@@ -25,6 +26,7 @@ export function CoachCaptionBar({ state, size }: { state: CaptionState; size: "l
         className={cn(
           "w-full max-w-3xl rounded-xl border bg-background/92 text-center shadow-lg",
           large ? "px-4 py-3 sm:px-6 sm:py-4" : "px-3 py-2 sm:px-5 sm:py-2.5",
+          state.kind === "error" && "pointer-events-auto",
         )}
         aria-live="polite"
       >
@@ -35,11 +37,14 @@ export function CoachCaptionBar({ state, size }: { state: CaptionState; size: "l
           )}
         </figcaption>
         {state.kind === "loading" && <p className="mt-1 text-sm text-muted-foreground">Reading the coach&apos;s call…</p>}
-        {state.kind === "error" && <p className="mt-1 text-sm text-muted-foreground">Coach caption unavailable: {state.message}</p>}
-        {state.kind === "none" && (
-          <p className={cn("mt-1 text-muted-foreground", large ? "text-base sm:text-lg" : "text-sm")}>
-            No coach call for this swing yet. Pick a fix to see its ghost.
-          </p>
+        {state.kind === "error" && (
+          <div className="mt-1 flex flex-wrap items-center justify-center gap-x-3 gap-y-2">
+            <p className="text-sm text-muted-foreground">The coach&apos;s call didn&apos;t load: {state.message}</p>
+            <Button variant="outline" size="sm" onClick={state.onRetry}>
+              <RotateCcw data-icon="inline-start" />
+              Try again
+            </Button>
+          </div>
         )}
         {state.kind === "ready" && (
           <>
@@ -58,6 +63,11 @@ export function CoachCaptionBar({ state, size }: { state: CaptionState; size: "l
             >
               “{state.caption.cue}”
             </blockquote>
+            {state.caption.ghostNote && (
+              <p className={cn("mt-1.5 text-balance text-muted-foreground", large ? "text-sm sm:text-base" : "text-xs sm:text-sm")}>
+                {state.caption.ghostNote}
+              </p>
+            )}
           </>
         )}
       </figure>

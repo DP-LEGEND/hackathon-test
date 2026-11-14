@@ -24,7 +24,9 @@ L_WRIST, R_WRIST, L_HIP, R_HIP, L_SH, R_SH = 15, 16, 23, 24, 11, 12
 def torso_px(img: np.ndarray) -> float:
     sh = (img[:, L_SH, :2] + img[:, R_SH, :2]) / 2
     hp = (img[:, L_HIP, :2] + img[:, R_HIP, :2]) / 2
-    return float(np.nanmedian(np.linalg.norm(sh - hp, axis=1)))
+    lengths = np.linalg.norm(sh - hp, axis=1)
+    finite = lengths[np.isfinite(lengths)]
+    return float(np.median(finite)) if len(finite) else float("nan")
 
 
 def _wrist_track(raw: dict, wrist: int, slowdown: float, win: int | None = None) -> np.ndarray:
