@@ -91,12 +91,17 @@ def test_closing_the_stance_doesnt_change_the_predicted_ball(good):
     assert r["ghost"]["ball"] == r["you"]["ball"]
 
 
-def test_ball_path_is_ball_py_with_the_estimated_speed_and_assumed_shot(elbow):
-    you = elbow["you"]
-    expected = predict_ball_path(you["racketSpeed"]["value"], cmp.DEFAULT_ELEVATION_DEG, 0.0, DEFAULT_CONTACT)
+def test_ball_path_is_ball_py_from_the_racket_head_with_the_estimated_speed_and_aim(elbow):
+    you, launch = elbow["you"], elbow["assumptions"]["launch"]["you"]
+    expected = predict_ball_path(you["racketSpeed"]["value"], cmp.DEFAULT_ELEVATION_DEG,
+                                 launch["azimuth"]["value"], tuple(launch["point"]))
     assert you["ball"] == expected
-    assert elbow["assumptions"]["launchElevationDeg"] == cmp.DEFAULT_ELEVATION_DEG
-    assert elbow["assumptions"]["contactSpot"] == list(DEFAULT_CONTACT)
+    assert elbow["assumptions"]["launchElevationDeg"] == cmp.DEFAULT_ELEVATION_DEG == 12.0
+    assert elbow["assumptions"]["launch"]["elevation"]["label"] == "ASSUMED"
+    assert elbow["assumptions"]["contactSpot"] == launch["point"]
+    anchor = elbow["assumptions"]["anchor"]
+    assert (anchor["x"], anchor["z"]) == (DEFAULT_CONTACT[0], DEFAULT_CONTACT[2])  # right-handed forehand spot
+    assert launch["point"][0] == anchor["x"] and launch["point"][2] == anchor["z"]
 
 
 def test_racket_speed_is_wrist_speed_times_the_lever_ratio(good):
