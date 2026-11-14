@@ -12,8 +12,8 @@ from __future__ import annotations
 import numpy as np
 
 from physics.skeleton import (
-    ARM, L_SH, R_SH, RACKET_TIP, floor_basis, hitting_hand, mid, speed, to_array, up_vector,
-    L_HIP, R_HIP,
+    ARM, L_ANKLE, L_SH, R_ANKLE, R_SH, RACKET_TIP, floor_basis, hitting_hand, mid, speed, to_array,
+    up_vector, L_HIP, R_HIP,
 )
 
 # Window (ms around contact) in which we look for the wrist release.
@@ -112,6 +112,32 @@ def shoulder_coil(yaw: np.ndarray, contact: int) -> tuple[int, float]:
     return top, float(d[top])
 
 
+def stance_angle(P: np.ndarray, hand: str, contact: int, up: np.ndarray) -> float:
+    """Signed floor-plane angle from the hitting direction to the feet line at contact, degrees.
+
+    Folded to -90..90: 0 = feet in line with the shot (side-on, closed), +-90 = feet square
+    to it (fully open). The sign follows floor_basis: turning the feet by +a about `up`
+    adds a. NaN if unmeasurable.
+
+    Hitting direction = racket tip velocity at contact if the racket is tracked in most
+    frames, else the hitting wrist's velocity. Same definition as
+    coach/measure_extra.py stance_open_deg.
+    """
+    if len(P) < 2:
+        return float("nan")
+    tip = P[:, RACKET_TIP]
+    point = tip if np.isfinite(tip).all(axis=1).mean() > 0.8 else P[:, ARM[hand]["wr"]]
+    e1, e2 = floor_basis(up)
+    d = np.gradient(point, axis=0)[contact]
+    f = P[contact, R_ANKLE] - P[contact, L_ANKLE]
+    d2, f2 = np.array([d @ e1, d @ e2]), np.array([f @ e1, f @ e2])
+    nd, nf = np.linalg.norm(d2), np.linalg.norm(f2)
+    if not (np.isfinite(nd) and np.isfinite(nf)) or nd < 1e-9 or nf < 1e-9:
+        return float("nan")
+    diff = np.degrees(np.arctan2(f2[1], f2[0]) - np.arctan2(d2[1], d2[0]))
+    return float((diff + 90.0) % 180.0 - 90.0)
+
+
 def wrist_release_ms(P: np.ndarray, hand: str, contact: int, fps: float) -> float:
     """How many ms before contact the wrist uncocks fastest (peak wrist angular speed).
 
@@ -141,7 +167,8 @@ def measure(swing: dict, fps_real: float | None = None, hand: str | None = None)
     fps = real_fps(swing, fps_real)
     hand = hand or hitting_hand(P)
     c = contact_frame(swing, P, hand)
-    _, turn = shoulder_coil(shoulder_yaw(P, up_vector(P)), c)
+    up = up_vector(P)
+    _, turn = shoulder_coil(shoulder_yaw(P, up), c)
     return {
         "hand": hand,
         "contact_frame": c,
@@ -150,6 +177,7 @@ def measure(swing: dict, fps_real: float | None = None, hand: str | None = None)
         "wrist_at_contact_deg": float(wrist_angle(P, hand)[c]),
         "shoulder_turn_deg": abs(turn),
         "wrist_release_ms": wrist_release_ms(P, hand, c, fps),
+        "stance_open_deg": abs(stance_angle(P, hand, c, up)),
     }
 
 
