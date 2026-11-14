@@ -18,6 +18,12 @@ Two people: **PRESENTER** talks, **OPERATOR** drives the laptop and terminal.
 ```
 git -C ~/hackathon-demo fetch origin
 ```
+
+This undoes the known local `package-lock.json` change in that folder, so it can't block the checkout:
+
+```
+git -C ~/hackathon-demo checkout -- package-lock.json
+```
 ```
 git -C ~/hackathon-demo checkout --detach origin/main
 ```
@@ -25,7 +31,11 @@ git -C ~/hackathon-demo checkout --detach origin/main
 git -C ~/hackathon-demo log --oneline -1
 ```
 
-The last line should be the commit you're demoing (34b9298 or later). `package-lock.json` shows as modified in that folder. Leave it: main hasn't changed `package.json` or `package-lock.json`, so `node_modules` is still right. If `package.json` changes at the freeze, run `npm ci` in `~/hackathon-demo`.
+The last line should be the commit you're demoing (34b9298 or later). Then always reinstall the packages, so `node_modules` matches main:
+
+```
+cd ~/hackathon-demo && npm ci
+```
 
 **2. Check ports 3000 and 8000 are free.**
 
@@ -201,7 +211,8 @@ The launch angle isn't shown as a number. The court panel's footnote says the la
 | **Upload still processing** | Browser tab 2 still shows the progress panel (*Finding your swing… / Measuring… / Building your ghost…*) | Say "that clip is still processing" and carry on. Switch back to browser tab 2 before the end, or skip beat 3. |
 | **Upload times out** | `/upload` (browser tab 2): *"Still processing, but this page stopped waiting"* | The Python service keeps going and saves the swing when done. Carry on. Later, in browser tab 1, go to **Pick a swing** and click **Check again**: the swing appears as the only **Live** card (the stage folder started empty). |
 | **Upload refused** | `/upload` (browser tab 2): *"A clip is already processing"* | Only one clip at a time. Wait for the first one, then click **Try again**. |
-| **Slow-mo clip fails** | `/upload` (browser tab 2): *"Couldn't build your ghost"* with the server's message (e.g. *"No fully tracked swing found; keep the whole body in frame and film one clear swing"*), or a swing with a wildly wrong speed | Set **Slowdown** by hand: **1×** for a normal 60 fps video, **4×** or **8×** for slow motion. Set **Hitting hand** or **Stroke** if those were misread. Then click **Try again**. To show the rehearsal swing instead, stop terminal tab 1 (Ctrl+C), restart it with `GHOST_SWINGS_DIR=~/ghost-rehearsal ~/ghost-env/bin/python -m uvicorn pipeline.server:app --port 8000`, then in browser tab 1 go to **Pick a swing** and click **Check again**. |
+| **Slow-mo clip fails** | `/upload` (browser tab 2): *"Couldn't build your ghost"* with the server's message (e.g. *"No fully tracked swing found; keep the whole body in frame and film one clear swing"*) | Set **Slowdown** by hand: **1×** for a normal 60 fps video, **4×** or **8×** for slow motion. Set **Hitting hand** or **Stroke** if those were misread. Then click **Try again**. To show the rehearsal swing instead, stop terminal tab 1 (Ctrl+C), restart it with `GHOST_SWINGS_DIR=~/ghost-rehearsal ~/ghost-env/bin/python -m uvicorn pipeline.server:app --port 8000`, then in browser tab 1 go to **Pick a swing** and click **Check again**. |
+| **Speed wildly wrong** | Browser tab 2 opened the fresh swing in `/ghost`, but its speed is wildly wrong | There's no **Try again** here: a finished upload jumps to `/ghost`, and `/upload` resets. In browser tab 2, go back to http://localhost:3000/upload, click **Choose a video** and pick `~/Downloads/fresh.mov` again. Set **Slowdown** (**1×** for a normal 60 fps video, **4×** or **8×** for slow motion), and **Hitting hand** or **Stroke** if those were misread. Then click **Build my ghost**. |
 | **Pipeline missing** | `/upload` (browser tab 2): *"Couldn't build your ghost"* with *"Live pipeline unavailable; configure the pose model and ffmpeg/ffprobe"* | Pre-flight step 3 failed. Skip beat 3 and use the saved swings. |
 | **Wi-Fi dies** | Nothing, as long as the app is already running | Keep going: the service, the coach and the ghost all run on this Mac. Don't restart the app or run a build while offline (the fonts come from Google Fonts). If anything misbehaves, **use the saved swings** (beats 1 and 2) and skip beat 3. |
 | **A ghost won't load** | *"Couldn't make this ghost: …"* | Click **Try again**. If it fails again, click **Try another swing** and pick a saved sample. |
