@@ -8,7 +8,7 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { CSS2DObject, CSS2DRenderer } from "three/addons/renderers/CSS2DRenderer.js";
 import type { Vec3 } from "@/lib/ghost/types";
 import { GHOST_COLOUR, YOU_COLOUR } from "./colours";
-import type { SkeletonPose } from "./swing";
+import type { SkeletonPose, SwingCoordinates } from "./swing";
 
 /** Standard squash court (World Squash singles), metres. */
 export const COURT = {
@@ -25,7 +25,8 @@ export const COURT = {
 /**
  * Pipeline skeletons are hip-centred, y up, and face +z. Our front wall is at z = 0, so both
  * figures turn 180° about y to face it: [x, y, z] -> [-x, y, -z]. It's a turn, not a mirror,
- * so a right-hander's hitting hand stays on their right (+x, towards the right wall).
+ * so a right-hander's hitting hand stays on their right (+x, towards the right wall). Swings
+ * that physics already returns in court coordinates aren't turned (see placeFigures).
  */
 export const FACING_Y = Math.PI;
 
@@ -35,8 +36,9 @@ export function turned(p: Vec3): Vec3 {
 }
 
 /**
- * The pipeline gives hip-centred joints, not a court position, so where the player stands is
- * for display only: at the T, or (with ball paths) where the hitting hand meets the ball.
+ * Hip-centred joints have no court position, so where that player stands is for display only:
+ * at the T, or (with ball paths) where the hitting hand meets the ball. Court-coordinate swings
+ * stand where physics put them.
  */
 const T_SPOT = { x: COURT.width / 2, z: COURT.shortLine } as const;
 const SIDE_BY_SIDE_OFFSET = 1.1; // metres along x, towards the middle of the court
@@ -309,46 +311,65 @@ export type FloorOffsets = { you: number; ghost: number };
 export type CameraView = "player" | "court";
 
 export type ReplayLayout = {
-  /** Lowest foot height of each swing, so both stand on the floor. */
+  /** Lowest foot height of each swing, so hip-centred swings stand on the floor. */
   floor: FloorOffsets;
-  /**
-   * The "you" hitting wrist at the contact frame (hip-centred, as in the file). With ball paths
-   * the player is placed so this wrist meets the ball's start; null (or no ball paths) = at the T.
-   */
-  youWrist: Vec3 | null;
+  /** How the swings' joints sit on the court: hip-centred (turned and placed here) or court (as given). */
+  coordinates: SwingCoordinates;
   /** Null hides the ball paths. Ghost null = one shared path (the fix doesn't change the ball). */
   ballPaths: { you: BallPathView; ghost: BallPathView | null } | null;
 };
 
-/** The hitting wrist at contact (hip-centred) and the PREDICTED ball's first point (court). */
-export type BallAnchor = { wrist: Vec3; ballStart: Vec3 };
-
 export type Placement = {
-  /** Group positions in court coordinates; each group is also turned by FACING_Y. */
+  /** Group positions in court coordinates. */
   you: Vec3;
   ghost: Vec3;
+  /** Turn about y for both groups: FACING_Y for hip-centred swings, 0 for court ones. */
+  facingY: number;
+  /** Where the player stands on court: the camera aims here. */
+  spot: { x: number; z: number };
   /** Direction along x towards the middle of the court: -1 on the right half, +1 on the left. */
   towardsMiddle: 1 | -1;
 };
 
 /**
- * Where both figures stand. Without an anchor: at the T, feet on the floor. With one, the "you"
- * figure moves so its hitting wrist at the contact frame, after the turn and the floor offset, is
- * exactly over the ball's start in x and z. Height isn't snapped: the wrist is measured about
- * 0.9 m up at contact and the ball's assumed start is 0.6 m, so snapping it would sink the feet
- * into the floor. The ghost moves by the same offset, plus the side-by-side shift.
+ * Where both figures stand and which way they face.
+ * - Court coordinates: exactly as given. No turn, no floor offset, no placement; the ghost only
+ *   gets the side-by-side shift.
+ * - Hip-centred: turned to face the front wall, feet on the floor, at the T. With `youWrist` and
+ *   the ball's start, the "you" figure moves so its hitting wrist at the contact frame, after the
+ *   turn and the floor offset, is exactly over the ball's start in x and z. Height isn't snapped:
+ *   the wrist is measured about 0.9 m up at contact and the ball's assumed start is 0.6 m, so
+ *   snapping would sink the feet into the floor. The ghost moves by the same offset, plus the
+ *   side-by-side shift.
  */
-export function placeFigures(floor: FloorOffsets, anchor: BallAnchor | null, sideBySide: boolean): Placement {
+export function placeFigures(
+  floor: FloorOffsets,
+  coordinates: SwingCoordinates,
+  ballStart: Vec3 | null,
+  sideBySide: boolean,
+): Placement {
+  if (coordinates.system === "court") {
+    const [x, , z] = coordinates.youHips;
+    const towardsMiddle = x >= COURT.width / 2 ? -1 : 1;
+    const shift = sideBySide ? towardsMiddle * SIDE_BY_SIDE_OFFSET : 0;
+    return { you: [0, 0, 0], ghost: [shift, 0, 0], facingY: 0, spot: { x, z }, towardsMiddle };
+  }
   let x: number = T_SPOT.x;
   let z: number = T_SPOT.z;
-  if (anchor) {
-    const wrist = turned(anchor.wrist);
-    x = anchor.ballStart[0] - wrist[0];
-    z = anchor.ballStart[2] - wrist[2];
+  if (coordinates.youWrist && ballStart) {
+    const wrist = turned(coordinates.youWrist);
+    x = ballStart[0] - wrist[0];
+    z = ballStart[2] - wrist[2];
   }
   const towardsMiddle = x >= COURT.width / 2 ? -1 : 1;
   const shift = sideBySide ? towardsMiddle * SIDE_BY_SIDE_OFFSET : 0;
-  return { you: [x, -floor.you, z], ghost: [x + shift, -floor.ghost, z], towardsMiddle };
+  return {
+    you: [x, -floor.you, z],
+    ghost: [x + shift, -floor.ghost, z],
+    facingY: FACING_Y,
+    spot: { x, z },
+    towardsMiddle,
+  };
 }
 
 export class SkeletonScene {
@@ -362,9 +383,10 @@ export class SkeletonScene {
   private readonly ghost = new SkeletonFigure({ colour: GHOST_COLOUR, opacity: 0.5, halo: 0.012 });
   private balls: THREE.Group | null = null;
   private floor: FloorOffsets = { you: 0, ghost: 0 };
-  private anchor: BallAnchor | null = null;
+  private coordinates: SwingCoordinates = { system: "hip-centred", youWrist: null };
+  private ballStart: Vec3 | null = null;
   private sideBySide = false;
-  private placement: Placement = placeFigures(this.floor, null, false);
+  private placement: Placement = placeFigures(this.floor, this.coordinates, null, false);
   private view: CameraView = "player";
 
   /** Throws if WebGL isn't available. */
@@ -399,8 +421,6 @@ export class SkeletonScene {
     this.scene.add(new THREE.HemisphereLight(0xffffff, 0x1d2027, 1.6));
     const sun = new THREE.DirectionalLight(0xffffff, 1.4);
     sun.position.set(COURT.width / 2 + 3, 6, COURT.length + 2);
-    this.you.group.rotation.y = FACING_Y;
-    this.ghost.group.rotation.y = FACING_Y;
     this.scene.add(sun, buildCourt(), this.you.group, this.ghost.group);
     this.applyPlacement();
 
@@ -418,14 +438,16 @@ export class SkeletonScene {
     this.camera.updateProjectionMatrix();
   }
 
-  /** Moves both figures to the current placement. True when the player's spot on court changed. */
+  /** Turns and moves both figures to the current placement. True when the player's spot changed. */
   private applyPlacement(): boolean {
-    const [beforeX, , beforeZ] = this.placement.you;
-    this.placement = placeFigures(this.floor, this.anchor, this.sideBySide);
+    const before = this.placement.spot;
+    this.placement = placeFigures(this.floor, this.coordinates, this.ballStart, this.sideBySide);
+    this.you.group.rotation.y = this.placement.facingY;
+    this.ghost.group.rotation.y = this.placement.facingY;
     this.you.group.position.fromArray(this.placement.you);
     this.ghost.group.position.fromArray(this.placement.ghost);
-    const [x, , z] = this.placement.you;
-    return x !== beforeX || z !== beforeZ;
+    const { x, z } = this.placement.spot;
+    return x !== before.x || z !== before.z;
   }
 
   /** Moves the camera to the current preset and makes it what "Reset view" returns to. */
@@ -436,7 +458,7 @@ export class SkeletonScene {
       this.camera.position.set(COURT.width / 2 + 2.6, 5.2, COURT.length + 5.2);
     } else {
       // From behind the player (they face the front wall, -z), a little towards the middle.
-      const [x, , z] = this.placement.you;
+      const { x, z } = this.placement.spot;
       target.set(x, 1, z);
       this.camera.position.set(x + this.placement.towardsMiddle * 2.4, 1.9, z + 3.6);
     }
@@ -446,9 +468,10 @@ export class SkeletonScene {
   }
 
   /** New swings or ball paths. Keeps the camera unless the player moved. */
-  setReplay({ floor, youWrist, ballPaths }: ReplayLayout) {
+  setReplay({ floor, coordinates, ballPaths }: ReplayLayout) {
     this.floor = floor;
-    this.anchor = ballPaths && youWrist ? { wrist: youWrist, ballStart: ballPaths.you.points[0] } : null;
+    this.coordinates = coordinates;
+    this.ballStart = ballPaths ? ballPaths.you.points[0] : null;
     if (this.applyPlacement()) this.applyView();
 
     if (this.balls) {

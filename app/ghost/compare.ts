@@ -3,7 +3,7 @@
 // services/physics/compare.py or services/coach/agent.py wrote. Nothing is recomputed.
 
 import type { Vec3 } from "@/lib/ghost/types";
-import { loadSwing, type LoadedSwing } from "./swing";
+import { hipCentreAtContact, hittingWristAtContact, loadSwing, type LoadedSwing, type SwingCoordinates } from "./swing";
 
 export type BallOutcome = "in" | "tin" | "out" | "down";
 
@@ -45,7 +45,21 @@ export type CompareResult = {
     landingDepthM: Change;
   };
   assumptions: { contactSpot: Vec3; note: string };
+  /** Top-level `coordinateSystem`: "court" when physics returned the swings already in court coordinates. */
+  coordinateSystem: string | null;
 };
+
+/**
+ * How to draw this compare's swings. With "coordinateSystem": "court" they're drawn exactly as
+ * given. Otherwise they're hip-centred pipeline skeletons that the scene turns and places, with
+ * the hitting wrist over the ball's start when the ball paths are shown (`withBall`).
+ */
+export function swingCoordinates(compare: CompareResult, withBall: boolean): SwingCoordinates {
+  if (compare.coordinateSystem === "court") {
+    return { system: "court", youHips: hipCentreAtContact(compare.you.swing) };
+  }
+  return { system: "hip-centred", youWrist: withBall ? hittingWristAtContact(compare.you.swing, compare.hand) : null };
+}
 
 export type CoachFault = {
   id: string;
@@ -266,6 +280,7 @@ export function parseCompare(value: unknown): CompareResult {
   return {
     fix: { id: text(fix.id, "fix.id"), amount: num(fix.amount, "fix.amount"), unit: text(fix.unit, "fix.unit") },
     hand,
+    coordinateSystem: typeof c.coordinateSystem === "string" ? c.coordinateSystem : null,
     ghostIsReal,
     you,
     ghost,

@@ -11,7 +11,15 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { CoachCaptionBar, type CaptionState } from "./coach-caption";
 import { CoachDetails } from "./coach-details";
-import { fixName, formatValue, OUTCOME_WORDS, sameBallPath, type BallPath, type Catalogue } from "./compare";
+import {
+  fixName,
+  formatValue,
+  OUTCOME_WORDS,
+  sameBallPath,
+  swingCoordinates,
+  type BallPath,
+  type Catalogue,
+} from "./compare";
 import { BallChanges, BodyChanges } from "./delta-panel";
 import { FixPicker } from "./fix-picker";
 import { GhostStage, type StageStatus } from "./ghost-stage";
@@ -29,7 +37,7 @@ import {
   type ApiState,
   type FixOption,
 } from "./sources";
-import { hittingWristAtContact } from "./swing";
+import type { SwingCoordinates } from "./swing";
 import { SwingPicker, type CatalogueState } from "./swing-picker";
 import { useAsync, type Async } from "./use-async";
 
@@ -162,6 +170,12 @@ export function GhostDemo() {
   const onCourt = step === "court";
   const samePath = compare ? sameBallPath(compare.you.ball, compare.ghost.ball) : false;
   const you = compare?.you.swing ?? (swing.status === "ready" ? swing.value : null);
+  // Follows where `you` comes from: compare's swings use its coordinateSystem ("court" = draw as
+  // given); the raw swing shown before a compare loads is always a hip-centred pipeline skeleton.
+  const coordinates = useMemo<SwingCoordinates>(
+    () => (compare ? swingCoordinates(compare, onCourt) : { system: "hip-centred", youWrist: null }),
+    [compare, onCourt],
+  );
   const balls = useMemo(() => {
     if (!onCourt || !compare) return null;
     // Identical paths: draw one, and the legend says the fix changes the body, not the ball.
@@ -293,7 +307,7 @@ export function GhostDemo() {
             you={you}
             ghost={showGhost && compare ? compare.ghost.swing : null}
             balls={balls}
-            youWrist={onCourt && compare ? hittingWristAtContact(compare.you.swing, compare.hand) : null}
+            coordinates={coordinates}
             view={view}
             onViewChange={setView}
             status={stageStatus}
@@ -312,7 +326,9 @@ export function GhostDemo() {
             />
             {onCourt && (
               <p className="pointer-events-none absolute top-3 right-3 hidden max-w-[34%] text-right text-xs text-muted-foreground md:block">
-                Court 6.40 × 9.75 m · player placed with the hitting hand over the ball&apos;s assumed start (display only)
+                {coordinates.system === "court"
+                  ? "Court 6.40 × 9.75 m · player where physics placed them"
+                  : "Court 6.40 × 9.75 m · player placed with the hitting hand over the ball's assumed start (display only)"}
               </p>
             )}
             <CoachCaptionBar state={caption} size={step === "coach" ? "large" : "compact"} />

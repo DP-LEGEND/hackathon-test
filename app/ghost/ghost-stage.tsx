@@ -7,10 +7,16 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import { Columns2, Crosshair, Grid3x3, Layers, Pause, PersonStanding, Play, RotateCcw, Turtle } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { Vec3 } from "@/lib/ghost/types";
 import { GHOST_COLOUR, YOU_COLOUR } from "./colours";
 import type { BallPathView, CameraView, ReplayLayout, SkeletonScene } from "./skeleton-scene";
-import { buildTimeline, frameIndexAt, samplePose, type LoadedSwing, type Timeline } from "./swing";
+import {
+  buildTimeline,
+  frameIndexAt,
+  samplePose,
+  type LoadedSwing,
+  type SwingCoordinates,
+  type Timeline,
+} from "./swing";
 
 const SLOW_MO = 0.25;
 const THUMB_PX = 16; // native range thumb width, used to line the contact tick up with it
@@ -36,7 +42,7 @@ export function GhostStage({
   you,
   ghost,
   balls,
-  youWrist,
+  coordinates,
   view,
   onViewChange,
   status,
@@ -47,8 +53,8 @@ export function GhostStage({
   ghost: LoadedSwing | null;
   /** Null hides the ball paths; ghost null draws one shared path. */
   balls: { you: BallPathView; ghost: BallPathView | null } | null;
-  /** Your hitting wrist at contact (hip-centred). With ball paths, the player is placed so it meets the ball. */
-  youWrist: Vec3 | null;
+  /** How the swings sit on the court: hip-centred (turned and placed) or court (drawn as given). */
+  coordinates: SwingCoordinates;
   view: CameraView;
   onViewChange: (view: CameraView) => void;
   /** Covers the view while the swing loads or fails. */
@@ -79,9 +85,9 @@ export function GhostStage({
       you,
       ghost,
       timeline: buildTimeline(ghost ? [you, ghost] : [you]),
-      scene: { floor: { you: you.floorY, ghost: ghost?.floorY ?? you.floorY }, youWrist, ballPaths: balls },
+      scene: { floor: { you: you.floorY, ghost: ghost?.floorY ?? you.floorY }, coordinates, ballPaths: balls },
     };
-  }, [you, ghost, balls, youWrist]);
+  }, [you, ghost, balls, coordinates]);
 
   useEffect(() => {
     layoutRef.current = layout;

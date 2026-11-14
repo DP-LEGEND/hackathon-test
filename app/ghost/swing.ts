@@ -8,6 +8,8 @@ export const JOINT_COUNT = 33;
 const NOSE = 0;
 const LEFT_WRIST = 15;
 const RIGHT_WRIST = 16;
+const LEFT_HIP = 23;
+const RIGHT_HIP = 24;
 const LEFT_ANKLE = 27;
 const RIGHT_ANKLE = 28;
 const FOOT_JOINTS = [27, 28, 29, 30, 31, 32]; // ankles, heels, toes
@@ -32,6 +34,18 @@ export type LoadedSwing = {
 };
 
 export type Hand = "R" | "L";
+
+/**
+ * How a swing's joints sit on the court, which decides how the scene draws them.
+ * - "hip-centred": pipeline output (hips at the origin, y up, facing +z). The scene turns it 180°
+ *   to face the front wall and stands it on the floor: at the T, or, given `youWrist` and ball
+ *   paths, with the hitting wrist over the ball's start.
+ * - "court": physics already placed it in court coordinates. The scene draws it exactly as given;
+ *   `youHips` (the hips at contact) only aims the camera and the side-by-side shift.
+ */
+export type SwingCoordinates =
+  | { system: "hip-centred"; youWrist: Vec3 | null }
+  | { system: "court"; youHips: Vec3 };
 
 /** Same order as physics swing_hand: the recorded hand wins; nothing is guessed here. */
 function recordedHand(value: unknown): Hand | null {
@@ -207,6 +221,13 @@ export function hittingWristAtContact(s: LoadedSwing, fallbackHand: Hand | null)
   const hand = s.hand ?? fallbackHand;
   if (!hand) return null;
   return s.swing.frames[s.contactFrame].joints[hand === "R" ? RIGHT_WRIST : LEFT_WRIST];
+}
+
+/** Midpoint of the two hips at the contact frame: where the player stands, for aiming the camera. */
+export function hipCentreAtContact(s: LoadedSwing): Vec3 {
+  const j = s.swing.frames[s.contactFrame].joints;
+  const [l, r] = [j[LEFT_HIP], j[RIGHT_HIP]];
+  return [(l[0] + r[0]) / 2, (l[1] + r[1]) / 2, (l[2] + r[2]) / 2];
 }
 
 /** A timeline covering both swings, with 0 at contact for each. */
