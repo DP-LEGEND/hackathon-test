@@ -415,3 +415,17 @@ def test_a_garbage_entry_already_in_memory_is_dropped(env, result: dict) -> None
     live_voice._memory[name] = b"not json"
     assert voice_for_swing("sample", result)["source"] == "caption"
     assert name not in live_voice._memory
+
+
+# ---- Review fix on #60: cached cues are re-checked before they're served ---------------
+
+def test_a_cached_cue_that_reverses_the_fix_is_dropped_and_the_caption_returned(env) -> None:
+    # Well-formed, as an older validator could have cached it, but "more" reverses "less".
+    result = {"stroke": "forehand", "cue": "Turn your shoulders less",
+              "fault": {"label": "Over-rotation: shoulders turn 120 deg", "cue": "Turn your shoulders less"}}
+    path = env.cache / f"cue-{live_voice._digest('swing', coach_facts(result))}.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"swing_id": "swing", "cue": "Turn your shoulders more"}))
+    assert voice_for_swing("swing", result) == {"cue": "Turn your shoulders less", "audioUrl": None,
+                                                "source": "caption"}
+    assert not path.exists()

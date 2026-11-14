@@ -316,14 +316,14 @@ def _cached_cue(data: bytes) -> Optional[str]:
     return cue if isinstance(cue, str) and cue.strip() else None
 
 
-def _discard(name: str, swing_id: str) -> None:
+def _discard(name: str, swing_id: str, why: str) -> None:
     """Forget a bad cache entry in memory and on disk, so it's regenerated or skipped."""
     _memory.pop(name, None)
     try:
         (_cache_dir() / name).unlink(missing_ok=True)
     except OSError:
         pass
-    log.warning("Ignored a corrupt voice cache entry for %s.", swing_id)
+    log.warning("Ignored a voice cache entry for %s: %s.", swing_id, why)
 
 
 def _cue_for(swing_id: str, facts: Optional[dict[str, str]], caption: str,
@@ -335,9 +335,15 @@ def _cue_for(swing_id: str, facts: Optional[dict[str, str]], caption: str,
         cached = _read(name)
         if cached is not None:
             cue = _cached_cue(cached)
-            if cue is not None:
-                return cue, "claude"
-            _discard(name, swing_id)  # corrupt or old-format entry: treat as a miss
+            if cue is None:
+                _discard(name, swing_id, "unreadable or wrong shape")  # treat as a miss
+            else:
+                # Re-check against today's rules: a cue cached under an older, weaker check
+                # (an invented number, a reversed fix) must not be served or voiced.
+                try:
+                    return check_worded_cue(cue, facts), "claude"
+                except CoachError as exc:
+                    _discard(name, swing_id, f"fails the current checks ({exc})")  # treat as a miss
         if name in _failed or not has_key("ANTHROPIC_API_KEY"):
             return caption, "caption"  # no entry written: adding a key later still works
         try:
