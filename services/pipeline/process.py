@@ -11,7 +11,7 @@ import cv2
 
 from pipeline.cache import extract_pair
 from pipeline.pose import DEFAULT_MODEL, extract_raw, to_swing
-from pipeline.segment import audio_hits, find_swings
+from pipeline.segment import audio_hits, find_swings, wrist_speed
 from pipeline.timing import Timeline
 from pipeline.stereo import calibrate, clean, normalise, triangulate
 
@@ -22,7 +22,7 @@ class Options:
     slowdown_a: float = 1.0
     slowdown_b: float = 1.0
     offset_b: float = 0.0
-    hand: str = "R"
+    hand: str = "auto"
     side: str = "auto"
     torso_m: float = 0.5
     focal_a: float | None = None
@@ -42,8 +42,6 @@ class Options:
     def validate(self) -> None:
         Timeline(self.slowdown_a, self.a_realtime_before, self.a_realtime_after)
         Timeline(self.slowdown_b, self.b_realtime_before, self.b_realtime_after)
-        if self.tap_filter and not self.hits_wav:
-            raise ValueError("tap_filter requires hits_wav (camera A playback audio)")
         for key in ("slowdown_a", "slowdown_b", "torso_m", "min_speed"):
             value = getattr(self, key)
             if not np.isfinite(value) or value <= 0:
@@ -53,7 +51,7 @@ class Options:
         for value in (self.focal_a, self.focal_b):
             if value is not None and (not np.isfinite(value) or value <= 0):
                 raise ValueError("Focal lengths must be finite and positive")
-        if self.hand not in ("R", "L") or self.side not in ("auto", "forehand", "backhand"):
+        if self.hand not in ("auto", "R", "L") or self.side not in ("auto", "forehand", "backhand"):
             raise ValueError("Invalid hand or side")
 
 
@@ -63,16 +61,19 @@ def classify_side(world: np.ndarray, contact: int, hand: str) -> str:
     A body-only heuristic, not a racket/ball measurement. Ambiguous poses remain
     unknown; --side provides the known label for a single-side session.
     """
-    pose = np.median(world[max(0, contact - 3):contact + 1], axis=0)
+    pose = world[contact]
     lateral = pose[12] - pose[11]
-    lateral[1] = 0
+    up = (pose[11] + pose[12] - pose[23] - pose[24]) / 2
+    up_length = np.linalg.norm(up)
+    up = up / up_length if up_length >= 1e-6 else np.array([0., 1., 0.])
+    lateral = lateral - np.dot(lateral, up) * up
     length = np.linalg.norm(lateral)
     if length < 1e-6:
         return "unknown"
     wrist = pose[16 if hand == "R" else 15]
     hips = (pose[23] + pose[24]) / 2
     signed = float(np.dot(wrist - hips, lateral / length)) * (1 if hand == "R" else -1)
-    if abs(signed) < 0.05:
+    if abs(signed) < 1e-6:
         return "unknown"
     return "forehand" if signed > 0 else "backhand"
 
@@ -99,10 +100,10 @@ def complete_optional_joints(world: np.ndarray) -> tuple[np.ndarray, list[int]]:
     return world, filled
 
 
-def swings_from_raw(a: dict, b: dict, options: Options = Options()) -> tuple[list[dict], dict]:
+def swings_from_raw(a: dict, b: dict | None = None, options: Options = Options()) -> tuple[list[dict], dict]:
     """Pure-array entry point for extraction caches and deterministic validation."""
     options.validate()
-    for name, raw in (("A", a), ("B", b)):
+    for name, raw in ([("A", a)] + ([("B", b)] if b is not None else [])):
         t = np.asarray(raw["t"])
         if len(t) < 2 or not np.isfinite(t).all() or np.any(np.diff(t) <= 0):
             raise ValueError(f"Camera {name} needs at least two increasing finite timestamps")
@@ -114,16 +115,17 @@ def swings_from_raw(a: dict, b: dict, options: Options = Options()) -> tuple[lis
         raise ValueError("Camera A has invalid world landmarks")
     scale = options.slowdown_b / options.slowdown_a
     focal_a = options.focal_a or 1400 * a["size"][0] / 1920
-    focal_b = options.focal_b or 1400 * b["size"][0] / 1920
+    focal_b = options.focal_b or (1400 * b["size"][0] / 1920 if b is not None else 1400)
     fps_real = float(a["fps"]) * options.slowdown_a
     timeline_a = Timeline(options.slowdown_a, options.a_realtime_before, options.a_realtime_after)
     timeline_b = Timeline(options.slowdown_b, options.b_realtime_before, options.b_realtime_after)
     real_a = timeline_a.real(a["t"])
-    real_b = timeline_b.real(b["t"])
+    real_b = timeline_b.real(b["t"]) if b is not None else None
     # offset_b remains B playback seconds at A playback zero, including negative
     # extrapolation using B's initial rate. Re-measure sync when changing ramps.
     real_offset = float(timeline_b.real(options.offset_b))
-    synced_a, synced_b = {**a, "t": real_a}, {**b, "t": real_b}
+    synced_a = {**a, "t": real_a}
+    synced_b = {**b, "t": real_b} if b is not None else None
     sections = timeline_a.sections(a["t"])
 
     def clean_sections(points):
@@ -143,6 +145,8 @@ def swings_from_raw(a: dict, b: dict, options: Options = Options()) -> tuple[lis
     stereo = np.full_like(mono, np.nan)
     stereo_filled = np.ones(mono.shape[:2], dtype=bool)
     try:
+        if b is None:
+            raise ValueError("Single camera: depth is estimated from MediaPipe")
         cal = calibrate(synced_a, synced_b, 1.0, real_offset, f_a=focal_a, f_b=focal_b)
         reconstructed = triangulate(synced_a, synced_b, cal, 0, len(a["t"]))
         # A stereo sample between B frames uses a temporally interpolated view.
@@ -157,26 +161,34 @@ def swings_from_raw(a: dict, b: dict, options: Options = Options()) -> tuple[lis
         # A cropped/unusable second view must not prevent usable iPhone swings.
         cal = None
         calibration_error = str(exc)
-    hits = timeline_a.real(audio_hits(options.hits_wav, rise_db=25)) if options.hits_wav else None
+    if "audio_hits" in a:
+        hits = np.asarray(a["audio_hits"])
+    else:
+        hits = timeline_a.real(audio_hits(options.hits_wav, rise_db=25)) if options.hits_wav else None
     detections = []
     for lo, hi, factor in sections:
         if hi - lo < 2:
             continue
         part = {**a, "img": a["img"][lo:hi], "t": real_a[lo:hi], "fps": a["fps"] * factor}
-        for event in find_swings(part, min_speed=7.0 if options.tap_filter else options.min_speed,
-                                 min_gap_real_s=2.5 if options.tap_filter else .5,
-                                 hits=hits, confirm_s=.5, require_audio=options.tap_filter or hits is not None,
-                                 speed_fallback=True, wrist=16 if options.hand == "R" else 15):
-            for key in ("start", "end", "peak"):
-                event[key] += lo
-            if event.get("hit") is not None:
-                hit_frame = int(np.argmin(abs(real_a - event["hit"])))
-                if lo <= hit_frame < hi:
-                    event["start"] = min(event["start"], hit_frame)
-                    event["end"] = max(event["end"], hit_frame)
-            event["fpsReal"] = float(a["fps"]) * factor
-            event["realtime"] = factor == 1
-            detections.append(event)
+        section_events = []
+        hands = ("R", "L") if options.hand == "auto" else (options.hand,)
+        for hand in hands:
+            for event in find_swings(part, min_speed=7.0 if options.tap_filter else options.min_speed,
+                                     min_gap_real_s=2.5 if options.tap_filter else .5,
+                                     hits=hits, confirm_s=.5, require_audio=False,
+                                     speed_fallback=True, wrist=16 if hand == "R" else 15):
+                event["hand"] = hand
+                for key in ("start", "end", "peak"):
+                    event[key] += lo
+                if event.get("hit") is not None:
+                    hit_frame = int(np.argmin(abs(real_a - event["hit"])))
+                    if lo <= hit_frame < hi:
+                        event["start"] = min(event["start"], hit_frame)
+                        event["end"] = max(event["end"], hit_frame)
+                event["fpsReal"] = float(a["fps"]) * factor
+                event["realtime"] = factor == 1
+                section_events.append(event)
+        detections.extend(section_events)
     # Enforce spacing across rate switches as well as inside each section.
     selected = []
     for event in sorted(detections, key=lambda e: e["speed"], reverse=True):
@@ -188,6 +200,21 @@ def swings_from_raw(a: dict, b: dict, options: Options = Options()) -> tuple[lis
     valid_core = np.isfinite(mono[:, CORE_JOINTS]).all(axis=(1, 2))
     for number, event in enumerate(detections, 1):
         start, end = event["start"], event["end"] + 1  # finder uses inclusive end
+        hand = event.get("hand", options.hand)
+        if hand == "auto":
+            hand = "R"
+        if options.hand == "auto":
+            local = {**a, "img": a["img"][start:end]}
+            peaks = {}
+            speeds = {}
+            for side, joint in (("R", 16), ("L", 15)):
+                speed = wrist_speed(local, wrist=joint, slowdown=event.get("fpsReal", fps_real) / a["fps"])
+                speeds[side] = speed
+                finite = speed[np.isfinite(speed)]
+                peaks[side] = float(finite.max()) if len(finite) else -1.0
+            hand = "L" if peaks["L"] > peaks["R"] else "R"
+            if hand != event.get("hand", "R") and np.isfinite(speeds[hand]).any():
+                event["peak"] = start + int(np.nanargmax(speeds[hand]))
         fps_real = event.get("fpsReal", fps_real)
         measured_contact = event.get("hit") is not None
         contact_source = event["peak"] if not measured_contact else int(np.argmin(abs(real_a - event["hit"])))
@@ -237,18 +264,21 @@ def swings_from_raw(a: dict, b: dict, options: Options = Options()) -> tuple[lis
             continue
         swing["source"] = source
         swing["fpsReal"] = fps_real
-        swing["side"] = (classify_side(world, contact, options.hand)
+        swing["side"] = (classify_side(world, contact, hand)
                          if options.side == "auto" else options.side)
         visibility = np.nan_to_num(a["vis"][start:end, CORE_JOINTS],
                                    nan=0., posinf=0., neginf=0.)
         # Stable reporting at the .3 boundary despite floating-point summation.
         core_visibility = round(float(np.clip(visibility, 0, 1).mean()), 6)
         swing["metadata"] = {
-            "hand": options.hand,
+            "hand": hand,
+            "handSource": "auto" if options.hand == "auto" else "manual",
+            "depth": "estimated" if source == "mono" else "stereo",
             "contactMethod": "audio-transient" if measured_contact else "wrist-speed-peak-estimate",
             "detection": event.get("detection", "pattern"), "realtime": event.get("realtime", False),
             "croppedForCoreVisibility": (start, end) != original_window,
             "sideMethod": "wrist-lateral-position-estimate" if options.side == "auto" else "provided",
+            "stroke": swing["side"], "strokeSource": "auto" if options.side == "auto" else "manual",
             "sourceStartFrame": start, "sourceContactFrame": contact_source,
             "sourceStartSeconds": float(a["t"][start]),
             "sourcePeakSeconds": float(a["t"][event["peak"]]),
@@ -269,7 +299,7 @@ def swings_from_raw(a: dict, b: dict, options: Options = Options()) -> tuple[lis
     return swings, report
 
 
-def process_clips(clip_a: str, clip_b: str, out_dir: str,
+def process_clips(clip_a: str, clip_b: str | None, out_dir: str,
                   options: Options = Options()) -> dict:
     """Extract both clips, write one strict JSON file per accepted swing + manifest.
 
@@ -277,6 +307,12 @@ def process_clips(clip_a: str, clip_b: str, out_dir: str,
     overwrite existing output or put model weights/video in the repository.
     """
     options.validate()
+    if clip_b is None:
+        from pipeline.live import process_live_clip, LiveOptions
+        return process_live_clip(Path(clip_a), Path(out_dir), LiveOptions(
+            slowdown=None if options.slowdown_a == 1 else options.slowdown_a, hand=None if options.hand == "auto" else options.hand,
+            stroke=None if options.side == "auto" else options.side, model_path=options.model_path,
+            min_speed=options.min_speed))
     for clip in (clip_a, clip_b):
         if not Path(clip).is_file():
             raise ValueError(f"Clip does not exist: {clip}")

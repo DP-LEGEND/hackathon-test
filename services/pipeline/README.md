@@ -1,4 +1,155 @@
-# Stereo swing pipeline (Dev)
+# Ghost clip pipeline
+
+## Film one clip live
+
+One-time demo setup: install the existing `services/requirements.txt` environment,
+put the MediaPipe heavy pose model at `~/ghost-models/pose_landmarker_heavy.task`
+(or set `GHOST_POSE_MODEL`), and have **ffmpeg and ffprobe** on PATH. Portable
+binaries can instead be selected with `GHOST_FFMPEG` and `GHOST_FFPROBE`. These
+are server-side executable paths. No API keys are needed for deterministic coaching.
+
+With that environment active, from `services/`:
+
+```sh
+python -m pipeline /path/to/new-clip.mov
+```
+
+Camera B and the output directory are optional. This reads timing metadata,
+normalizes to real-time cadence, extracts camera-A pose, detects both wrists,
+and chooses the higher wrist-speed peak **inside each swing window**. The hitting
+wrist's contact position in a torso-aligned basis determines forehand/backhand.
+The output goes to a new run under `data/processed/` (or `GHOST_SWINGS_DIR`).
+The CLI prints the first swing ID. All accepted swings are saved with coach and
+comparison JSON files, plus a manifest. Single-camera output is labelled
+`source: "mono"`, `metadata.depth: "estimated"`; inferred depth is not stereo.
+
+Manual overrides always win over automatic values:
+
+```sh
+python -m pipeline /path/to/new-clip.mov --slowdown 4 --hand L --stroke backhand --out-dir ../data/processed/live-manual
+```
+
+`--slowdown` is a uniform factor relative to the encoded/native cadence; 1 forces
+real time. `--hand R|L` and `--stroke forehand|backhand` override inference. The
+saved provenance is `auto` or `manual` for explicit/ordinary detection;
+slowdown heuristics use `playback-intent` or `speed-retry`, and ambiguous strokes
+resolved by the coach use `coach-inferred`; `metadata.hand` and `metadata.stroke` carry the resolved values. The
+pipeline passes the resolved hand onward; the coach's standalone metadata-hand
+handling remains owned by PR #38, with measure_extra.py kept equal to main.
+The old three-positional stereo command remains supported below, including its
+explicit sync and rate-switch controls. `--slowdown`/`--stroke` also override the
+primary camera's legacy stereo settings.
+
+### Timing metadata and its limits
+
+The probe reads `avg_frame_rate`, `r_frame_rate`, stream/container tags, and video
+QuickTime `elst` entries (versions 0 and 1). Non-unit edit rates are undone on the
+native media clock: empty edits are padding, trims are retained, and slow sections
+are mapped back to real seconds before pose extraction. `metadata.timeMapping`
+preserves those rates; `sourceContactPlaybackSeconds` maps contact back to the
+original movie. Intermediate processing is CFR, at most 120 fps; `fps`/`fpsReal`
+describe that actual processing cadence, and `captureFps` records capture evidence.
+Live `sourceContactSeconds` uses normalized real seconds even after a slowdown
+retry; it is derived from the real window start plus the saved contact frame time.
+
+Explicit numeric QuickTime extensions `com.apple.quicktime.capture.fps`,
+`com.apple.quicktime.capture-frame-rate`, and `com.apple.quicktime.video-frame-rate`
+are used **only if present**. They are not assumed to exist on every iPhone file.
+When `com.apple.quicktime.full-frame-rate-playback-intent` is present without
+non-unit edits, the AirDrop heuristic assumes factor 4 and records
+`slowdownSource: "playback-intent"`. This is a heuristic, not a numeric capture
+FPS in that tag; `--slowdown 1` overrides it for real-time footage with that tag.
+The guessed timestamp base `r_frame_rate` is not treated as capture FPS: normal
+60 fps and VFR 60 fps inputs without the playback-intent hint stay factor 1.
+When capture/mapping metadata has been stripped (e.g. a burned-in slow render),
+physical timing cannot be recovered from frame rates alone. Auto uses encoded
+real-time cadence, records `timingBasis`/`timingWarning`, and allows `--slowdown`
+to supply the missing information. If auto factor 1 produces no accepted swing,
+the existing pose arrays are retried at factors 2, 4 and 8. A candidate is accepted
+only if its hip-relative peak wrist speed is 12-35 m/s; among plausible candidates
+the nearest to the interval midpoint wins. The selected factor is recorded as
+`speed-retry` with a warning and the measured retry wrist speed. Manual slowdown
+values are never retried. This is a demo recovery heuristic, not capture-rate
+calibration. Manual timing retains edit-list trims and contact playback mapping;
+it changes the source timing factor without restoring trimmed-away frames.
+It never silently assumes every high-FPS clip is slow motion. Freeze/reverse edits and malformed timing are rejected clearly.
+
+Optional audio transients provide a contact frame when one is nearby. Silence,
+missing audio, or no matching transient always falls back to the hitting wrist's
+speed peak; audio is never a required filter. Ball paths remain PREDICTED and
+shot assumptions remain visible in the comparison result. An ambiguous geometric
+stroke is handed to the coach with no forced stroke; its inference is stored
+under `metadata.stroke` with `strokeSource: "coach-inferred"`. A valid later
+swing in the upload is not lost just because an earlier stroke was ambiguous.
+
+Metadata references: [FFmpeg frame-rate fields](https://www.ffmpeg.org/doxygen/9.0/structAVStream.html),
+[QuickTime edit list](https://developer.apple.com/documentation/quicktime-file-format/edit_list_atom/edit_list_table),
+and [Apple full-frame-rate playback intent](https://developer.apple.com/documentation/avfoundation/avmetadataidentifier/quicktimemetadatafullframerateplaybackintent).
+
+### Upload API
+
+Start from the repo root, with the Python environment active:
+
+```sh
+python -m uvicorn pipeline.server:app --app-dir services --port 8000
+```
+
+`GET /health` checks the local server. `POST /process` accepts multipart `file`
+plus optional `slowdown`, `hand` and `stroke` fields; no settings are required:
+
+```sh
+curl -F "file=@new-clip.mov" http://localhost:8000/process
+```
+
+Use `curl.exe` in Windows PowerShell. Example manual fields are `-F slowdown=4
+-F hand=L -F stroke=backhand`. The request runs in a worker thread and waits until
+pose, deterministic coach and physics ghost results are saved. It returns 201
+with `swingId`, `swingIds`, `coach`, `compare`, `webPath: "/ghost"`, and the run
+report. A no-fault/unavailable-fix result has an unchanged comparison marked
+`noCorrection: true`, with amount 0; it does not invent a correction.
+
+Saved swings are immediately available from `GET /swings` and `GET /swings/{id}`,
+and the existing `/coach/{id}` and `/compare/{id}` routes work with their resolved
+hand/stroke. The current `/ghost` page can list API swings after refreshing its
+API list; its existing picker selects them. This PR does not add an upload UI,
+query-string auto-selection, or live coach captions to frontend-owned files.
+The response carries the completed coaching/comparison for a future upload UI.
+When the top fault cannot be animated, `/coach/{id}` returns the coach's supported
+`ghost_fix`/`ghost_fix_amount` as actionable `fix`/`amount`; top fault/cue stay intact.
+Only fixes in the physics library are returned, and `ghost_ready` reflects whether
+an actionable fix is returned. Upload comparisons use the same selection.
+Call FastAPI directly for processing: the existing Next.js catch-all proxy has a
+30-second timeout, while CPU pose extraction may take longer.
+
+Uploads are local MOV/MP4/M4V/AVI, at most 250 MB, 4K, five playback minutes and
+30 real seconds. Only local-file protocols/container formats are allowed in the
+media tools. Temporary uploads and decoded frames are removed after processing;
+only JSON outputs remain. Failed processing publishes no manifest. Invalid
+inputs/no tracked swing return 422, oversized uploads 413, and missing model/tools
+or unavailable output storage 503. Existing outputs are never overwritten.
+POST /process admits one job at a time using a non-blocking process-local
+semaphore, acquired only after the upload is fully received and size-checked.
+A slow uploader does not reserve the processing slot. A completed valid upload
+gets 429 "A clip is already processing" if another job is running. Oversized
+Content-Length gets 413 before the body is read. The slot is released on processing
+success or failure. Use the default single-worker
+API command when one job total is required; multiple server workers have separate
+semaphores.
+
+## Live validation
+
+`python -m pytest pipeline/tests/test_live_clip.py` covers automatic timing,
+hand, stroke, optional sound, manual provenance, upload validation and persistence.
+The real-model integration case requires `GHOST_POSE_MODEL`, ffmpeg/ffprobe, and
+`GHOST_LIVE_TEST_IMAGE` pointing to the official
+[MediaPipe pose.jpg test asset](https://storage.googleapis.com/mediapipe-assets/pose.jpg).
+It generates a short image-motion AVI under pytest's temporary directory and runs
+upload -> real decoder -> real MediaPipe -> saved swing -> coach -> ghost. No
+pose functions are mocked in that case. The motion is synthetic global rotation,
+not validation of squash technique or of a live phone recording. Without those
+optional test assets it is explicitly skipped; no videos/models are committed.
+
+## Stereo swing pipeline (Dev)
 
 Run from **`services/`** in the Python 3.11/3.12 environment described in
 `CLAUDE.md` (`pip install -r requirements.txt`). Download the MediaPipe model
@@ -82,8 +233,8 @@ additive wire field is documented in `docs/interfaces.md`.
   **8 torso lengths / second**, minimum accepted-peak spacing .5 real seconds),
   with .45 s before and .35 s after the peak. `--min-speed` adjusts the threshold.
   Smoothing uses about .06 real seconds rather than a fixed frame count.
-  A candidate also needs a pullback, fast forward sweep and follow-through;
-  speed alone does not make a movement a swing. The direction is derived from
+  A canonical pullback/sweep pattern is preferred; speed-peak fallback recovers
+  swings with an atypical or cropped windup. The direction is derived from
   the wrist near the peak, so hand choice and image rotation do not set its sign.
   Starting heuristic thresholds: .12 torso lengths of preceding pullback,
   .25 before the peak and .10 after it, .50 total forward sweep, and net/path
@@ -91,9 +242,9 @@ additive wire field is documented in `docs/interfaces.md`.
   These are conservative geometric heuristics, not validated classifications:
   a cropped/foreshortened backswing can be missed, and a feed with a genuine
   swing-like motion can still pass. Tune against labelled real recordings;
-  audio-confirmed hits remain a separate follow-up.
-- **Contact is estimated from the wrist-speed peak**, not an observed ball hit.
-  `metadata.contactMethod` makes that explicit. Stroke side is also a heuristic;
+  optional audio-confirmed contact is available without gating detection.
+- **Contact uses a nearby audio transient when present, otherwise the wrist-speed
+  peak estimate**. `metadata.contactMethod` makes that explicit. Stroke side is also a heuristic;
   validate it against labels before using it to score technique.
 - Essential-matrix self-calibration uses visible shared 2D joints, then
   triangulates. It rejects insufficient correspondences, poor cheirality and
@@ -202,12 +353,12 @@ real-speed segment. Exported windows stop at switches, so their FPS, timestamps,
 gap limits and contact indices all describe one constant real rate. Frames right
 at a switch can therefore have shortened swing context.
 
-`--hits-wav iphone-playback.wav` requires a transient within ?0.5 **real seconds**
-and uses it for contact where possible. Supply 16 kHz mono PCM16 audio from the
+`--hits-wav iphone-playback.wav` looks for a transient within +/-0.5 **real seconds**
+and uses it for contact where possible; unmatched swings use a speed-peak estimate. Supply 16 kHz mono PCM16 audio from the
 same rendered A clip, with matching time zero; detection uses `rise_db=25`.
 `--tap-filter --hits-wav iphone-playback.wav` additionally sets peak speed ?7
 hip-relative torso lengths/real second and peak spacing ?2.5 real seconds.
-Audio confirmation runs before spacing, including spacing across rate switches.
+Audio remains optional; peak spacing also applies across rate switches.
 Without tap mode the existing speed threshold and .5 s spacing remain available.
 Audio transients are candidate hits, not a semantic classifier of ball sounds.
 
