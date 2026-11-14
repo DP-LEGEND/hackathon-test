@@ -9,9 +9,11 @@ when supplied. It does not parse, re-encode, or buffer the complete upload.
 The limit matches Python: 250 × 1024 × 1024 bytes for the complete request,
 including multipart overhead. Declared oversized requests receive 413 before
 reading the body. Unknown-length uploads are counted incrementally with
-backpressure and stopped at the same limit. The upstream request has a 120-second
-timeout covering upload and processing; client cancellation propagates upstream.
-The route also declares `maxDuration = 120` for hosting platforms.
+backpressure and stopped at the same limit. Requests whose first path segment is
+`process` have a 600-second (10-minute) upstream timeout covering upload and
+processing. Every other API path keeps a 30-second timeout; client cancellation
+propagates upstream. The catch-all route declares `maxDuration = 600` for hosting
+platforms, with the shorter per-request timeout enforced for all other paths.
 
 Upstream status codes and response bytes are preserved, including 400, 413, 422
 and 429 JSON errors. Content-Type and Retry-After are passed through. Connection
