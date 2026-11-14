@@ -62,29 +62,37 @@ def best_threshold(good: list[float], fault: list[float]) -> Optional[dict[str, 
     above" when faults read higher, "fires below" when lower). Candidate cuts are the
     midpoints between neighbouring values, ROUNDED FIRST to DECIMALS (duplicates dropped)
     and scored as rounded, so the hit rates reported are those of the threshold applied.
+
+    Ties: when several cuts score the same, prefer one that forms a correctly directed
+    rule (rule_problem() is None); among those, the lowest cut. So a usable rule is never
+    dropped just because an unusable cut with the same score came first.
     """
     good = [v for v in good if _finite(v)]
     fault = [v for v in fault if _finite(v)]
     if not good or not fault:
         return None
     above = statistics.median(fault) >= statistics.median(good)
+    medians = {"good_median": round(statistics.median(good), DECIMALS),
+               "fault_median": round(statistics.median(fault), DECIMALS),
+               "n_good": len(good), "n_fault": len(fault)}
     values = sorted(set(good + fault))
     mids = [(a + b) / 2 for a, b in zip(values, values[1:])] or [values[0]]
     cuts = sorted({round(m, DECIMALS) for m in mids})
     best: Optional[dict[str, Any]] = None
+    best_key: tuple[float, bool] = (-1.0, False)
     for cut in cuts:
         flags: Callable[[float], bool] = (lambda v: v > cut) if above else (lambda v: v < cut)
         tpr = sum(map(flags, fault)) / len(fault)
         fpr = sum(map(flags, good)) / len(good)
         score = (tpr + (1 - fpr)) / 2
-        if best is None or score > best["balanced_accuracy"] + 1e-12:
-            best = {"threshold": cut, "fires": "above" if above else "below",
-                    "fault_flagged": round(tpr, 3), "good_flagged": round(fpr, 3),
-                    "balanced_accuracy": round(score, 3)}
+        candidate = {"threshold": cut, "fires": "above" if above else "below",
+                     "fault_flagged": round(tpr, 3), "good_flagged": round(fpr, 3),
+                     "balanced_accuracy": round(score, 3), **medians}
+        # Higher score wins; on an equal score a usable rule beats an unusable one.
+        key = (round(score, 9), rule_problem(candidate) is None)
+        if best is None or key > best_key:
+            best, best_key = candidate, key
     assert best is not None
-    best.update(good_median=round(statistics.median(good), DECIMALS),
-                fault_median=round(statistics.median(fault), DECIMALS),
-                n_good=len(good), n_fault=len(fault))
     return best
 
 

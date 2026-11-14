@@ -247,3 +247,47 @@ def test_every_set_verdict_applies_with_its_reported_hit_rates() -> None:
         assert _applied_rates(rule, good, fault) == (best["fault_flagged"], best["good_flagged"]), key
         checked += 1
     assert checked == 2
+
+
+# ---- Review fix on #38: tied scores prefer a cut that forms a usable rule -----------
+
+def test_tied_cuts_prefer_the_one_that_forms_a_rule() -> None:
+    # Codex P2: cuts 0.5 and 1.5 both score 0.75; 0.5 equals the good median (unusable),
+    # 1.5 lies strictly between the medians and must be the one kept.
+    good, fault = [0, 0, 0, 1, 1, 2], [1, 1, 2, 2, 2, 2]
+    b = best_threshold(good, fault)
+    assert (b["threshold"], b["balanced_accuracy"], b["fires"]) == (1.5, 0.75, "above")
+    assert rule_problem(b) is None
+    assert _applied_rates(_rule(b), good, fault) == (b["fault_flagged"], b["good_flagged"]) == (0.667, 0.167)
+
+
+def test_tie_break_reaches_the_report_as_a_set_rule() -> None:
+    good, fault = [0, 0, 0, 1, 1, 2], [1, 1, 2, 2, 2, 2]
+    labels = _labels("backhand", "none", 6) + _labels("backhand", "straight_arm", 6)
+    values = {"none": good, "straight_arm": fault}
+
+    def measure(swing: dict, stroke: str) -> dict:
+        block, i = swing["id"].rsplit("-", 1)
+        return {"elbow_min_before_deg": values[block][int(i)]}
+
+    report = tune(labels, {r["swing"]: {"id": r["swing"]} for r in labels}, measure=measure)
+    verdict = report["faults"]["backhand/straight_arm"]["verdict"]
+    assert verdict == {"action": "set", "rule": {"measurement": "elbow_min_before_deg", "threshold": 1.5,
+                                                 "severe_at": 2.0, "target": 0.5}}
+
+
+def test_a_higher_score_still_wins_over_a_usable_lower_one() -> None:
+    # Score comes first: cut 2.5 scores 1.0 and is kept over usable cuts scoring 0.75.
+    b = best_threshold([0, 0, 2, 2], [5, 5, 3, 3])
+    assert (b["threshold"], b["balanced_accuracy"]) == (2.5, 1.0) and rule_problem(b) is None
+
+
+def test_two_usable_tied_cuts_keep_the_lower_one() -> None:
+    # Cuts 1.0 and 4.5 both score 0.875 and both lie strictly between the medians (0 and 7.5).
+    good, fault = [0, 0, 0, 2], [2, 7, 8, 9]
+    b = best_threshold(good, fault)
+    assert (b["threshold"], b["balanced_accuracy"]) == (1.0, 0.875) and rule_problem(b) is None
+    other = {**b, "threshold": 4.5}
+    assert rule_problem(other) is None
+    assert _applied_rates(_rule(other), good, fault)[0] < b["fault_flagged"] or \
+        _applied_rates(_rule(other), good, fault)[1] < b["good_flagged"]  # a genuinely different cut, same score
