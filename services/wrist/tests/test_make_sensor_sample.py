@@ -350,6 +350,7 @@ def test_sensor_tap_replaces_a_false_early_tap_run(mss, tmp_path, monkeypatch, c
 
     seen = {}
     monkeypatch.setattr(mss, "find_spikes", lambda r, k: with_false)
+    monkeypatch.setattr(mss, "tap_frames", lambda *a: [])  # the mock clip is 2 s long; frames aren't the point here
     monkeypatch.setattr(mss, "find_hands_box", lambda *a: None)
 
     def stop(clip_, tap_play, taps, slowdown, out_, box):
@@ -361,3 +362,26 @@ def test_sensor_tap_replaces_a_false_early_tap_run(mss, tmp_path, monkeypatch, c
     assert mss.main(args) == 1  # the stop above
     assert seen["taps"] == real and max(seen["taps"]) == real[-1]
     assert f"replaces the detected tap run at {detected[0]:.3f} s" in capsys.readouterr().out
+
+
+def test_a_tap_past_the_clip_is_refused_and_no_tap_check_is_written(mss, tmp_path, monkeypatch, capsys):
+    """Codex P1 on #93: a tap check silently missing a row hid a wrong --slowdown or a short clip."""
+    clip = mock_clip(tmp_path / "clip.avi")  # 60 frames at 30 fps: f0-f59
+    out = tmp_path / "tapcheck.jpg"
+    # At 4x the taps land at 0.2, 1.32 and 2.6 playback s: frames 6, 40 and 78, past f59.
+    with pytest.raises(mss.SampleError) as e:
+        mss.tap_check_image(clip, 0.2, [10.0, 10.28, 10.6], 4.0, out, box=(40, 20, 100, 80))
+    msg = str(e.value)
+    assert "tap 3 at 2.600 playback s (f78)" in msg and "tap 1" not in msg and "tap 2" not in msg
+    assert "f0-f59" in msg and "--tap" in msg and "--slowdown" in msg and "covers every tap" in msg
+    assert not out.exists()
+    # Through the CLI: refused before anything is written, not even the pipeline log.
+    clip_, truth, swings, _ = _cli_inputs(tmp_path / "cli")
+    monkeypatch.setattr(mss, "first_tap_event", lambda rec, spikes, from_s=None: [10.0, 10.28, 10.6])
+    monkeypatch.setattr(mss, "find_hands_box", lambda *a: pytest.fail("ran past the tap frames"))
+    check = tmp_path / "cli" / "check.jpg"
+    args = [str(clip_), str(truth["export"]), "--tap", "0.2", "--window", "1", "5", "--stroke", "backhand",
+            "--id", "taps_past_clip", "--out-dir", str(swings), "--check-image", str(check)]
+    assert mss.main(args) == 1
+    assert "tap 3 at 2.600 playback s (f78)" in capsys.readouterr().err
+    assert not check.exists() and not check.with_name("pipeline_taps_past_clip.log").exists()

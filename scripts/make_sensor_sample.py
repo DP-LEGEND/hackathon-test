@@ -337,22 +337,45 @@ def _grid(tiles: list[np.ndarray], cols: int) -> np.ndarray:
     return np.vstack([np.hstack(tiles[i:i + cols]) for i in range(0, len(tiles), cols)])
 
 
-def tap_check_image(clip: Path, tap_play: float, taps: list[float], slowdown: float, out: Path,
-                    box: tuple[int, int, int, int] | None = None) -> list[float]:
-    """For each sensor tap, the frame at its predicted playback time: the whole frame, and with `box`
-    (find_hands_box) a zoom on the hands at that frame and BEFORE_FRAMES earlier. A misread --tap,
-    or a wrong --slowdown (taps 2+ drift off the phone), shows."""
+def tap_frames(clip: Path, tap_play: float, taps: list[float], slowdown: float) -> list[tuple[float, int]]:
+    """(playback s, frame) where each sensor tap should land in the clip. SampleError naming every tap
+    whose frame is outside the clip or can't be read: a tap check missing a row would hide a wrong
+    --slowdown or a short or mismatched clip (the later taps are the ones that show clock drift)."""
     import cv2
 
     times = [tap_play + (t - taps[0]) * slowdown for t in taps]
     cap = cv2.VideoCapture(str(clip))
     fps = cap.get(cv2.CAP_PROP_FPS)
+    count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    frames = [(play_s, int(round(play_s * fps))) for play_s in times]
+    bad = [f"tap {k + 1} at {play_s:.3f} playback s (f{i})" for k, (play_s, i) in enumerate(frames)
+           if i < 0 or (count > 0 and i >= count) or _read(cap, i) is None]
+    cap.release()
+    if bad:
+        span = f"f0-f{count - 1}, 0-{count / fps:.3f} playback s" if count > 0 and fps > 0 else "unknown length"
+        raise SampleError(f"couldn't read the frame where {'these sensor taps' if len(bad) > 1 else 'this sensor tap'} "
+                          f"should land: {'; '.join(bad)} (the clip has {span}). Check --tap (the first tap's "
+                          "frame), --slowdown, and that the clip covers every tap")
+    return frames
+
+
+def tap_check_image(clip: Path, tap_play: float, taps: list[float], slowdown: float, out: Path,
+                    box: tuple[int, int, int, int] | None = None) -> list[float]:
+    """For each sensor tap, the frame at its predicted playback time: the whole frame, and with `box`
+    (find_hands_box) a zoom on the hands at that frame and BEFORE_FRAMES earlier. A misread --tap,
+    or a wrong --slowdown (taps 2+ drift off the phone), shows. Every tap gets its row: if any tap's
+    frame can't be read, SampleError (tap_frames) and no image is written."""
+    import cv2
+
+    frames = tap_frames(clip, tap_play, taps, slowdown)
+    cap = cv2.VideoCapture(str(clip))
     rows = []
-    for k, play_s in enumerate(times):
-        i = int(round(play_s * fps))
+    for k, (play_s, i) in enumerate(frames):
         img = _read(cap, i)
         if img is None:
-            continue
+            cap.release()
+            raise SampleError(f"couldn't read sensor tap {k + 1}'s frame (f{i}, {play_s:.3f} playback s): check --tap, "
+                              "--slowdown, and that the clip covers every tap")
         row = [_label(_tile(img), f"sensor tap {k + 1}: video {play_s:.3f} s (f{i})")]
         if box is not None:
             before = _read(cap, i - BEFORE_FRAMES)
@@ -361,11 +384,9 @@ def tap_check_image(clip: Path, tap_play: float, taps: list[float], slowdown: fl
                               f"{BEFORE_FRAMES} frames before"))
         rows.append(np.hstack(row))
     cap.release()
-    if not rows:
-        raise SampleError("couldn't read the tap frames from the clip: check --tap")
     out.parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(out), _grid(rows, 1 if box is not None else 3))
-    return times
+    return [play_s for play_s, _ in frames]
 
 
 def frame_sheet(clip: Path, start: float, end: float, step: int, out: Path, log: Path) -> int:
@@ -715,6 +736,7 @@ def make_sample(args: argparse.Namespace) -> int:
     # Every name this sample could write (a compare file only for a fix that works): checked now, so a
     # refusal writes nothing, not even the tap check, and again just before writing.
     refuse_taken_files(sample_files(sample_id, FIXES), catalogue, out_dir, replacing)
+    tap_frames(clip, tap_play, taps, slowdown)  # every tap's frame is in the clip, before anything is written
     check_path = (args.check_image or REPO / "data" / "raw" / f"tapcheck_{sample_id}.jpg").resolve()
     log_path = check_path.with_name(f"pipeline_{sample_id}.log")
     log_path.parent.mkdir(parents=True, exist_ok=True)
