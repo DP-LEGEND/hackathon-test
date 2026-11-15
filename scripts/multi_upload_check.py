@@ -195,7 +195,7 @@ def run_case(base: str, args: argparse.Namespace, paths: list[Path], want_depth:
         failures.append(f"depth: expected {want_depth}, got {depth}"
                         + (f" (fallbackReason: {fallback})" if fallback else ""))
 
-    has_wrist = bool(swing.get("wrist") or body.get("wrist"))
+    has_wrist = isinstance(swing.get("wrist"), dict) and swing["wrist"].get("usable") is True
     if has_wrist != want_wrist:
         failures.append("wrist data: expected it, none in the swing or the answer" if want_wrist
                         else "wrist data: present, expected none")
