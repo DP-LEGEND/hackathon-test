@@ -23,6 +23,8 @@
 .site-skip:focus-visible { top: 12px; }
 .site-header { display: flex; align-items: center; gap: 48px; height: 104px; padding: 0 64px; width: 100%; max-width: 1600px; margin: 0 auto; }
 .site-brand { display: inline-flex; align-items: center; min-height: 44px; font: 700 24px var(--ghost-wordmark), sans-serif; letter-spacing: -1px; }
+/* Home shows the 44px logo, other pages the 71px "GHOST" wordmark. One fixed slot keeps the nav links at the same x on every page. */
+.site-header > .site-brand { flex: none; width: 71px; }
 .site-nav { display: flex; gap: 48px; }
 .site-nav a { display: flex; align-items: center; min-height: 44px; border-bottom: 2px solid transparent; color: var(--muted-foreground); }
 .site-nav a:hover, .site-nav a[aria-current=page] { color: var(--foreground); border-color: var(--primary); }
@@ -42,8 +44,11 @@
 .site-demo > .site-page-heading { gap: 8px; margin-bottom: 16px; }
 .site-demo > .site-page-heading h1 { font-size: 30px; letter-spacing: -.8px; }
 @media (min-width: 1001px) {
-  .site-header-compact { height: 44px; }
-  .site-header.site-header-compact :focus-visible { outline-offset: -2px; }
+  /* One compact header on every page, so the nav never moves when you switch pages. It also keeps /demo's replay above the fold. */
+  .site-header { height: 44px; }
+  /* The 44px links touch the window's top edge; keep their focus ring inside it.
+     Needs (0,3,0) to beat ghost.css's `.ghost-theme :is(a,button,…):focus-visible { outline-offset: 4px }`. */
+  .site-shell .site-header :focus-visible { outline-offset: -2px; }
   .site-demo > .ghost-swing { gap: 12px; }
 }
 @media (max-width: 1000px) {
