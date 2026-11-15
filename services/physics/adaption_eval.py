@@ -1,23 +1,29 @@
-"""Fault-naming eval on held-out SIMULATED swings: code rule vs Claude vs an Adaption-tuned model.
+"""Fault-naming eval on held-out SIMULATED swings: code rule vs Claude, raw and baseline-relative.
 Owner: aryan.
 
     # from services/, after physics.adaption_prep split
     python -m physics.adaption_eval --data ../data/raw/adaption --claude-sample 200
+    # once Adaption reports the LoRA checkpoint's win rate, add it to the report:
+    python -m physics.adaption_eval --data ../data/raw/adaption --adaption-win-rate "61% vs base model (n=200)"
 
 Every answerer sees the same held-out test rows (source swings never used in training) and
 names one label: none, elbow_bend, shoulder_turn or wrist_early. Nobody states a number;
-the numbers in the input were measured by code.
+the numbers in the input were measured by code. Two input formats, one table each:
 
-- (a) Code rule: a per-fault threshold on how far each metric moved from the clean training
+- raw: the numbers of that one swing;
+- relative: each number's change from the player's clean-swing average for the stroke.
+
+Answerers:
+- (a) Code rule: a per-fault threshold on how far each number sits from the clean training
   swings of the same stroke, fitted on the training rows only.
 - (b) Claude (claude-opus-5-5, effort low): the same training knowledge as text (clean-swing
-  reference numbers and a few labelled training rows), on a stratified sample of 200 or fewer
-  test rows. Answers are cached in claude_cache.json next to the data, so a re-run is free.
-- (c) Tuned model: skipped cleanly unless ADAPTION_MODEL_ID and ADAPTION_API_KEY are set, and
-  until the Adaption inference call (ask_tuned) is written from their docs.
+  numbers and a few labelled training rows), on a stratified sample of 200 or fewer test rows.
+  Answers are cached in claude_cache.json next to the data, so a re-run is free.
 
-Writes eval_report.md and eval_results.json next to the data. All results are on SIMULATED
-data and must be labelled that way wherever they're shown. Keys are loaded from .env.local
+Adaption AutoScientist returns a LoRA checkpoint scored as a win rate against its base model;
+the report keeps a slot for that number, filled in by hand (--adaption-win-rate). Writes
+eval_report.md and eval_results.json next to the data. All results are on SIMULATED data and
+must be labelled that way wherever they're shown. The Claude key is loaded from .env.local
 (repo root, or --env-dir) into the process only, never printed.
 """
 
@@ -50,6 +56,12 @@ MAX_CLAUDE_SAMPLE = 200
 # List prices per million tokens for the cost note (Claude Opus 5.5, Nov 2026).
 PRICE_IN, PRICE_OUT = 4.00, 20.00
 REPO_ROOT = Path(__file__).resolve().parents[2]
+MODES = {
+    "raw": {"train": "train_rows.jsonl", "test": "test_rows.jsonl",
+            "title": "Raw numbers of one swing"},
+    "relative": {"train": "train_rows_relative.jsonl", "test": "test_rows_relative.jsonl",
+                 "title": "Change from the player's clean-swing average (baseline-relative)"},
+}
 
 # Which metric each fault moves, and which way (+1: the number goes up).
 DIRECTIONS = {
@@ -95,7 +107,7 @@ def stratified_sample(rows: list[dict], n: int, seed: int = 0) -> list[dict]:
 
 @dataclass
 class ThresholdRule:
-    """Per stroke: clean-swing mean and spread of each metric. Per fault: a z threshold."""
+    """Per stroke: clean-swing mean and spread of each number. Per fault: a z threshold."""
     reference: dict = field(default_factory=dict)   # {stroke: {metric: (mean, sd)}}
     thresholds: dict = field(default_factory=dict)  # {fault: z}
 
@@ -126,7 +138,6 @@ def fit_rule(train: list[dict], rounds: int = 3) -> ThresholdRule:
         }
     z = [rule.scores(r) for r in train]
     truth = [r["output"] for r in train]
-    rule.thresholds = {f: 1.0 for f in DIRECTIONS}
 
     def balanced(th: dict) -> float:
         preds = []
@@ -151,9 +162,9 @@ def fit_rule(train: list[dict], rounds: int = 3) -> ThresholdRule:
     return rule
 
 
-def own_baseline_accuracy(rows: list[dict]) -> tuple[int, int]:
-    """Diagnostic, not an answerer: name each row from how far it moved from its OWN source swing's
-    unchanged numbers (the none row of the same source). Rows without that baseline are left out."""
+def own_copy_accuracy(rows: list[dict]) -> tuple[int, int]:
+    """Diagnostic only, not an answerer and not possible in real use: name each row from how far it
+    moved from the UNCHANGED COPY of the same source swing (its none row)."""
     base = {r["source"]: r for r in rows if r["output"] == "none"}
     hits = total = 0
     for r in rows:
@@ -168,17 +179,17 @@ def own_baseline_accuracy(rows: list[dict]) -> tuple[int, int]:
 
 
 def spread_note(rule: ThresholdRule, train: list[dict], test: list[dict]) -> str:
-    """Why one swing's numbers are hard to label: injected sizes vs the spread between clean swings."""
+    """Why these inputs are hard to label: injected sizes vs the spread between clean swings."""
     parts = []
     for f, (m, _) in DIRECTIONS.items():
         sizes = [abs(r["measured_size"]) for r in train if r["output"] == f]
         sds = "/".join(f"{rule.reference[s][m][1]:.0f}" for s in STROKES)
         unit = "ms" if m.endswith("_ms") else "deg"
         parts.append(f"{f} median {np.median(sizes):.0f} {unit} vs sd {sds} {unit}")
-    hits, total = own_baseline_accuracy(test)
-    return ("Injected fault sizes are smaller than the spread between clean swings (forehand/backhand sd): "
-            + "; ".join(parts) + ". The input has no baseline for the player. Diagnostic: comparing each test "
-            f"row with its own source swing's unchanged numbers names {hits}/{total} correctly.")
+    hits, total = own_copy_accuracy(test)
+    return ("Injected fault sizes vs the spread of the clean training swings in this format (forehand/backhand sd): "
+            + "; ".join(parts) + f". Diagnostic only (not possible in real use): comparing each test row with the "
+            f"unchanged copy of the same swing names {hits}/{total} correctly.")
 
 
 # ---------- scoring ----------
@@ -207,13 +218,17 @@ def score(truth: list[str], pred: list[str]) -> dict:
 
 # ---------- (b) Claude ----------
 
-def claude_system_prompt(rule: ThresholdRule, train: list[dict], seed: int = 0, per_label: int = 3) -> str:
+def claude_system_prompt(rule: ThresholdRule, train: list[dict], mode: str = "raw", seed: int = 0,
+                         per_label: int = 3) -> str:
     """Same training knowledge the rule has, as text: clean-swing numbers and labelled examples."""
+    relative = mode == "relative"
+    seen = ("how much each number changed, measured by code against the player's clean-swing average for "
+            "that stroke (their baseline)" if relative else "only the numbers the code measured")
     lines = [
         "You label squash swings for a fault-detection test. The data is SIMULATED: code took real "
         "swings that a coach labelled clean and either left them unchanged or injected exactly one "
-        "fault, then re-measured them. You see only the numbers the code measured. Name which fault "
-        "was injected. Never state or estimate a number.",
+        f"fault, then re-measured them. You see {seen}. Name which fault was injected. "
+        "Never state or estimate a number.",
         "",
         "Labels:",
         "- none: the swing was left unchanged.",
@@ -221,13 +236,20 @@ def claude_system_prompt(rule: ThresholdRule, train: list[dict], seed: int = 0, 
         "- shoulder_turn: less shoulder turn in the backswing (a smaller shoulder turn).",
         "- wrist_early: the wrist releases earlier (more milliseconds before contact).",
         "",
-        "Clean training swings measured (mean, standard deviation; computed by code):",
+        ("Clean training swings vary around their baseline by (mean, standard deviation; computed by code):"
+         if relative else "Clean training swings measured (mean, standard deviation; computed by code):"),
     ]
-    names = {"elbow_at_contact_deg": "elbow at contact", "shoulder_turn_deg": "shoulder turn",
-             "wrist_release_ms": "wrist release (ms before contact; negative means after)"}
+    if relative:
+        names = {"elbow_at_contact_deg": "elbow change", "shoulder_turn_deg": "shoulder turn change",
+                 "wrist_release_ms": "wrist release change (ms; + means earlier)"}
+        fmt = "{:+.0f}"
+    else:
+        names = {"elbow_at_contact_deg": "elbow at contact", "shoulder_turn_deg": "shoulder turn",
+                 "wrist_release_ms": "wrist release (ms before contact; negative means after)"}
+        fmt = "{:.0f}"
     for stroke in STROKES:
         ref = rule.reference[stroke]
-        parts = [f"{names[m]} {ref[m][0]:.0f} (sd {ref[m][1]:.0f})" for m, _ in DIRECTIONS.values()]
+        parts = [f"{names[m]} {fmt.format(ref[m][0])} (sd {ref[m][1]:.0f})" for m, _ in DIRECTIONS.values()]
         lines.append(f"- {stroke}: " + "; ".join(parts))
     lines += ["", "Labelled training examples:"]
     rng = np.random.default_rng(seed)
@@ -345,88 +367,21 @@ class ClaudeAnswerer:
         return results
 
 
-# ---------- (c) tuned model slot ----------
+# ---------- one format ----------
 
-def ask_tuned(model_id: str, api_key: str, text: str) -> str:
-    """Ask the Adaption-tuned model for one label. Written once Adaption's inference docs are in hand."""
-    raise NotImplementedError("the Adaption inference call isn't written yet (needs their API docs)")
-
-
-def tuned_skip_reason(model_id: Optional[str], api_key: Optional[str]) -> Optional[str]:
-    missing = [n for n, v in (("ADAPTION_MODEL_ID", model_id), ("ADAPTION_API_KEY", api_key)) if not v]
-    return f"{' and '.join(missing)} not set" if missing else None
-
-
-# ---------- report ----------
-
-def _pct(x: Optional[float]) -> str:
-    return "n/a" if x is None else f"{100 * x:.1f}%"
-
-
-def _cell(rec: dict) -> str:
-    return "n/a" if not rec["total"] else f"{rec['hit']}/{rec['total']} ({100 * rec['hit'] / rec['total']:.0f}%)"
-
-
-def _latency(seconds: list[float]) -> str:
-    if not seconds:
-        return "n/a"
-    m = median(seconds)
-    return f"{m * 1000:.3f} ms" if m < 0.1 else f"{m:.2f} s"
-
-
-def report_markdown(meta: dict, columns: list[dict]) -> str:
-    out = [
-        "# Fault-naming eval (SIMULATED data)",
-        "",
-        f"SIMULATED: {meta['test_rows']} held-out test rows from {meta['test_sources']} source swings that "
-        f"no answerer trained on ({meta['train_rows']} training rows from {meta['train_sources']} other swings). "
-        "Each row is a real, labelled-clean swing left unchanged (none) or with one fault injected by code and "
-        "re-measured. These are not real faults.",
-        "",
-        "| Answerer (SIMULATED test rows) | Rows | Accuracy | none | elbow_bend | shoulder_turn | wrist_early "
-        "| False alarms on none | Median latency |",
-        "|---|---|---|---|---|---|---|---|---|",
-    ]
-    for c in columns:
-        if c.get("skipped"):
-            out.append(f"| {c['name']} | - | skipped: {c['skipped']} | | | | | | |")
-            continue
-        s = c["score"]
-        fa = s["false_alarms_on_none"]
-        out.append(
-            f"| {c['name']} | {s['rows']} | {_pct(s['accuracy'])} | "
-            + " | ".join(_cell(s["recall"][lab]) for lab in LABELS)
-            + f" | {fa['count']} of {fa['total']} | {_latency(c['latencies'])} |"
-        )
-    out += ["", "Recall cells: rows of that label named correctly. False alarms on none: unchanged swings "
-            "called a fault. Latency: wall time per answer on this Mac (Claude: one API call, measured when "
-            "first asked; cached re-runs report the original time)."]
-    out += [f"- {note}" for note in meta.get("notes", [])]
-    return "\n".join(out) + "\n"
-
-
-def load_env(env_dir: Optional[str]) -> None:
-    """Load .env.local then .env from the repo root and --env-dir, never overriding or printing."""
-    from dotenv import load_dotenv
-    for base in [REPO_ROOT] + ([Path(env_dir).expanduser()] if env_dir else []):
-        for name in (".env.local", ".env"):
-            if (base / name).is_file():
-                load_dotenv(base / name, override=False)
-
-
-def run(data: Path, claude_sample: int = MAX_CLAUDE_SAMPLE, use_claude: bool = True,
-        tuned_model: Optional[str] = None, seed: int = 0, workers: int = 4, client=None) -> dict:
+def run_mode(data: Path, mode: str, claude_sample: int = MAX_CLAUDE_SAMPLE, use_claude: bool = True,
+             seed: int = 0, workers: int = 4, client=None) -> dict:
+    """Score the code rule and Claude on one input format. Returns columns and notes."""
     if not 0 < claude_sample <= MAX_CLAUDE_SAMPLE:
         raise ValueError(f"--claude-sample must be 1..{MAX_CLAUDE_SAMPLE}")
-    train, test = load_rows(data / "train_rows.jsonl"), load_rows(data / "test_rows.jsonl")
+    files = MODES[mode]
+    train, test = load_rows(data / files["train"]), load_rows(data / files["test"])
     if {r["source"] for r in train} & {r["source"] for r in test}:
         raise ValueError("a source swing is in both train and test; re-run adaption_prep split")
     rule = fit_rule(train)
     sample = stratified_sample(test, claude_sample, seed)
-    sample_names = {r["name"] for r in sample}
     columns, notes = [], []
 
-    # (a) code rule, timed per row
     preds, lat = [], []
     for r in test:
         t0 = time.perf_counter()
@@ -446,12 +401,11 @@ def run(data: Path, claude_sample: int = MAX_CLAUDE_SAMPLE, use_claude: bool = T
                  f"{_pct(sum(r['output'] == majority for r in test) / len(test))} on all test rows.")
     notes.append(spread_note(rule, train, test))
 
-    # (b) Claude
     claude_name = f"(b) Claude {CLAUDE_MODEL} (effort {CLAUDE_EFFORT})"
     if not use_claude:
         columns.append({"name": claude_name, "skipped": "turned off with --no-claude"})
     else:
-        answerer = ClaudeAnswerer(claude_system_prompt(rule, train, seed), data / "claude_cache.json",
+        answerer = ClaudeAnswerer(claude_system_prompt(rule, train, mode, seed), data / "claude_cache.json",
                                   client=client, workers=workers)
         try:
             answers = answerer.answer_all(sample)
@@ -459,17 +413,15 @@ def run(data: Path, claude_sample: int = MAX_CLAUDE_SAMPLE, use_claude: bool = T
             columns.append({"name": claude_name, "skipped": str(exc)})
         else:
             got = [(r, a) for r, a in zip(sample, answers) if a is not None]
-            truth = [r["output"] for r, _ in got]
             preds_c = [a["fault"] for _, a in got]
-            columns.append({"name": claude_name, "score": score(truth, preds_c),
+            columns.append({"name": claude_name, "score": score([r["output"] for r, _ in got], preds_c),
                             "latencies": [a["latency_s"] for _, a in got], "predictions": preds_c,
                             "rows": [r["name"] for r, _ in got]})
-            served = Counter(a["served_by"] for _, a in got)
             tin = sum(a["input_tokens"] for _, a in got)
             tout = sum(a["output_tokens"] for _, a in got)
-            notes.append(f"Claude: {answerer.new_calls} new calls, {sum(a['cached'] for _, a in got)} from cache; "
-                         f"served by {dict(served)}; {tin:,} input + {tout:,} output tokens "
-                         f"(about ${(tin * PRICE_IN + tout * PRICE_OUT) / 1e6:.2f} at list price).")
+            notes.append(f"Claude: {answerer.new_calls} new calls, {sum(a['cached'] for _, a in got)} rows from cache; "
+                         f"served by {dict(Counter(a['served_by'] for _, a in got))}; {tin:,} input + {tout:,} "
+                         f"output tokens (about ${(tin * PRICE_IN + tout * PRICE_OUT) / 1e6:.2f} at list price).")
             odd = Counter(a["fault"] for _, a in got if a["fault"] not in LABELS)
             if odd:
                 notes.append(f"Claude gave no label for {dict(odd)} rows (counted wrong).")
@@ -477,46 +429,121 @@ def run(data: Path, claude_sample: int = MAX_CLAUDE_SAMPLE, use_claude: bool = T
                 notes.append(f"Claude calls that failed and were left out ({len(answerer.errors)}): "
                              + "; ".join(answerer.errors[:5]) + (" …" if len(answerer.errors) > 5 else ""))
 
-    # (c) tuned model
-    model_id = tuned_model or os.environ.get("ADAPTION_MODEL_ID", "").strip() or None
-    api_key = os.environ.get("ADAPTION_API_KEY", "").strip() or None
-    tuned_name = "(c) Tuned model (Adaption)"
-    reason = tuned_skip_reason(model_id, api_key)
-    if reason is None:
-        try:
-            ask_tuned(model_id, api_key, sample[0]["input"])
-        except NotImplementedError as exc:
-            reason = str(exc)
-    columns.append({"name": tuned_name, "skipped": reason} if reason else
-                   {"name": tuned_name, "skipped": "not run"})
-
-    split = json.loads((data / "split.json").read_text()) if (data / "split.json").is_file() else {}
-    meta = {"test_rows": len(test), "test_sources": len({r["source"] for r in test}),
+    meta = {"mode": mode, "title": files["title"], "example_input": test[0]["input"],
+            "test_rows": len(test), "test_sources": len({r["source"] for r in test}),
             "train_rows": len(train), "train_sources": len({r["source"] for r in train}),
-            "claude_sample": len(sample), "seed": seed, "notes": notes,
-            "data": split.get("data", "SIMULATED"), "prompt_version": PROMPT_VERSION}
-    md = report_markdown(meta, columns)
+            "claude_sample": len(sample), "notes": notes}
+    return {"meta": meta, "columns": columns}
+
+
+# ---------- report ----------
+
+def _pct(x: Optional[float]) -> str:
+    return "n/a" if x is None else f"{100 * x:.1f}%"
+
+
+def _cell(rec: dict) -> str:
+    return "n/a" if not rec["total"] else f"{rec['hit']}/{rec['total']} ({100 * rec['hit'] / rec['total']:.0f}%)"
+
+
+def _latency(seconds: list[float]) -> str:
+    if not seconds:
+        return "n/a"
+    m = median(seconds)
+    return f"{m * 1000:.3f} ms" if m < 0.1 else f"{m:.2f} s"
+
+
+def table_markdown(columns: list[dict]) -> list[str]:
+    out = ["| Answerer (SIMULATED test rows) | Rows | Accuracy | none | elbow_bend | shoulder_turn | wrist_early "
+           "| False alarms on none | Median latency |",
+           "|---|---|---|---|---|---|---|---|---|"]
+    for c in columns:
+        if c.get("skipped"):
+            out.append(f"| {c['name']} | - | skipped: {c['skipped']} | | | | | | |")
+            continue
+        s = c["score"]
+        fa = s["false_alarms_on_none"]
+        out.append(f"| {c['name']} | {s['rows']} | {_pct(s['accuracy'])} | "
+                   + " | ".join(_cell(s["recall"][lab]) for lab in LABELS)
+                   + f" | {fa['count']} of {fa['total']} | {_latency(c['latencies'])} |")
+    return out
+
+
+def report_markdown(sections: list[dict], split: dict, win_rate: Optional[str]) -> str:
+    first = sections[0]["meta"]
+    out = [
+        "# Fault-naming eval (SIMULATED data)",
+        "",
+        f"SIMULATED: {first['test_rows']} held-out test rows from {first['test_sources']} source swings that no "
+        f"answerer trained on ({first['train_rows']} training rows from {first['train_sources']} other swings). "
+        "Each row is a real, labelled-clean swing left unchanged (none) or with one fault injected by code and "
+        "re-measured. These are not real faults. Both tables use the same test swings.",
+    ]
+    for n, sec in enumerate(sections, 1):
+        m = sec["meta"]
+        out += ["", f"## {n}. {m['title']} (SIMULATED)", "", f"Example input: `{m['example_input']}`"]
+        if m["mode"] == "relative":
+            out += ["", "Baseline: " + split.get("baseline", "the player's clean-swing average") + "."]
+        out += [""] + table_markdown(sec["columns"]) + [""] + [f"- {note}" for note in m["notes"]]
+    auto = split.get("autoscientist", {})
+    out += [
+        "", f"## {len(sections) + 1}. Adaption AutoScientist (SIMULATED training data)", "",
+        f"- Training file: `{Path(auto.get('file', 'autoscientist_train.jsonl')).name}`, {auto.get('rows', '?')} rows, "
+        f"labels {auto.get('labels', {})}; {auto.get('format', '')}.",
+        "- Adaption returns a LoRA checkpoint and scores it as a win rate against its base model. That is not "
+        "accuracy on the test rows above, so it isn't comparable with the tables.",
+        f"- Win rate vs base model: {win_rate if win_rate else '**not run yet — fill in by hand** (re-run with --adaption-win-rate)'}",
+        "",
+        "Recall cells: rows of that label named correctly. False alarms on none: unchanged swings called a fault. "
+        "Latency: wall time per answer on this Mac (Claude: one API call, measured when first asked; cached re-runs "
+        "report the original time).",
+    ]
+    return "\n".join(out) + "\n"
+
+
+def evaluate(data: Path, claude_sample: int = MAX_CLAUDE_SAMPLE, use_claude: bool = True, seed: int = 0,
+             workers: int = 4, client=None, win_rate: Optional[str] = None) -> dict:
+    """Both formats, one report. Writes eval_report.md and eval_results.json into `data`."""
+    data = Path(data)
+    sections = [run_mode(data, mode, claude_sample, use_claude, seed, workers, client) for mode in MODES]
+    split = json.loads((data / "split.json").read_text()) if (data / "split.json").is_file() else {}
+    md = report_markdown(sections, split, win_rate)
     (data / "eval_report.md").write_text(md)
-    results = {"meta": meta, "columns": [{k: v for k, v in c.items() if k != "latencies"}
-                                         | ({"median_latency_s": median(c["latencies"])} if c.get("latencies") else {})
-                                         for c in columns]}
+    results = {
+        "data": split.get("data", "SIMULATED"), "prompt_version": PROMPT_VERSION, "seed": seed,
+        "sections": {s["meta"]["mode"]: {"meta": s["meta"], "columns": [
+            {k: v for k, v in c.items() if k != "latencies"}
+            | ({"median_latency_s": median(c["latencies"])} if c.get("latencies") else {})
+            for c in s["columns"]]} for s in sections},
+        "adaption": {"autoscientist": split.get("autoscientist"), "win_rate_vs_base": win_rate},
+    }
     (data / "eval_results.json").write_text(json.dumps(results, indent=1) + "\n")
     return {"markdown": md, "results": results}
 
 
+def load_env(env_dir: Optional[str]) -> None:
+    """Load .env.local then .env from the repo root and --env-dir, never overriding or printing."""
+    from dotenv import load_dotenv
+    for base in [REPO_ROOT] + ([Path(env_dir).expanduser()] if env_dir else []):
+        for name in (".env.local", ".env"):
+            if (base / name).is_file():
+                load_dotenv(base / name, override=False)
+
+
 def main(argv: list[str] | None = None) -> None:
-    p = argparse.ArgumentParser(description="Fault-naming eval on SIMULATED held-out swings.")
+    p = argparse.ArgumentParser(description="Fault-naming eval on SIMULATED held-out swings (raw and relative).")
     p.add_argument("--data", default="../data/raw/adaption", help="adaption_prep split --out folder")
     p.add_argument("--claude-sample", type=int, default=MAX_CLAUDE_SAMPLE, help="test rows for Claude (max 200)")
     p.add_argument("--no-claude", action="store_true", help="run the code rule only")
-    p.add_argument("--tuned-model", default=None, help="Adaption model id (or set ADAPTION_MODEL_ID)")
-    p.add_argument("--env-dir", default=None, help="extra folder whose .env.local holds the keys")
+    p.add_argument("--adaption-win-rate", default=None,
+                   help='Adaption\'s LoRA win rate vs base model, as text, e.g. "61%% vs base (n=200)"')
+    p.add_argument("--env-dir", default=None, help="extra folder whose .env.local holds the Claude key")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--workers", type=int, default=4, help="parallel Claude calls")
     a = p.parse_args(argv)
     load_env(a.env_dir)
     try:
-        out = run(Path(a.data), a.claude_sample, not a.no_claude, a.tuned_model, a.seed, a.workers)
+        out = evaluate(Path(a.data), a.claude_sample, not a.no_claude, a.seed, a.workers, win_rate=a.adaption_win_rate)
     except (ValueError, FileNotFoundError) as e:
         sys.exit(str(e))
     print(out["markdown"])

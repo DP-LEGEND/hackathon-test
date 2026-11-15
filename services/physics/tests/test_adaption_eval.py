@@ -36,10 +36,12 @@ class FakeClient:
 
     def __init__(self):
         self.calls = 0
+        self.systems = set()
         self.beta = SimpleNamespace(messages=SimpleNamespace(parse=self.parse))
 
     def parse(self, **kw):
         self.calls += 1
+        self.systems.add(kw["system"])
         assert kw["model"] == "claude-opus-5-5" and kw["output_format"] is ev.FaultCall
         fault = "elbow_bend" if "elbow at contact 9" in kw["messages"][0]["content"] else "none"
         return SimpleNamespace(stop_reason="end_turn", parsed_output=ev.FaultCall(fault=fault),
@@ -48,10 +50,14 @@ class FakeClient:
 
 @pytest.fixture()
 def data_dir(tmp_path, monkeypatch):
-    for name in ("ANTHROPIC_API_KEY", "ADAPTION_MODEL_ID", "ADAPTION_API_KEY"):
-        monkeypatch.delenv(name, raising=False)
-    for name, rows in (("train_rows.jsonl", toy_rows("tr")), ("test_rows.jsonl", toy_rows("te"))):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    for name, rows in (("train_rows.jsonl", toy_rows("tr")), ("test_rows.jsonl", toy_rows("te")),
+                       ("train_rows_relative.jsonl", toy_rows("tr")), ("test_rows_relative.jsonl", toy_rows("te"))):
         (tmp_path / name).write_text("".join(json.dumps(r) + "\n" for r in rows))
+    (tmp_path / "split.json").write_text(json.dumps({
+        "data": "SIMULATED: test", "baseline": "mean of the player's other clean training swings",
+        "autoscientist": {"file": str(tmp_path / "autoscientist_train.jsonl"), "rows": 1373,
+                          "labels": {"none": 343}, "format": "prompt/completion, train only"}}))
     return tmp_path
 
 
@@ -76,50 +82,59 @@ def test_sample_keeps_every_none_row_and_spreads_the_faults():
     assert sorted(sum(r["output"] == f for r in s) for f in LABELS[1:]) == [10, 10, 10]
 
 
-def test_own_baseline_diagnostic_uses_each_rows_own_source():
+def test_own_copy_diagnostic_uses_each_rows_own_source():
     rows = toy_rows("x")
-    assert ev.own_baseline_accuracy(rows) == (len(rows), len(rows))
+    assert ev.own_copy_accuracy(rows) == (len(rows), len(rows))
 
 
 def test_claude_prompt_carries_training_knowledge_only_as_text():
     train = toy_rows("tr")
-    system = ev.claude_system_prompt(ev.fit_rule(train), train)
-    assert "SIMULATED" in system and "- forehand:" in system and "- backhand:" in system
-    assert system.count(" -> ") == 3 * len(LABELS)
+    rule = ev.fit_rule(train)
+    raw = ev.claude_system_prompt(rule, train, "raw")
+    rel = ev.claude_system_prompt(rule, train, "relative")
+    for system in (raw, rel):
+        assert "SIMULATED" in system and "- forehand:" in system and "- backhand:" in system
+        assert system.count(" -> ") == 3 * len(LABELS)
+    assert "baseline" in rel and "+ means earlier" in rel and "+ means earlier" not in raw
 
 
-def test_claude_answers_are_cached_so_a_rerun_is_free(data_dir):
-    fake = ev.run(data_dir, claude_sample=20, client=(first := FakeClient()), workers=2)
-    assert first.calls == 20
+def test_both_formats_run_and_claude_answers_are_cached(data_dir):
+    first = FakeClient()
+    out1 = ev.evaluate(data_dir, claude_sample=20, client=first, workers=2)
+    assert first.calls == 40 and len(first.systems) == 2  # 20 rows per format, one prompt per format
     again = FakeClient()
-    out = ev.run(data_dir, claude_sample=20, client=again, workers=2)
+    out = ev.evaluate(data_dir, claude_sample=20, client=again, workers=2)
     assert again.calls == 0
-    claude = out["results"]["columns"][2]
-    assert claude["name"].startswith("(b) Claude claude-opus-5-5") and claude["score"]["rows"] == 20
-    assert claude["score"]["recall"]["elbow_bend"]["rate"] == 1.0
-    assert "SIMULATED" in out["markdown"] and "SIMULATED" in fake["markdown"]
-    assert (data_dir / "eval_report.md").read_text() == out["markdown"]
+    for mode in ("raw", "relative"):
+        claude = out["results"]["sections"][mode]["columns"][2]
+        assert claude["name"].startswith("(b) Claude claude-opus-5-5") and claude["score"]["rows"] == 20
+    md = out["markdown"]
+    assert md == (data_dir / "eval_report.md").read_text()
+    assert "20 new calls, 0 rows from cache" in out1["markdown"] and "0 new calls, 20 rows from cache" in md
+    assert md.count("(SIMULATED)") >= 2 and "Raw numbers" in md and "baseline-relative" in md
 
 
 def test_claude_is_skipped_cleanly_without_a_key(data_dir):
-    out = ev.run(data_dir, claude_sample=5)
-    assert out["results"]["columns"][2]["skipped"] == "ANTHROPIC_API_KEY is not set"
+    out = ev.evaluate(data_dir, claude_sample=5)
+    for mode in ("raw", "relative"):
+        assert out["results"]["sections"][mode]["columns"][2]["skipped"] == "ANTHROPIC_API_KEY is not set"
 
 
-def test_tuned_slot_is_skipped_cleanly(data_dir, monkeypatch):
-    out = ev.run(data_dir, use_claude=False)
-    assert out["results"]["columns"][-1]["skipped"] == "ADAPTION_MODEL_ID and ADAPTION_API_KEY not set"
-    monkeypatch.setenv("ADAPTION_API_KEY", "test-not-a-real-key-000")
-    out = ev.run(data_dir, use_claude=False, tuned_model="model-1")
-    assert "isn't written yet" in out["results"]["columns"][-1]["skipped"]
+def test_adaption_win_rate_slot_is_filled_by_hand(data_dir):
+    out = ev.evaluate(data_dir, use_claude=False)
+    assert "fill in by hand" in out["markdown"] and out["results"]["adaption"]["win_rate_vs_base"] is None
+    out = ev.evaluate(data_dir, use_claude=False, win_rate="61% vs base model (n=200)")
+    assert "Win rate vs base model: 61% vs base model (n=200)" in out["markdown"]
+    assert out["results"]["adaption"]["win_rate_vs_base"] == "61% vs base model (n=200)"
+    assert "autoscientist_train.jsonl`, 1373 rows" in out["markdown"]
 
 
 def test_overlapping_sources_are_refused(data_dir):
     (data_dir / "test_rows.jsonl").write_text("".join(json.dumps(r) + "\n" for r in toy_rows("tr")))
     with pytest.raises(ValueError, match="both train and test"):
-        ev.run(data_dir, use_claude=False)
+        ev.evaluate(data_dir, use_claude=False)
 
 
 def test_claude_sample_is_capped_at_200(data_dir):
     with pytest.raises(ValueError, match="1..200"):
-        ev.run(data_dir, claude_sample=201, use_claude=False)
+        ev.evaluate(data_dir, claude_sample=201, use_claude=False)

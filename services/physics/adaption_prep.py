@@ -14,14 +14,19 @@ This module fixes that in two steps around physics.synth:
 
 - select: copies only swings that every row of labels.csv marks intended_fault "none".
   The source folder is only read, never changed.
-- split: one row per synthetic swing, input = stroke + the code-measured numbers,
-  output = the injected fault's NAME only (no size: the model never sees the original swing,
-  so it can't know the size, and only code may state numbers). Train and test are split by
-  SOURCE swing, so edits of one swing never sit on both sides. The rare "none" rows are
-  repeated in the train file only; the test file is never oversampled.
+- split: one row per synthetic swing, output = the injected fault's NAME only (no size; only
+  code may state numbers). Train and test are split by SOURCE swing, so edits of one swing never
+  sit on both sides. Two input formats are written:
+  - raw: stroke + the code-measured numbers of that one swing;
+  - relative: stroke + each number's change from the player's clean-swing average for that
+    stroke (their baseline). The baseline is the mean of the player's clean TRAINING swings,
+    leaving out the row's own swing, so a test swing never feeds any baseline.
+  The Adaption AutoScientist file (prompt/completion, relative format) holds training rows only,
+  with the rare "none" rows repeated; the test split is never in it.
 
-Everything written here is SIMULATED data (faults injected by code into real swings) and
-must be labelled that way wherever it is shown. Keep the output under data/raw/ (git-ignored).
+The player is the filming session (the swing id before "-swing-"): each session is one player
+and one stroke. Everything written here is SIMULATED data (faults injected by code into real
+swings) and must be labelled that way wherever it is shown. Keep the output under data/raw/.
 """
 
 from __future__ import annotations
@@ -43,6 +48,13 @@ LABELS = ("none", "elbow_bend", "shoulder_turn", "wrist_early")
 STROKES = ("forehand", "backhand")
 SIMULATED_NOTE = ("SIMULATED: one fault of known size injected by code (physics.ghost) into real, "
                   "labelled-clean swings, then re-measured. Not real faults.")
+RELATIVE_NAMES = {"elbow_at_contact_deg": ("elbow", "deg"), "shoulder_turn_deg": ("shoulder turn", "deg"),
+                  "wrist_release_ms": ("wrist release", "ms")}
+AUTOSCIENTIST_INSTRUCTION = (
+    "SIMULATED squash swing (one fault may have been injected by code). Changes were measured by code "
+    "against this player's clean-swing average for the stroke; wrist release + means earlier. "
+    "Name the one injected fault: none, elbow_bend, shoulder_turn or wrist_early.")
+MIN_AUTOSCIENTIST_ROWS = 1000
 
 
 def clean_swing_ids(labels_csv: str | Path) -> dict[str, str]:
@@ -87,12 +99,27 @@ def select_clean(swings_dir: str | Path, labels_csv: str | Path, out: str | Path
 
 
 def model_input(stroke: str, metrics: dict) -> str:
-    """The text a model sees: stroke plus the code-measured numbers (physics.metrics.describe)."""
+    """Raw format: stroke plus the code-measured numbers of one swing (physics.metrics.describe)."""
     return f"{stroke}, {describe(metrics)}"
 
 
+def relative_input(stroke: str, deltas: dict) -> str:
+    """Relative format, e.g. "backhand; elbow -21 deg vs your baseline; shoulder turn -4 deg; wrist release +2 ms"."""
+    parts = []
+    for i, m in enumerate(METRIC_KEYS):
+        name, unit = RELATIVE_NAMES[m]
+        parts.append(f"{name} {round(deltas[m]):+d} {unit}" + (" vs your baseline" if i == 0 else ""))
+    return f"{stroke}; " + "; ".join(parts)
+
+
+def player_key(source: str, stroke: str) -> tuple[str, str]:
+    """The player is the filming session (swing id before "-swing-"); one baseline per player and stroke."""
+    stem = Path(source).stem
+    return (stem.split("-swing-")[0] if "-swing-" in stem else "unknown", stroke)
+
+
 def build_rows(synthetic_dir: str | Path, swings_dir: str | Path) -> list[dict]:
-    """One row per line of synthetic.csv, with stroke from the source swing file."""
+    """One raw-format row per line of synthetic.csv, with stroke from the source swing file."""
     swings_dir = Path(swings_dir)
     strokes: dict[str, str] = {}
     rows = []
@@ -141,6 +168,41 @@ def split_by_source(rows: list[dict], test_share: float = 0.25, seed: int = 0) -
     return train, test, manifest
 
 
+def make_relative(train: list[dict], test: list[dict]) -> tuple[list[dict], list[dict], dict]:
+    """Relative-format copies of train and test rows.
+
+    Baseline for a row = mean of its player's clean (none) TRAINING swings of the same stroke,
+    leaving out the row's own source swing. Raw numbers are kept as raw_<metric>; the metric
+    fields hold the changes, so the eval's rule and scoring work on them unchanged.
+    """
+    clean: dict[tuple[str, str], dict[str, dict]] = {}
+    for r in train:
+        if r["output"] == "none":
+            clean.setdefault(player_key(r["source"], r["stroke"]), {})[r["source"]] = {m: r[m] for m in METRIC_KEYS}
+    baselines: dict[str, tuple[dict, int]] = {}
+
+    def baseline(r: dict) -> tuple[dict, int]:
+        if r["source"] not in baselines:
+            group = clean.get(player_key(r["source"], r["stroke"]), {})
+            others = [v for s, v in group.items() if s != r["source"]]
+            if not others:
+                raise ValueError(f"{r['source']}: no other clean training swing of this player and stroke "
+                                 "to build a baseline from")
+            baselines[r["source"]] = ({m: float(np.mean([o[m] for o in others])) for m in METRIC_KEYS}, len(others))
+        return baselines[r["source"]]
+
+    def convert(r: dict) -> dict:
+        base, n = baseline(r)
+        deltas = {m: r[m] - base[m] for m in METRIC_KEYS}
+        out = dict(r, **{f"raw_{m}": r[m] for m in METRIC_KEYS}, **deltas)
+        out.update(baseline={m: round(base[m], 2) for m in METRIC_KEYS}, baseline_swings=n,
+                   input=relative_input(r["stroke"], deltas))
+        return out
+
+    summary = {f"{k[0]} {k[1]}": len(v) for k, v in sorted(clean.items())}
+    return [convert(r) for r in train], [convert(r) for r in test], summary
+
+
 def oversample_none(train: list[dict], seed: int = 0) -> list[dict]:
     """Train rows with "none" repeated up to the average fault-class size, shuffled."""
     counts = Counter(r["output"] for r in train)
@@ -155,6 +217,11 @@ def oversample_none(train: list[dict], seed: int = 0) -> list[dict]:
     return [out[i] for i in order]
 
 
+def autoscientist_rows(rows: list[dict]) -> list[dict]:
+    """Adaption AutoScientist raw mode: {"prompt", "completion"} per row."""
+    return [{"prompt": f"{AUTOSCIENTIST_INSTRUCTION}\n{r['input']}\nFault:", "completion": r["output"]} for r in rows]
+
+
 def _write_jsonl(path: Path, rows: list[dict]) -> None:
     with path.open("w") as fh:
         for r in rows:
@@ -163,25 +230,41 @@ def _write_jsonl(path: Path, rows: list[dict]) -> None:
 
 def write_split(synthetic_dir: str | Path, swings_dir: str | Path, out: str | Path,
                 test_share: float = 0.25, seed: int = 0) -> dict:
-    """Write train/test files and split.json into `out`. Returns the manifest."""
+    """Write raw and relative train/test rows, the AutoScientist file and split.json. Returns the manifest."""
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     rows = build_rows(synthetic_dir, swings_dir)
     train, test, manifest = split_by_source(rows, test_share, seed)
-    tuned_train = oversample_none(train, seed)
+    train_rel, test_rel, baseline_swings = make_relative(train, test)
+    tuned = oversample_none(train_rel, seed)
+    test_sources = set(manifest["test_sources"])
+    if any(r["source"] in test_sources for r in tuned):
+        raise AssertionError("a test swing reached the AutoScientist file")
+    auto = autoscientist_rows(tuned)
     _write_jsonl(out / "train_rows.jsonl", train)
     _write_jsonl(out / "test_rows.jsonl", test)
-    _write_jsonl(out / "adaption_train.jsonl", [{"input": r["input"], "output": r["output"]} for r in tuned_train])
-    _write_jsonl(out / "adaption_test.jsonl", [{"input": r["input"], "output": r["output"]} for r in test])
+    _write_jsonl(out / "train_rows_relative.jsonl", train_rel)
+    _write_jsonl(out / "test_rows_relative.jsonl", test_rel)
+    _write_jsonl(out / "autoscientist_train.jsonl", auto)
     manifest.update({
         "data": SIMULATED_NOTE,
         "labels": list(LABELS),
+        "baseline": ("mean of the player's (filming session's) clean TRAINING swings of the same stroke, "
+                     "leaving out the row's own swing; test swings never feed a baseline"),
+        "baseline_clean_training_swings": baseline_swings,
         "counts": {
             "train": dict(Counter(r["output"] for r in train)),
-            "train_oversampled": dict(Counter(r["output"] for r in tuned_train)),
             "test": dict(Counter(r["output"] for r in test)),
         },
-        "files": ["train_rows.jsonl", "test_rows.jsonl", "adaption_train.jsonl", "adaption_test.jsonl"],
+        "autoscientist": {
+            "file": str((out / "autoscientist_train.jsonl").resolve()),
+            "rows": len(auto),
+            "labels": dict(Counter(r["completion"] for r in auto)),
+            "format": "prompt/completion, relative inputs, training swings only (none rows repeated), "
+                      "test split never included",
+        },
+        "files": ["train_rows.jsonl", "test_rows.jsonl", "train_rows_relative.jsonl",
+                  "test_rows_relative.jsonl", "autoscientist_train.jsonl"],
     })
     (out / "split.json").write_text(json.dumps(manifest, indent=2) + "\n")
     return manifest
@@ -210,6 +293,12 @@ def main(argv: list[str] | None = None) -> None:
             print(f"train sources {len(m['train_sources'])}, test sources {len(m['test_sources'])}")
             for k, v in m["counts"].items():
                 print(f"  {k}: {v}")
+            print(f"  baseline clean training swings per player and stroke: {m['baseline_clean_training_swings']}")
+            auto = m["autoscientist"]
+            print(f"AutoScientist train file: {auto['file']}")
+            print(f"  rows: {auto['rows']}  labels: {auto['labels']}")
+            if auto["rows"] < MIN_AUTOSCIENTIST_ROWS:
+                print(f"  WARNING: fewer than {MIN_AUTOSCIENTIST_ROWS:,} rows; raise --per-swing in physics.synth")
             print(f"  {SIMULATED_NOTE}")
     except ValueError as e:
         sys.exit(str(e))
