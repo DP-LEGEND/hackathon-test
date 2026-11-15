@@ -119,7 +119,9 @@ export function BallChanges({
   samePath: boolean;
 }) {
   const { ball, you, ghost } = compare;
-  // Physics keeps these two numbers when they read a guessed joint, but flags them (notMeasured).
+  // Physics keeps ball and racket speed when they read a guessed joint, but flags them
+  // (notMeasured). The front wall height and where the ball lands follow from that same launch,
+  // so they carry the ball-speed flag too.
   const rows: Row[] = [
     {
       key: "outcome",
@@ -130,8 +132,14 @@ export function BallChanges({
       changed: ball.outcome.you !== ball.outcome.ghost,
     },
     withCaveat(changeRow("speed", "Ball speed", ball.speedKmh, "km/h"), guessedWhy("ball_speed", compare.notMeasured)),
-    changeRow("wall", "Front wall height", ball.frontWallHeightM, "m"),
-    changeRow("depth", "Lands from front wall", ball.landingDepthM, "m"),
+    withCaveat(
+      changeRow("wall", "Front wall height", ball.frontWallHeightM, "m"),
+      guessedWhy("ball_speed", compare.notMeasured),
+    ),
+    withCaveat(
+      changeRow("depth", "Lands from front wall", ball.landingDepthM, "m"),
+      guessedWhy("ball_speed", compare.notMeasured),
+    ),
     withCaveat(
       {
         key: "racket",
