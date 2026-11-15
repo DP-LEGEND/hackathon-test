@@ -25,7 +25,10 @@ they become ready automatically once FIXES has them. firm_wrist isn't planned ye
 
 rolled_wrist is the one fault the camera can't see: it reads forearm roll from a phone
 strapped to the forearm (services/wrist, coach/wrist_sensor.py) and is skipped (listed
-in not_measured) for swings without usable sensor data.
+in not_measured) for swings without usable sensor data. The real lines were tuned with
+contact at the forearm's fastest turn ("gyro peak"), so a real swing timed any other way
+(impact spike, double tap) is not checked either: listed in not_measured and
+disabled_faults with NOT_GYRO_PEAK, never judged and never passed.
 """
 
 from __future__ import annotations
@@ -45,7 +48,7 @@ from coach.measure_extra import (
     stance_open_front_wall_deg, stroke_side, wrist_index_filled,
     wrist_uncock,
 )
-from coach.wrist_sensor import sensor_metrics
+from coach.wrist_sensor import FROM_WRIST, sensor_metrics
 
 Stroke = Literal["forehand", "backhand"]
 Confidence = Literal["high", "medium", "low"]
@@ -64,6 +67,12 @@ WRIST_MOCK = "mock wrist-sensor swings"  # synthetic data: replace with real swi
 # FH 0.95 deg) and contact 25 ms earlier makes both strokes overlap: retune on real hits.
 WRIST_SESSION_BH = "ESTIMATE, tuned on one session (n=29 shadow backhands: 15 good, 14 rolled)"
 WRIST_SESSION_FH = "ESTIMATE, tuned on one session (n=21 shadow forehands: 10 good, 11 rolled)"
+# Those lines hold only for that timing: each real rule carries "contact_source": GYRO_PEAK,
+# and a real sensor swing whose roll window sits anywhere else (wrist.metrics contact_source
+# "impact spike" or "double tap") is not checked: measure_swing drops its sensor numbers and
+# says why (NOT_GYRO_PEAK), so rolled_wrist lands in not_measured instead of passing.
+GYRO_PEAK = "gyro peak"
+NOT_GYRO_PEAK = "threshold tuned on gyro-peak-timed practice swings; not checked on impact-timed hits"
 # The MOCK rule, for synthetic sessions only (wrist.synth): what python -m wrist.tune picks on
 # the mock run, 5 normal (16.5 deg) vs 5 rolled (62.0 deg), with the gyro-integral roll
 # (feat/wrist-shadow). Not used on real swings: the synthetic forearm rolls far less.
@@ -104,7 +113,8 @@ THRESHOLDS: dict[str, dict[str, dict[str, Any]]] = {
         # good 119.8-144.8 deg (median 136.75, target 136.8), rolled 146.7-165.0 (median 158.8).
         # Replaces MOCK_ROLLED_WRIST (above); real forearms roll far more than the mock.
         "rolled_wrist": {"measurement": "forearm_roll_deg", "threshold": 145.75,
-                         "severe_at": 158.8, "target": 136.8, "source": WRIST_SESSION_FH},
+                         "severe_at": 158.8, "target": 136.8, "source": WRIST_SESSION_FH,
+                         "contact_source": GYRO_PEAK},
     },
     "backhand": {
         # Fastest wrist OPENING before contact; a fast cocking move never counts.
@@ -123,7 +133,8 @@ THRESHOLDS: dict[str, dict[str, dict[str, Any]]] = {
         # rolled 128.3-149.7 (median 137.3). A good forehand rolls more than a rolled
         # backhand, so each stroke needs its own line.
         "rolled_wrist": {"measurement": "forearm_roll_deg", "threshold": 124.3,
-                         "severe_at": 137.3, "target": 99.3, "source": WRIST_SESSION_BH},
+                         "severe_at": 137.3, "target": 99.3, "source": WRIST_SESSION_BH,
+                         "contact_source": GYRO_PEAK},
     },
 }
 # ------------------------------------------------------------------------------------
@@ -292,6 +303,12 @@ def measure_swing(swing: dict, stroke: Optional[Stroke] = None, fps_real: Option
     # Forearm roll: the camera can't see it, only a forearm phone (swing["wrist"]). Without
     # a usable one these are None and rolled_wrist is skipped.
     m.update(sensor_metrics(swing.get("wrist")))
+    # A real swing timed differently from the one the real lines were tuned on: not checked,
+    # the same way as no sensor (the page then says so; it never shows "firm").
+    tuned = THRESHOLDS[m["stroke"]]["rolled_wrist"].get("contact_source")
+    if m["wrist_sensor"] == "sensor" and tuned and m.get("wrist_contact_source") != tuned:
+        m.update({name: None for name in FROM_WRIST.values()})
+        m["wrist_sensor"], m["wrist_sensor_skipped"] = None, NOT_GYRO_PEAK
 
     # Stance comes from the ankles. If either is a filled-in placeholder, both stance
     # numbers are unmeasured: no stance fault beats a false one.
@@ -392,6 +409,11 @@ def unmeasured_faults(metrics: dict[str, Any]) -> list[str]:
             if not rule.get("disabled") and not _finite(metrics.get(rule["measurement"]))]
 
 
-def disabled_faults(stroke: Stroke) -> dict[str, str]:
-    """Fault ids switched off for this stroke, with why (set "disabled": "<reason>" in THRESHOLDS)."""
-    return {fid: rule["disabled"] for fid, rule in THRESHOLDS[stroke].items() if rule.get("disabled")}
+def disabled_faults(stroke: Stroke, metrics: Optional[dict[str, Any]] = None) -> dict[str, str]:
+    """Fault ids switched off, with why: for this stroke (set "disabled": "<reason>" in THRESHOLDS),
+    plus, given this swing's metrics, rolled_wrist on a real sensor swing timed differently from
+    the real lines (NOT_GYRO_PEAK; it is in not_measured too, so nothing reads it as passed)."""
+    off = {fid: rule["disabled"] for fid, rule in THRESHOLDS[stroke].items() if rule.get("disabled")}
+    if metrics is not None and metrics.get("wrist_sensor_skipped") == NOT_GYRO_PEAK:
+        off["rolled_wrist"] = NOT_GYRO_PEAK
+    return off
