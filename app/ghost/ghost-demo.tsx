@@ -435,7 +435,7 @@ export function GhostDemo({ requestedSwing }: { requestedSwing: string | null })
             {onCourt && (
               <p
                 data-tag-avoid
-                className="pointer-events-none absolute top-5 right-5 hidden max-w-[34%] text-right text-xs leading-relaxed text-muted-foreground md:block"
+                className="pointer-events-none absolute top-5 right-5 hidden max-w-[34%] text-right text-xs leading-relaxed text-balance text-muted-foreground md:block"
               >
                 {coordinates.system === "court"
                   ? "Court 6.40 × 9.75 m · player where physics placed them"
