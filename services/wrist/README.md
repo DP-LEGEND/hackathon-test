@@ -281,8 +281,14 @@ The new parts:
 Each swing can carry its own entry as an optional field: `swing["wrist"]`
 (`wrist.run --swings-out` writes the swings with it; `coach.wrist_sensor.attach_wrist` adds
 it too). `measure_swing` reads it, and `rolled_wrist` fires when `forearm_roll_deg` is past
-the threshold. Its fix is `firm_wrist`, which the ghost can't animate yet, so it's never
-`ghost_ready`; the ghost shows the next fix instead. Labels say `(wrist sensor)`, plus
+the threshold. Its fix is `firm_wrist`, which `physics/ghost.py` animates: its `wrist_roll`
+edit lowers the forearm roll by the coach's amount (the roll above the stroke's good median).
+So a sensor-backed `rolled_wrist` is `ghost_ready` and `firm_wrist` is the coach's `ghost_fix`.
+The page shows only the fixes its catalogue lists: until `public/swings/catalogue.json` lists
+`firm_wrist` in `fixes`, `coach_swing` returns `ghost_fix: null` with
+`ghost_note: "ghost for wrist roll not in the app yet"`, and the call, fix and cue stay
+`rolled_wrist` / `firm_wrist`. `coach_swing(app_fixes=...)` overrides the catalogue;
+`scripts/make_mock_wrist_sample.py` passes its own, which lists `firm_wrist`. Labels say `(wrist sensor)`, plus
 `(MOCK sensor data)` when the data is synthetic. The field's contract is in
 `docs/interfaces.md`. The coach still treats `sensorAssisted` joints as guessed (it reads
 `filled`); trusting them is a coach change for later.
