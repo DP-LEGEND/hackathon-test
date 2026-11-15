@@ -69,7 +69,7 @@ Each accepted swing is saved with the coach's call and the ghost comparison, and
 On a swing's caption, press **Hear the coach**. Claude words the coach's fix as one spoken sentence, and ElevenLabs reads it aloud, server-side.
 
 - **Claude only rewords.** The code has already chosen the fix. Claude gets the coach's fault, cue and tip, never the raw metrics. The caption says **worded by Claude** only when it was.
-- **A checker on every sentence.** Any number must match one the code measured exactly as written: same sign, digits and unit. Spelled-out numbers are rejected. The fix can't be reversed: if the coach says "turn less", a sentence that says "more" is rejected. A sentence that fails is never used; the coach's own cue is shown instead.
+- **A checker on every sentence.** Any number must match one the code measured exactly as written: same sign, digits and unit. Spelled-out numbers are rejected. A sentence that uses the opposite direction word is rejected: if the coach says "turn less", a sentence that says "more" fails. A sentence that fails is never used; the coach's own cue is shown instead.
 - **Wrist cues are spoken word for word.** "Keep your wrist cocked until the racket meets the ball" has no direction the checker can test, so Claude isn't asked to reword it.
 - **Safe without keys.** If there's no Claude key, or Claude takes over 10 s, the page shows the coach's plain cue. If there's no ElevenLabs key, or it takes over 12 s, there's no audio. The page never shows an error for either. Each swing is worded and voiced once, then cached.
 
