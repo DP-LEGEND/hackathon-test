@@ -4,6 +4,7 @@
 // output per fix. The browser never measures anything: it all runs in Python.
 
 import {
+  COACH_ONLY_FIXES,
   CompareDataError,
   parseCatalogue,
   parseCoach,
@@ -258,18 +259,30 @@ export function buildEntries(catalogue: Catalogue, api: ApiState): SwingEntry[] 
   return [...samples, ...live];
 }
 
+/** The coach's size for a fix: the ghost fix's `ghost_fix_amount`, else a flagged fault's `fix_amount`. */
+function coachAmount(coach: CoachCaption, id: string): number | null {
+  if (id === coach.ghostFix && coach.ghostFixAmount !== null) return coach.ghostFixAmount;
+  return coach.faults.find((f) => f.fix === id && f.ghostReady && f.fixAmount !== null)?.fixAmount ?? null;
+}
+
 /**
  * The fixes to offer once the coach has answered. Saved samples already carry the coach's
  * sizes (their compare files were made with them). Live swings take the ghost fix's size
- * (`ghost_fix_amount`) and each flagged fault's `fix_amount`; the rest stay at demo size.
+ * (`ghost_fix_amount`) and each flagged fault's `fix_amount`; the rest stay at demo size. A fix
+ * with no demo size (COACH_ONLY_FIXES: firm_wrist, #80) joins only when the coach names it with
+ * its size, so a sensor swing's firm-wrist ghost shows and no other swing changes.
  */
 export function fixOptionsFor(entry: SwingEntry, coach: CoachCaption | null): FixOption[] {
   if (entry.origin === "sample" || !coach) return entry.fixes;
-  return entry.fixes.map((fix) => {
-    const fault = coach.faults.find((f) => f.fix === fix.id && f.ghostReady && f.fixAmount !== null);
-    const amount = fix.id === coach.ghostFix && coach.ghostFixAmount !== null ? coach.ghostFixAmount : fault?.fixAmount;
-    return amount === null || amount === undefined ? fix : { ...fix, amount, flagged: true };
+  const listed = entry.fixes.map((fix) => {
+    const amount = coachAmount(coach, fix.id);
+    return amount === null ? fix : { ...fix, amount, flagged: true };
   });
+  const coachOnly = Object.entries(COACH_ONLY_FIXES).flatMap(([id, unit]): FixOption[] => {
+    const amount = listed.some((f) => f.id === id) ? null : coachAmount(coach, id);
+    return amount === null ? [] : [{ id, amount, unit, flagged: true, file: null, unavailable: null }];
+  });
+  return [...listed, ...coachOnly];
 }
 
 /**
