@@ -14,12 +14,13 @@ import pytest
 
 from physics.ball import COURT_WIDTH_M, DEFAULT_CONTACT
 from physics.compare import (
-    AZIMUTH_LIMIT_DEG, compare, decide_stroke, drive_spot, estimate_azimuth, main, swing_stroke,
+    AZIMUTH_LIMIT_DEG, FIX_TARGETS, compare, contact_turn_for_intent, decide_stroke, drive_spot, estimate_azimuth,
+    ghost_azimuth, main, racket_line_heading, swing_stroke,
 )
 from physics.ghost import apply_fix
 from physics.skeleton import (
-    ARM, FEET, L_HIP, L_SH, N_POINTS, NOSE, R_SH, bone_lengths, court_axes, court_shift, mid, racket_head,
-    swing_hand, to_array, to_court, up_vector,
+    ARM, FEET, L_HIP, L_SH, N_POINTS, NOSE, R_HIP, R_SH, bone_lengths, court_axes, court_shift, mid, racket_head,
+    rotate, swing_hand, to_array, to_court, up_vector,
 )
 from physics.tests.swing_factory import make_swing
 
@@ -44,7 +45,7 @@ def backhand():
 
 @pytest.fixture(scope="module")
 def fh_elbow(forehand):
-    return compare(forehand, "straighten_elbow", 12)
+    return compare(forehand, "straighten_elbow", 12, intent=None)  # the fix alone, no aim held
 
 
 def _facing_z(P: np.ndarray, frame: int) -> float:
@@ -208,9 +209,12 @@ def test_backhand_sample_matches_the_video(backhand):
         assert start[0] < 3.2  # left half
         assert start == pytest.approx(_head(r, side), abs=5e-4)
         az = a["launch"][side]["azimuth"]
-        assert abs(az["value"]) <= 5 and az["label"] == "ASSUMED" and az["estimate"] is False
-        assert az["rawValue"] > 25  # the wrist moves ~53 deg off straight: sideways, so it isn't used
+        assert az["label"] == "ASSUMED" and az["estimate"] is False  # the ghost inherits your aim's label
         assert _facing_z(to_array(r[side]["swing"]), r["contactFrame"]) < 0
+    you_az, ghost_az = a["launch"]["you"]["azimuth"], a["launch"]["ghost"]["azimuth"]
+    assert you_az["value"] == 0.0 and you_az["rawValue"] > 25  # the wrist moves ~53 deg off straight: sideways
+    # The ghost's aim is yours turned by the elbow fix's turn of the racket line at contact.
+    assert ghost_az["value"] == pytest.approx(you_az["value"] + ghost_az["racketLineTurnDeg"], abs=0.051)
 
 
 def test_elevation_can_be_set_for_one_swing(backhand):
@@ -262,6 +266,65 @@ def test_unmeasurable_aim_is_assumed_straight():
     Pc = np.full((3, N_POINTS, 3), np.nan)
     az = estimate_azimuth(Pc, "R", 1)
     assert (az["value"], az["label"], az["rawValue"]) == (0.0, "ASSUMED", None)
+
+
+# ---- The ghost's aim: yours, turned with the racket line at contact ----
+
+def _arm_pose() -> np.ndarray:
+    """MOCK court-axes pose at frame 0: right elbow and wrist out to the right, hips at x = 5."""
+    Pc = np.full((1, N_POINTS, 3), np.nan)
+    Pc[0, L_HIP], Pc[0, R_HIP] = (4.85, 0.9, 7.3), (5.15, 0.9, 7.3)
+    Pc[0, ARM["R"]["el"]], Pc[0, ARM["R"]["wr"]] = (5.35, 0.9, 7.1), (5.55, 0.7, 6.9)
+    return Pc
+
+
+@pytest.mark.parametrize("trunk_deg,turn,value,clamped", [
+    (0.0, 0.0, -13.5, False),
+    (10.0, -10.0, -20.0, True),   # opens 10 deg further: -23.5, clamped to the limit
+    (-10.0, 10.0, -3.5, False),   # 10 deg less open: 10 deg towards the line
+])
+def test_ghost_aim_turns_with_the_trunk_at_contact(trunk_deg, turn, value, clamped):
+    # Turning the upper body counter-clockwise seen from above (the way a right-hander's forehand
+    # unwinds) opens it: the racket line, and so the ball, swings towards the left wall.
+    you = _arm_pose()
+    ghost = you.copy()
+    centre = mid(you, L_HIP, R_HIP)[0]
+    ghost[0, :23] = rotate(you[0, :23], centre, np.array([0.0, 1.0, 0.0]), np.radians(trunk_deg))
+    you_aim = {"value": -13.5, "estimate": True, "label": "ESTIMATE"}
+    az = ghost_azimuth(you_aim, you, ghost, "R", 0)
+    assert az["racketLineTurnDeg"] == pytest.approx(turn, abs=0.05)
+    assert racket_line_heading(ghost, "R", 0) - racket_line_heading(you, "R", 0) == pytest.approx(turn, abs=1e-9)
+    assert (az["value"], az["clamped"], az["label"], az["estimate"]) == (pytest.approx(value), clamped, "ESTIMATE", True)
+    assert az["rawValue"] == pytest.approx(-13.5 + turn, abs=0.05) and az["youDeg"] == -13.5
+
+
+def test_hero_ghost_keeps_your_line_because_its_contact_is_yours(forehand):
+    # turn_shoulders_less only shrinks the backswing and fades to zero at contact, so the ghost's
+    # trunk, forearm and racket head at contact are yours: same racket face, same aim. The ghost's
+    # own wrist direction said -15.1 deg, from where the edit blends back into your swing.
+    r = compare(forehand, "turn_shoulders_less", 52.6, intent=None)
+    c, launch = r["contactFrame"], r["assumptions"]["launch"]
+    you, ghost = to_array(r["you"]["swing"]), to_array(r["ghost"]["swing"])
+    np.testing.assert_array_equal(ghost[c], you[c])
+    assert launch["ghost"]["azimuth"]["racketLineTurnDeg"] == 0.0
+    assert launch["ghost"]["azimuth"]["value"] == launch["you"]["azimuth"]["value"] == -13.5
+    assert _front_wall_x(r["ghost"]["ball"]) == _front_wall_x(r["you"]["ball"])  # one line, less pace
+    # From the ASSUMED drive spot (no court lines, as on a live upload). The demo's numbers, from
+    # the MEASURED spot, are pinned in test_court_spot.py.
+    d = r["delta"]["ball"]
+    assert (d["speedKmh"]["you"], d["speedKmh"]["ghost"]) == (133.2, 119.1)
+    assert (d["frontWallHeightM"]["you"], d["frontWallHeightM"]["ghost"]) == (1.92, 1.87)
+    assert (d["landingDepthM"]["you"], d["landingDepthM"]["ghost"]) == (8.97, 7.6)
+
+
+def test_elbow_fix_turns_the_aim_with_the_forearm(fh_elbow):
+    c, launch = fh_elbow["contactFrame"], fh_elbow["assumptions"]["launch"]
+    you, ghost = (to_array(fh_elbow[side]["swing"]) for side in ("you", "ghost"))
+    turn = racket_line_heading(ghost, "R", c) - racket_line_heading(you, "R", c)
+    az = launch["ghost"]["azimuth"]
+    assert abs(turn) > 3  # straightening the elbow swings the forearm, and the racket with it
+    assert az["racketLineTurnDeg"] == pytest.approx(turn, abs=0.05)
+    assert az["value"] == pytest.approx(launch["you"]["azimuth"]["value"] + turn, abs=0.06)
 
 
 @pytest.mark.parametrize("hand,side,x", [("R", "forehand", 5.4), ("R", "backhand", 2.0),
@@ -390,3 +453,153 @@ def test_real_backhands_are_plausible_drives():
         assert r["assumptions"]["stroke"]["value"] == "backhand", path.name
         assert ball["points"][0] == pytest.approx(_head(r, "you"), abs=5e-4), path.name
         assert 90 <= ball["speedKmh"] <= 170 and ball["outcome"] == "in", (path.name, ball["speedKmh"], ball["outcome"])
+
+
+# ---- Stated intent: a straight drive (aryan's call for the IMG_2115 hero) ----
+
+def _first_hit(ball: dict) -> str:
+    return ball["events"][0]["type"]
+
+
+def test_hero_aiming_a_straight_drive_holds_the_smallest_turn_that_sends_it_straight(forehand):
+    plain = compare(forehand, "turn_shoulders_less", 52.6, intent=None)
+    r = compare(forehand, "turn_shoulders_less", 52.6, intent="straight drive")
+    a = r["assumptions"]
+    # Solved, not set: your aim is -13.5, so the racket line must turn +13.5 deg, i.e. the
+    # shoulders hold 13.5 deg less turn at contact. Well inside the fix's 52.6 deg.
+    assert {k: a["aim"][k] for k in ("intent", "applied", "contactTurnDeg", "headingTurnDeg", "capDeg", "capped")} == {
+        "intent": "straight drive", "applied": True, "contactTurnDeg": -13.5, "headingTurnDeg": 13.5,
+        "capDeg": 52.6, "capped": False}
+    ghost_az = a["launch"]["ghost"]["azimuth"]
+    assert ghost_az["racketLineTurnDeg"] == 13.5 and ghost_az["value"] == 0.0  # measured from the ghost's pose
+    # It goes straight: the ball meets the front wall level with where it left the racket.
+    ball, start = r["ghost"]["ball"], a["launch"]["ghost"]["point"]
+    assert _first_hit(ball) == "front_wall" and _front_wall_x(ball) == pytest.approx(start[0], abs=1e-3)
+    assert COURT_WIDTH_M - start[0] == pytest.approx(0.94, abs=0.01)  # 0.94 m off the right wall
+    # You are untouched; the coil still drops by exactly the coach's 52.6 deg.
+    assert r["you"] == plain["you"] and a["launch"]["you"] == plain["assumptions"]["launch"]["you"]
+    assert (r["you"]["metrics"]["shoulder_turn_deg"], r["ghost"]["metrics"]["shoulder_turn_deg"]) == (137.6, 85.0)
+    # From the ASSUMED drive spot (no court lines, as on a live upload). The demo's numbers, from
+    # the MEASURED spot, are pinned in test_court_spot.py.
+    d = r["delta"]["ball"]
+    assert (d["speedKmh"]["you"], d["speedKmh"]["ghost"]) == (133.2, 119.1)
+    assert (d["frontWallHeightM"]["you"], d["frontWallHeightM"]["ghost"]) == (1.92, 1.86)
+    assert (d["landingDepthM"]["you"], d["landingDepthM"]["ghost"]) == (8.97, 8.04)
+    # Labelled on screen: the court note under the PREDICTED ball, and the fix for the legend.
+    assert r["fix"]["aiming"] == "straight drive" and "aiming" not in plain["fix"]
+    assert a["note"].endswith("Aiming: straight drive (the player's stated intent). Smallest change that sends "
+                              "your drive straight: −13.5° of shoulder turn at contact.")
+
+
+def test_the_hold_is_capped_at_the_fix(forehand):
+    r = compare(forehand, "turn_shoulders_less", 5, intent="straight drive")
+    a = r["assumptions"]
+    assert (a["aim"]["contactTurnDeg"], a["aim"]["capped"]) == (-5.0, True)
+    assert a["launch"]["ghost"]["azimuth"]["value"] == -8.5  # 5 deg towards the line, short of it
+    assert "Capped at the fix's 5°" in a["note"]
+
+
+@pytest.mark.parametrize("y_up", [False, True], ids=["y-down", "y-up"])
+@pytest.mark.parametrize("fix,amount", [("turn_shoulders_less", 15), ("turn_shoulders_more", 15)])
+def test_the_solved_hold_lands_the_ghost_on_the_line_either_way_up(y_up, fix, amount):
+    # The mock's own aim is ASSUMED (its wrist moves sideways), so give it a measured one: the
+    # sign from court heading to the shoulders' turn must hold for y-up and y-down skeletons.
+    swing = make_swing(y_up=y_up)
+    c, P = swing["contactFrame"], to_array(make_swing(y_up=y_up))
+    Pc = court_axes(P)
+    you_aim = {"value": -10.0, "estimate": True, "label": "ESTIMATE"}
+    aim, turn = contact_turn_for_intent(P, Pc, "R", c, you_aim, "straight drive", fix, amount)
+    assert aim["applied"] and aim["headingTurnDeg"] == 10.0
+    ghost = court_axes(to_array(apply_fix(swing, fix, amount, None, "R", contact_turn_deg=turn)))
+    assert ghost_azimuth(you_aim, Pc, ghost, "R", c)["value"] == pytest.approx(0.0, abs=1e-9)
+
+
+@pytest.mark.parametrize("fix,amount", [("straighten_elbow", 12), ("bend_elbow", 12), ("close_stance", 15),
+                                        ("turn_shoulders_more", 15), ("turn_shoulders_less", 52.6)])
+def test_every_ghost_aims_a_straight_drive_by_default(forehand, fix, amount):
+    # aryan's rule: every ghost aims a straight drive, down the right wall from the forehand spot.
+    # On top of the fix, the smallest turn held at contact puts the ghost's MEASURED aim on 0 deg;
+    # your swing and ball never change.
+    plain = compare(forehand, fix, amount, intent=None)
+    r = compare(forehand, fix, amount)
+    aim = r["assumptions"]["aim"]
+    assert aim["applied"] and aim["label"] == "TARGET" and aim["intent"] == "straight drive"
+    fix_turn = plain["assumptions"]["launch"]["ghost"]["azimuth"]["racketLineTurnDeg"]
+    assert aim["headingTurnDeg"] == pytest.approx(13.5 - fix_turn, abs=0.06)  # your aim is -13.5
+    ghost_az = r["assumptions"]["launch"]["ghost"]["azimuth"]
+    assert ghost_az["value"] == 0.0 and ghost_az["label"] == "ESTIMATE"  # measured from the ghost's pose
+    ball, start = r["ghost"]["ball"], r["assumptions"]["launch"]["ghost"]["point"]
+    assert _first_hit(ball) == "front_wall" and _front_wall_x(ball) == pytest.approx(start[0], abs=0.01)
+    assert start[0] > COURT_WIDTH_M / 2  # the right half: down the right wall
+    assert r["you"] == plain["you"] and r["fix"]["aiming"] == "straight drive"
+    # The fix itself is unchanged: its measurement moves by the same amount with or without the
+    # hold. Except the stance, which is measured against the shot line (the wrist's direction at
+    # contact): aiming straight turns that line, so the stance to it changes by the held turn too.
+    metric = FIX_TARGETS[fix][0]
+    held, alone = r["delta"]["metrics"][metric]["change"], plain["delta"]["metrics"][metric]["change"]
+    if metric == "stance_open_deg":
+        assert abs(held - alone) == pytest.approx(abs(aim["headingTurnDeg"]), abs=0.2)
+        assert "against the straight shot line" in r["fix"]["explain"]
+    else:
+        assert held == alone
+    assert "every ghost's target" in r["assumptions"]["note"]
+
+
+def test_assumed_aims_and_unchanged_ghosts_hold_nothing(forehand, backhand):
+    # The backhand's aim is ASSUMED straight (its wrist moves sideways): nothing measured to turn,
+    # and it already goes straight, down the left wall from the backhand spot.
+    r = compare(backhand, "turn_shoulders_less", 15)
+    assert r["assumptions"]["aim"]["applied"] is False and "assumed" in r["assumptions"]["aim"]["why"]
+    assert r["ghost"] == compare(backhand, "turn_shoulders_less", 15, intent=None)["ghost"]
+    assert r["assumptions"]["launch"]["ghost"]["azimuth"]["value"] == 0.0
+    assert r["assumptions"]["launch"]["ghost"]["point"][0] < COURT_WIDTH_M / 2
+    # Amount 0 is "unchanged": the ghost is your swing, nothing held.
+    zero = compare(forehand, "straighten_elbow", 0)
+    assert zero["assumptions"]["aim"]["applied"] is False and zero["ghost"]["ball"] == zero["you"]["ball"]
+    with pytest.raises(ValueError, match="intent must be one of"):
+        compare(forehand, "turn_shoulders_less", 15, intent="boast")
+
+
+def test_a_non_shoulder_fix_holds_at_most_the_limit(forehand):
+    # A fix other than the shoulder fixes may hold at most AIM_HOLD_LIMIT_DEG at contact.
+    from physics.compare import AIM_HOLD_LIMIT_DEG
+    r = compare(forehand, "bend_elbow", 30)
+    aim = r["assumptions"]["aim"]
+    if aim["capped"]:
+        assert abs(aim["contactTurnDeg"]) == AIM_HOLD_LIMIT_DEG and "Capped at 20°" in r["assumptions"]["note"]
+    else:
+        assert abs(aim["contactTurnDeg"]) <= AIM_HOLD_LIMIT_DEG
+
+
+def _vertical_forearm_at_contact(swing: dict) -> dict:
+    """MOCK: the swing with the hitting hand and racket swung about the elbow so the forearm
+    hangs straight down at contact (and the frames either side), as rigid as the real arm."""
+    P = to_array(swing)
+    j, c = ARM["R"], swing["contactFrame"]
+    down = up_vector(P) * -1.0
+    hand = [j["wr"], j["pinky"], j["index"], j["thumb"], 33, 34]  # + racket tip and throat
+    for i in (c - 1, c, c + 1):
+        v = P[i, j["wr"]] - P[i, j["el"]]
+        axis = np.cross(v, down)
+        angle = np.arccos(np.clip(v @ down / np.linalg.norm(v), -1, 1))
+        P[i, hand] = rotate(P[i, hand], P[i, j["el"]], axis / np.linalg.norm(axis), angle)
+    from physics.skeleton import from_array
+    return from_array(swing, P)
+
+
+def test_a_vertical_forearm_at_contact_leaves_the_ghost_on_your_aim():
+    # Codex P2 on PR #73: a forearm hanging straight down has no floor heading, so the fix's
+    # turn of the racket line is unmeasured. compare() must still answer, with your aim.
+    swing = _vertical_forearm_at_contact(make_swing())
+    c = swing["contactFrame"]
+    Pc = court_axes(to_array(swing))
+    fore = Pc[c, ARM["R"]["wr"]] - Pc[c, ARM["R"]["el"]]
+    assert np.hypot(fore[0], fore[2]) < 1e-9 and racket_line_heading(Pc, "R", c) is None
+    for fix, amount, intent in (("straighten_elbow", 12, None), ("turn_shoulders_less", 15, "straight drive")):
+        r = compare(swing, fix, amount, intent=intent)
+        you_az, ghost_az = r["assumptions"]["launch"]["you"]["azimuth"], r["assumptions"]["launch"]["ghost"]["azimuth"]
+        assert ghost_az["value"] == you_az["value"] and ghost_az["label"] == you_az["label"]
+        assert ghost_az["racketLineTurnDeg"] is None and "unmeasured" in ghost_az["method"]
+        assert r["ghost"]["ball"]["label"] == "PREDICTED"
+        if intent:
+            assert r["assumptions"]["aim"]["applied"] is False

@@ -30,8 +30,8 @@ export function CoachDetails({ state }: { state: CaptionState }) {
       {state.kind === "ready" && (
         <>
           <p className="text-[13px] leading-relaxed text-muted-foreground">
-            Code measured the {state.caption.stroke || "swing"}. The fault library ranks every number past its threshold,
-            worst first, and the top one is the call.
+            Code measured the {state.caption.stroke || "swing"}
+            {`. ${rankingSentence(state.caption)}`}
           </p>
           {state.caption.faults.length === 0 ? (
             <p className="text-sm text-muted-foreground">
@@ -68,6 +68,16 @@ export function CoachDetails({ state }: { state: CaptionState }) {
       )}
     </section>
   );
+}
+
+/**
+ * How the list is ordered. The fault library ranks by severity (coaching priority breaks ties),
+ * so the wrist-sensor wording shows only when rolled_wrist is the coach's top fault.
+ */
+function rankingSentence(caption: CoachCaption): string {
+  return caption.fault?.id === "rolled_wrist"
+    ? "A wrist-sensor fault leads; the rest are ranked worst first."
+    : "The fault library ranks every number past its threshold, worst first, and the top one is the call.";
 }
 
 /**

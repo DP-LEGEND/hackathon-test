@@ -204,7 +204,7 @@ function Stat({ label, value, detail, tag }: { label: string; value: string; det
       <dt className="text-xs text-muted-foreground">{label}</dt>
       <dd className={cn(look.title, look.value, "text-2xl")}>{value}</dd>
       <dd className="text-xs text-muted-foreground">{detail}</dd>
-      <dd className="mt-1 font-mono text-[0.65rem] tracking-wide text-muted-foreground">{tag}</dd>
+      <dd className="mt-1 font-mono text-[11px] tracking-wide text-muted-foreground">{tag}</dd>
     </div>
   );
 }
@@ -388,7 +388,7 @@ function Plot({
           {scale.ticks.map((tick) => (
             <span
               key={tick}
-              className="absolute right-2 -translate-y-1/2 text-[0.65rem] text-muted-foreground tabular-nums"
+              className="absolute right-2 -translate-y-1/2 text-[11px] text-muted-foreground tabular-nums"
               style={{ top: `${100 - pct(tick, y)}%` }}
             >
               {formatTick(tick)}
@@ -447,7 +447,7 @@ function Plot({
           {windowLabel && w1 > w0 && (
             <span
               aria-hidden
-              className="absolute top-1 pl-1 text-[0.65rem] text-muted-foreground"
+              className="absolute top-1 pl-1 text-[11px] text-muted-foreground"
               style={{ left: `${pct(w0, x)}%` }}
             >
               measured window
@@ -487,13 +487,13 @@ function Dot({ left, top }: { left: number; top: number }) {
 function XAxis({ x }: { x: [number, number] }) {
   return (
     <div aria-hidden className="grid grid-cols-[2.75rem_minmax(0,1fr)]">
-      <span className="pr-2 text-right text-[0.65rem] text-muted-foreground">ms</span>
+      <span className="pr-2 text-right text-[11px] text-muted-foreground">ms</span>
       <div className="relative h-4">
         {X_TICKS.filter((t) => t >= x[0] && t <= x[1]).map((t, i, all) => (
           <span
             key={t}
             className={cn(
-              "absolute text-[0.65rem] whitespace-nowrap tabular-nums",
+              "absolute text-[11px] whitespace-nowrap tabular-nums",
               t === 0 ? "font-medium text-foreground" : "text-muted-foreground",
               i === 0 ? "" : i === all.length - 1 ? "-translate-x-full" : "-translate-x-1/2",
             )}

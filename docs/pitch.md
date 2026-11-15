@@ -12,7 +12,7 @@ merged), so no number from them is said on stage. Say numbers only from the morn
 
 # Ghost: 3-minute pitch
 
-**Rehearsal note:** If over 3:00, cut the forehand video-check sentence first.
+**Rehearsal note:** If over 3:00, cut the forehand real-ball sentence first.
 
 **PRESENTER** speaks. **OPERATOR** clicks. Every click is below. The full set-up, checks and fallbacks are in [docs/demo-runbook.md](demo-runbook.md). Rehearse with a stopwatch.
 
@@ -34,7 +34,7 @@ Seconds are speaking time at 150 words a minute plus the click and loading gaps 
 **Rules**
 - Only say a measurement that's on screen. There are two named exceptions, as in the runbook:
   - the **launch angle**, which you always call *assumed*
-  - the **video-check height** (about 1.8 m on the forehand), which you always say was *checked by eye against the video*
+  - the **real-ball check** on the forehand: the tracked ball hit the front wall at 1.17 m; Ghost predicted 1.45 m from body motion alone (0.28 m off, launch angle assumed). Always say it was *tracked from the real video*
 - Say **predicted** the first time a ball path appears.
 - **Wrist sensor:** say its numbers only when the morning sample's output is on screen, and call them a sensor **ESTIMATE**. Without the sample, say it's been tried on real practice swings without a ball, and say no number.
 
@@ -93,7 +93,7 @@ Same clicks as the runbook's beats 1–4, faster. The wrist sensor (runbook beat
 |---|---|---|---|
 | The top card, **Forehand · over-rotation** | The coach's call: *"Over-rotation: hips turn 157°"* | A real forehand, filmed in slow motion and rebuilt in 3D. Our code measured it: the hips turn 157 degrees. Too much. That's the one fix. | 13 (incl. 2 s click) |
 | **Show the ghost**, then **0.25× slow-mo** (it's already playing) | Orange swing, cyan ghost. *Turn shoulders less*, *Coach's pick* | Orange is the swing they played. Cyan is their ghost: same body, same swing, shoulders turning less. | 9 (incl. 2 s click) |
-| **Show the court** | Two paths, each *PREDICTED*. Front wall height 1.92 → 1.88 m | Where each ball goes: predicted, not tracked. Theirs hits the front wall at 1.92 metres, with an assumed 12-degree launch angle. Checked by eye against the video: about 1.8, a rough check. The ghost's hits at 1.88. | 20 (incl. 2 s click) |
+| **Show the court** | Two paths, each *PREDICTED*: orange goes cross-court, cyan goes straight down the right wall. Front wall height 1.45 → 1.44 m | Where each ball goes: predicted, not tracked. Theirs goes cross-court; the ghost's goes straight down the wall. In the real video, the tracked ball hit the front wall at 1.17 metres; Ghost predicted 1.45 from body motion alone: 0.28 off, launch angle assumed. | 20 (incl. 2 s click) |
 
 ### Backhand (1:16–1:34, 18 s)
 
@@ -156,7 +156,7 @@ Mark it **ESTIMATE (sensor)**. The coach's call above already lists the wrist as
 Two sentences each. Say less rather than more, and never a number that isn't in these answers or on screen.
 
 **1. How accurate is it?**
-On the two swings we checked against video, the predicted front-wall height landed within about 0.1 to 0.3 metres, but the launch angle is assumed and we set it from those same clips, so that's a sanity check, not validation. The coach's four tuned rules come from a small set of labelled swings, so expect misses on new players until we label more.
+We tracked the real ball in the two demo clips: on the forehand the tracked ball hit the front wall at 1.17 metres and Ghost predicted 1.45 from body motion alone, 0.28 off, with the launch angle assumed and set from those same clips, so that's a check on two swings, not validation. The coach's four tuned rules come from a small set of labelled swings, so expect misses on new players until we label more.
 
 **2. What's measured and what's guessed?**
 Joints, angles, wrist timing and stance come from the pose; with one camera the depth is estimated, and the screen says so. Racket speed is estimated, shot direction is estimated when the wrist motion is clear and otherwise assumed straight, the launch angle is assumed, every ball path is predicted, and the screen labels each one. When a joint the camera couldn't see would decide a fault, the coach skips that fault and lists it as not checked instead of guessing, like the right elbow on the backhand.

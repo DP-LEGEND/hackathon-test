@@ -31,13 +31,13 @@ export function SiteShell({ children }: { children: ReactNode }) {
   return (
     <div className="dark ghost-theme site-shell">
       <a href="#site-content" className="site-skip">Skip to content</a>
-      <header className={path === "/ghost" ? "site-header site-header-compact" : "site-header"}>
+      <header className={active === "/demo" ? "site-header site-header-compact" : "site-header"}>
         <Link href="/" aria-label="GHOST home" className="site-brand">
           {path === "/" ? <Image src="/ghost/brand.svg" width={44} height={32} alt="" priority /> : "GHOST"}
         </Link>
         <nav aria-label="Main navigation" className="site-nav">{links}</nav>
         <Dialog open={menuOpen} onOpenChange={setMenuOpen}>
-          <DialogTrigger render={<Button variant="outline" className="site-menu-trigger" />} aria-label="Open navigation">
+          <DialogTrigger render={<Button variant="outline" className="site-menu-trigger" />}>
             <Menu aria-hidden /> Menu
           </DialogTrigger>
           <DialogContent showCloseButton={false} className="dark ghost-theme site-menu" style={{ translate: "none" }}>

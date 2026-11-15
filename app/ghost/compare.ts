@@ -43,10 +43,31 @@ export type GhostAim = {
   label: string | null;
 };
 
+/**
+ * Physics' check of the PREDICTED ball against a real ball (compare `validation`): the same
+ * measurement predicted and seen, how far apart, and how the real ball was found.
+ */
+export type BallValidation = {
+  /** Meters, as the file gives them. */
+  predicted: number;
+  tracked: number;
+  /** How far apart, as the file gives them; null when it doesn't. */
+  errorDeg: number | null;
+  errorM: number | null;
+  /** How the real ball was found: by the ball tracker or labelled by hand. */
+  method: "tracked" | "hand-labelled";
+};
+
 export type CompareResult = {
-  fix: { id: string; amount: number; unit: string };
+  /**
+   * `explain`: physics' chain from body to ball for this fix, in its own words, or null when the
+   * file has none.
+   */
+  fix: { id: string; amount: number; unit: string; explain: string | null };
   /** The ghost's aim when physics turned it to a stated shot (#73); null in files without one. */
   aim: GhostAim | null;
+  /** Physics' check against a real ball; null unless the file has a complete `validation`. */
+  validation: BallValidation | null;
   hand: "R" | "L";
   /** True when the ghost is the swing with a real fix applied (physics/ghost.py), not a copy. */
   ghostIsReal: boolean;
@@ -197,8 +218,15 @@ const FIX_NAMES: Record<string, string> = {
   bend_elbow: "Bend elbow",
   close_stance: "Close stance",
   turn_shoulders_less: "Turn shoulders less",
-  firm_wrist: "Firm wrist",
+  firm_wrist: "Keep your wrist firm",
 };
+
+/**
+ * Ghost fixes with no demo size, by unit. Physics applies firm_wrist (#80) only at the coach's
+ * amount (the forearm roll above the stroke's good median, on a swing with wrist-sensor data), so
+ * the page offers it only when the coach names it with that amount (sources.ts fixOptionsFor).
+ */
+export const COACH_ONLY_FIXES: Readonly<Record<string, string>> = { firm_wrist: "deg" };
 
 const METRIC_NAMES: Record<string, string> = {
   elbow_at_contact_deg: "Elbow at contact",
@@ -536,6 +564,28 @@ function readAim(c: Record<string, unknown>, assumptions: Record<string, unknown
   return { intent, label: labelOf(aim) };
 }
 
+/** `fix.explain`, trimmed. Null when absent, empty or not text. */
+function readExplain(fix: Record<string, unknown>): string | null {
+  return typeof fix.explain === "string" && fix.explain.trim() !== "" ? fix.explain.trim() : null;
+}
+
+/**
+ * `validation`, only when it's complete: both numbers and a method the page knows. Anything less
+ * is ignored rather than shown, so the page never claims a check it can't back.
+ */
+function readValidation(value: unknown): BallValidation | null {
+  const v = optional(value);
+  if (!v || !isFiniteNumber(v.predicted) || !isFiniteNumber(v.tracked)) return null;
+  if (v.method !== "tracked" && v.method !== "hand-labelled") return null;
+  return {
+    predicted: v.predicted,
+    tracked: v.tracked,
+    errorDeg: isFiniteNumber(v.error_deg) ? v.error_deg : null,
+    errorM: isFiniteNumber(v.error_m) ? v.error_m : null,
+    method: v.method,
+  };
+}
+
 /** Checks an untrusted `physics.compare` JSON value. Throws CompareDataError. */
 export function parseCompare(value: unknown): CompareResult {
   const c = record(value, "file");
@@ -565,8 +615,14 @@ export function parseCompare(value: unknown): CompareResult {
   const notMeasured = readReasons(c.notMeasured);
 
   return {
-    fix: { id: text(fix.id, "fix.id"), amount: num(fix.amount, "fix.amount"), unit: text(fix.unit, "fix.unit") },
+    fix: {
+      id: text(fix.id, "fix.id"),
+      amount: num(fix.amount, "fix.amount"),
+      unit: text(fix.unit, "fix.unit"),
+      explain: readExplain(fix),
+    },
     aim: readAim(c, assumptions),
+    validation: readValidation(c.validation),
     hand,
     coordinateSystem: typeof c.coordinateSystem === "string" ? c.coordinateSystem : null,
     ghostIsReal,
