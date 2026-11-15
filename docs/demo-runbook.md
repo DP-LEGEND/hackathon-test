@@ -252,7 +252,7 @@ As in `docs/pitch.md`, this beat now runs between beats 2 and 3. There's no wris
 
 **Otherwise, including whenever tab 3 prints *MOCK DATA*, don't show the tab** (17 s, 1:34–1:51). Switch nothing and say no number:
 
-> The camera can't see wrist roll, which is why the coach couldn't check it. So we strapped a phone to the forearm to measure it. We've tried it on real practice swings, but the numbers aren't solid enough to quote yet.
+> The camera can't see wrist roll, which is why the coach couldn't check it. So we strapped a phone to the forearm. We've tried it on real practice swings without a ball, but the numbers aren't solid enough to quote yet.
 
 Then go straight on to beat 3. After the spoken version it starts at 1:51, and every later time is 8 s earlier.
 
