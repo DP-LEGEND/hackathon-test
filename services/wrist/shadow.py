@@ -213,6 +213,9 @@ def read_segments(path: str | Path) -> list[dict[str, Any]]:
                 seg[key] = float(r[key]) if r.get(key) else None
             except ValueError as e:
                 raise ValueError(f"{path}:{n}: {key} must be a number, got {r[key]!r}") from e
+            if seg[key] is not None and not math.isfinite(seg[key]):  # float() takes "nan" and "inf"
+                raise ValueError(f"{path}:{n}: segment {r['segment']!r}: {key} must be a finite number, "
+                                 f"got {r[key]!r}")
         if seg["start_s"] is None and seg["video_start_s"] is None:
             raise ValueError(f"{path}:{n}: give start_s (sensor) or video_start_s (video)")
         out.append(seg)
@@ -240,6 +243,8 @@ def place_segments(segments: list[dict[str, Any]], rec: Recording,
                 if clock is None:
                     raise ValueError(f"segment {s['segment']!r}: video times need the video clock (--video-taps)")
                 s[f"{k}_s"] = round(to_sensor(s[f"video_{k}_s"], clock), 3)
+            if s.get(f"{k}_s") is not None and not math.isfinite(s[f"{k}_s"]):  # every comparison below is False
+                raise ValueError(f"segment {s['segment']!r}: {k}_s must be a finite number, got {s[f'{k}_s']}")
         span = f"the recording runs {first:.3f} .. {last:.3f} s (sensor clock)"
         if s["start_s"] < first - tol:
             raise ValueError(f"segment {s['segment']!r} starts at {s['start_s']} s, before the recording: {span}; "

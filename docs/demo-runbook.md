@@ -205,6 +205,10 @@ Beat 4 shows this tab only if **all four** hold. Otherwise beat 4 is spoken and 
 3. **http://localhost:8000/health**: shows `{"ok":true}`. Reload it if you're unsure whether the service is up.
 4. **The backup video**, once it's recorded at the freeze.
 
+**Saved-sample backup:** with the web app and Python service running, run `npx playwright install chromium` once to prepare the browser and video encoder.
+Run `node scripts/record_backup_demo.ts` (Node 26); set `GHOST_DEMO_URL` for a different localhost port.
+It saves silent 1920×1080 video to ignored `out/backup-demo.webm`, holding each beat for 3 seconds using saved samples only (no live upload, camera or keys). Never commit the video.
+
 **Warm up:** in tab 1, click through the forehand and the backhand all the way to the court, then click **Try another swing**. The dashed box under the swing list should say *"The live service is running but has no processed swings…"*. That's right for the show: `~/ghost-stage` stays empty until the stage upload. If it lists live swings, terminal tab 1 isn't running with an empty `~/ghost-stage`. If it says *"The live Python service isn't running"*, terminal tab 1 isn't up.
 
 ## The 3-minute click path
