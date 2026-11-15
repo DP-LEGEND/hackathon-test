@@ -42,7 +42,8 @@ export function turned(p: Vec3): Vec3 {
  * stand where physics put them.
  */
 const T_SPOT = { x: COURT.width / 2, z: COURT.shortLine } as const;
-const SIDE_BY_SIDE_OFFSET = 1.1; // metres along x, towards the middle of the court
+// Metres along x, towards the middle of the court: the ghost stays at the player's spot, just apart.
+const SIDE_BY_SIDE_OFFSET = 0.4;
 
 const BONE_RADIUS = 0.022;
 const JOINT_RADIUS = 0.032;
@@ -430,18 +431,14 @@ export type Placement = {
   spot: { x: number; z: number };
   /** Direction along x towards the middle of the court: -1 on the right half, +1 on the left. */
   towardsMiddle: 1 | -1;
-  /**
-   * Offset for the ghost's PREDICTED ball path. Court swings: the same side-by-side shift as the
-   * ghost, so its ball still leaves from its hand. Hip-centred swings: none (both paths start
-   * at the ball's assumed spot, under your hand).
-   */
-  ghostBall: Vec3;
 };
 
 /**
- * Where both figures stand and which way they face.
- * - Court coordinates: exactly as given. No turn, no floor offset, no placement; the ghost and
- *   its ball path only get the side-by-side shift.
+ * Where both figures stand and which way they face. The ghost stands at the player's spot
+ * (overlaid), or SIDE_BY_SIDE_OFFSET beside it. The PREDICTED ball paths never move: both are
+ * drawn where physics put them, from the contact point, in either layout.
+ * - Court coordinates: exactly as given. No turn, no floor offset, no placement; the ghost only
+ *   gets the side-by-side shift.
  * - Hip-centred: turned to face the front wall, feet on the floor, at the T. With `youWrist` and
  *   the ball's start, the "you" figure moves so its hitting wrist at the contact frame, after the
  *   turn and the floor offset, is exactly over the ball's start in x and z. Height isn't snapped:
@@ -459,7 +456,7 @@ export function placeFigures(
     const [x, , z] = coordinates.youHips;
     const towardsMiddle = x >= COURT.width / 2 ? -1 : 1;
     const shift = sideBySide ? towardsMiddle * SIDE_BY_SIDE_OFFSET : 0;
-    return { you: [0, 0, 0], ghost: [shift, 0, 0], facingY: 0, spot: { x, z }, towardsMiddle, ghostBall: [shift, 0, 0] };
+    return { you: [0, 0, 0], ghost: [shift, 0, 0], facingY: 0, spot: { x, z }, towardsMiddle };
   }
   let x: number = T_SPOT.x;
   let z: number = T_SPOT.z;
@@ -476,7 +473,6 @@ export function placeFigures(
     facingY: FACING_Y,
     spot: { x, z },
     towardsMiddle,
-    ghostBall: [0, 0, 0],
   };
 }
 
@@ -490,8 +486,6 @@ export class SkeletonScene {
   private readonly you = new SkeletonFigure({ colour: YOU_COLOUR, opacity: 1, halo: 0 });
   private readonly ghost = new SkeletonFigure({ colour: GHOST_COLOUR, opacity: 0.5, halo: 0.012 });
   private balls: THREE.Group | null = null;
-  /** The ghost's own ball path inside `balls` (null when there's one shared path). */
-  private ghostBall: THREE.Group | null = null;
   /** The PREDICTED tags of the paths on show. */
   private tags: CSS2DObject[] = [];
   /** Where the overlays laid over the view are (legend, caption), so the tags stay clear of them. */
@@ -560,7 +554,6 @@ export class SkeletonScene {
     this.ghost.group.rotation.y = this.placement.facingY;
     this.you.group.position.fromArray(this.placement.you);
     this.ghost.group.position.fromArray(this.placement.ghost);
-    this.ghostBall?.position.fromArray(this.placement.ghostBall);
     const { x, z } = this.placement.spot;
     return x !== before.x || z !== before.z;
   }
@@ -593,17 +586,14 @@ export class SkeletonScene {
       this.scene.remove(this.balls);
       disposeTree(this.balls);
       this.balls = null;
-      this.ghostBall = null;
       this.tags = [];
     }
     if (ballPaths) {
+      // Both paths as physics gave them, from the contact point, whichever layout the ghost is in.
       const group = new THREE.Group();
       group.add(buildBallPath(ballPaths.you, { colour: YOU_COLOUR, opacity: 1, halo: 0, tagAbove: true }));
       if (ballPaths.ghost) {
-        const ghostBall = buildBallPath(ballPaths.ghost, { colour: GHOST_COLOUR, opacity: 0.7, halo: 0.007, tagAbove: false });
-        ghostBall.position.fromArray(this.placement.ghostBall); // follows the ghost in side by side (court swings)
-        group.add(ghostBall);
-        this.ghostBall = ghostBall;
+        group.add(buildBallPath(ballPaths.ghost, { colour: GHOST_COLOUR, opacity: 0.7, halo: 0.007, tagAbove: false }));
       }
       const ball = new THREE.Mesh(
         new THREE.SphereGeometry(BALL_RADIUS, 16, 12),
@@ -666,7 +656,7 @@ export class SkeletonScene {
     else this.ghost.group.visible = false;
   }
 
-  /** Overlay (default) or ghost moved beside the player, towards the middle of the court. */
+  /** Overlay (default) or the ghost 0.4 m beside the player, towards the middle; the ball paths stay put. */
   setSideBySide(on: boolean) {
     this.sideBySide = on;
     this.applyPlacement();

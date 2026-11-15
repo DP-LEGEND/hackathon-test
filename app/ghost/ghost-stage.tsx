@@ -63,6 +63,7 @@ export function GhostStage({
   onViewChange,
   status,
   legend,
+  below,
   children,
 }: {
   you: LoadedSwing | null;
@@ -78,7 +79,9 @@ export function GhostStage({
   status: StageStatus;
   /** The key to the view, top left under the view's name. */
   legend?: ReactNode;
-  /** Other overlays drawn over the view (caption, court note). */
+  /** Drawn in the stage under the 3D view, above the timeline, so it never covers the view (the coach's call). */
+  below?: ReactNode;
+  /** Other overlays drawn over the view (the court note). */
   children?: ReactNode;
 }) {
   const [sceneError, setSceneError] = useState<string | null>(null);
@@ -261,49 +264,52 @@ export function GhostStage({
   return (
     <section aria-label="Swing replay" className="flex flex-col gap-3">
       <div className="overflow-hidden rounded-[24px] border bg-(--media)">
-        {/* #76's replay height: the stage and the coach's caption fit a 1440×900 screen without scrolling. */}
-        <div className="relative h-[min(72vh,760px)] lg:h-[min(760px,calc(100svh-24rem))] min-h-[26rem]">
-          <div
-            ref={viewportRef}
-            role="img"
-            aria-label="3D replay on a squash court: your swing in orange, the ghost and its fix in cyan, PREDICTED ball paths when shown. Drag to rotate, scroll to zoom."
-            className="absolute inset-0 cursor-grab active:cursor-grabbing"
-          />
-          {status?.kind === "loading" && !error && (
+        {/* The 3D view takes what `below` (the coach's call) leaves of the stage's height. */}
+        <div className={cn("flex flex-col", look.stageHeight)}>
+          <div className="relative min-h-60 flex-1">
             <div
-              role="status"
-              className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-sm text-muted-foreground"
-            >
-              <LoaderCircle aria-hidden className="size-6 text-primary motion-safe:animate-spin" />
-              {status.message}
-            </div>
-          )}
-          {error && (
-            <div
-              role="alert"
-              className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-(--media) p-6 text-center"
-            >
-              <CircleAlert aria-hidden className="size-6 text-destructive" />
-              <p className="max-w-md text-sm text-foreground">{error.message}</p>
-              <Button variant="outline" className={look.pill} onClick={error.onRetry}>
-                <RotateCcw data-icon="inline-start" />
-                Try again
-              </Button>
-            </div>
-          )}
-          {ready && !error && (
-            <div
-              data-tag-avoid
-              className="pointer-events-none absolute top-3 left-3 flex max-w-[calc(100%-1.5rem)] flex-col items-start gap-2.5 sm:top-5 sm:left-5 sm:max-w-xs"
-            >
-              <p className={cn(look.label, "flex flex-wrap gap-x-2.5 [text-shadow:0_1px_2px_rgb(0_0_0/0.6)]")}>
-                <span className="text-primary">{view === "player" ? "Player view" : "Court view"}</span>
-                <span className="text-muted-foreground">3D replay</span>
-              </p>
-              {legend}
-            </div>
-          )}
-          {ready && !error && children}
+              ref={viewportRef}
+              role="img"
+              aria-label="3D replay on a squash court: your swing in orange, the ghost and its fix in cyan, PREDICTED ball paths when shown. Drag to rotate, scroll to zoom."
+              className="absolute inset-0 cursor-grab active:cursor-grabbing"
+            />
+            {status?.kind === "loading" && !error && (
+              <div
+                role="status"
+                className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-sm text-muted-foreground"
+              >
+                <LoaderCircle aria-hidden className="size-6 text-primary motion-safe:animate-spin" />
+                {status.message}
+              </div>
+            )}
+            {error && (
+              <div
+                role="alert"
+                className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-(--media) p-6 text-center"
+              >
+                <CircleAlert aria-hidden className="size-6 text-destructive" />
+                <p className="max-w-md text-sm text-foreground">{error.message}</p>
+                <Button variant="outline" className={look.pill} onClick={error.onRetry}>
+                  <RotateCcw data-icon="inline-start" />
+                  Try again
+                </Button>
+              </div>
+            )}
+            {ready && !error && (
+              <div
+                data-tag-avoid
+                className="pointer-events-none absolute top-3 left-3 flex max-w-[calc(100%-1.5rem)] flex-col items-start gap-2.5 sm:top-5 sm:left-5 sm:max-w-xs"
+              >
+                <p className={cn(look.label, "flex flex-wrap gap-x-2.5 [text-shadow:0_1px_2px_rgb(0_0_0/0.6)]")}>
+                  <span className="text-primary">{view === "player" ? "Player view" : "Court view"}</span>
+                  <span className="text-muted-foreground">3D replay</span>
+                </p>
+                {legend}
+              </div>
+            )}
+            {ready && !error && children}
+          </div>
+          {ready && !error && below}
         </div>
 
         <div className="flex flex-col gap-3 border-t bg-(--panel) px-3 py-3 sm:px-5 sm:py-4">
@@ -349,8 +355,8 @@ export function GhostStage({
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="w-full font-mono text-xs text-muted-foreground tabular-nums sm:mr-auto sm:w-auto">
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+            <p className="font-mono text-xs text-muted-foreground tabular-nums sm:mr-auto">
               <span className="text-foreground">{timeLabel || "–"}</span>
               {ready && (
                 <>
@@ -368,50 +374,51 @@ export function GhostStage({
                 </>
               )}
             </p>
-            <Button
-              variant="outline"
-              className={cn(look.pill, toggle)}
-              onClick={toggleSlowMo}
-              aria-pressed={slowMo}
-              disabled={!ready}
-            >
-              <Turtle data-icon="inline-start" />
-              0.25× slow-mo
-            </Button>
-            <Button variant="outline" className={look.pill} onClick={() => seek(0)} disabled={!ready}>
-              <Crosshair data-icon="inline-start" />
-              Contact
-            </Button>
-            <Button
-              variant="outline"
-              className={look.pill}
-              onClick={() => onViewChange(view === "player" ? "court" : "player")}
-              disabled={!ready}
-            >
-              {view === "player" ? <Grid3x3 data-icon="inline-start" /> : <PersonStanding data-icon="inline-start" />}
-              {view === "player" ? "Court view" : "Player view"}
-            </Button>
-            <Button
-              variant="outline"
-              className={cn(look.pill, toggle)}
-              onClick={toggleSideBySide}
-              aria-pressed={sideBySide}
-              disabled={!ready || !ghost}
-            >
-              {sideBySide ? <Layers data-icon="inline-start" /> : <Columns2 data-icon="inline-start" />}
-              {sideBySide ? "Overlay" : "Side by side"}
-            </Button>
-            <Button variant="ghost" className={look.pill} onClick={() => sceneRef.current?.resetView()} disabled={!ready}>
-              <RotateCcw data-icon="inline-start" />
-              Reset view
-            </Button>
+            <div className={look.phoneRow}>
+              <Button
+                variant="outline"
+                className={cn(look.pill, look.phoneRowItem, toggle)}
+                onClick={toggleSlowMo}
+                aria-pressed={slowMo}
+                disabled={!ready}
+              >
+                <Turtle data-icon="inline-start" />
+                0.25× slow-mo
+              </Button>
+              <Button variant="outline" className={cn(look.pill, look.phoneRowItem)} onClick={() => seek(0)} disabled={!ready}>
+                <Crosshair data-icon="inline-start" />
+                Contact
+              </Button>
+              <Button
+                variant="outline"
+                className={cn(look.pill, look.phoneRowItem)}
+                onClick={() => onViewChange(view === "player" ? "court" : "player")}
+                disabled={!ready}
+              >
+                {view === "player" ? <Grid3x3 data-icon="inline-start" /> : <PersonStanding data-icon="inline-start" />}
+                {view === "player" ? "Court view" : "Player view"}
+              </Button>
+              <Button
+                variant="outline"
+                className={cn(look.pill, look.phoneRowItem, toggle)}
+                onClick={toggleSideBySide}
+                aria-pressed={sideBySide}
+                disabled={!ready || !ghost}
+              >
+                {sideBySide ? <Layers data-icon="inline-start" /> : <Columns2 data-icon="inline-start" />}
+                {sideBySide ? "Overlay" : "Side by side"}
+              </Button>
+              <Button
+                variant="ghost"
+                className={cn(look.pill, look.phoneRowItem)}
+                onClick={() => sceneRef.current?.resetView()}
+                disabled={!ready}
+              >
+                <RotateCcw data-icon="inline-start" />
+                Reset view
+              </Button>
+            </div>
           </div>
-          {sideBySide && ghost && coordinates.system === "court" && balls?.ghost && (
-            <p className="text-xs text-muted-foreground">
-              Side by side: the ghost and its PREDICTED ball path are drawn to the side, so the ghost&apos;s ball lands
-              off its real spot (display only).
-            </p>
-          )}
         </div>
       </div>
 

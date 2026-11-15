@@ -1,4 +1,4 @@
-// Coach caption laid over the 3D view, like a subtitle: the top fault, its cue and, when the
+// Coach caption under the 3D view, like a subtitle: the top fault, its cue and, when the
 // ghost shows a different fix, the coach's ghost_note. Orange = what the player did (the
 // fault), cyan = the fix (the cue). "No fault" never claims more than the coach checked.
 // Once the coach's voice (#60) loads, its cue replaces the plain one, with a play button when
@@ -69,13 +69,11 @@ export function CoachCaptionBar({
   const partial = state.kind === "ready" && noFaultInWhatWasChecked(state.caption);
   const voice = state.kind === "ready" && !partial ? (state.voice ?? null) : null;
   return (
-    <div className="pointer-events-none absolute inset-x-3 bottom-3 flex justify-center sm:inset-x-5 sm:bottom-5">
+    <div className="flex justify-center px-3 pb-3 sm:px-5 sm:pb-5">
       <figure
-        data-tag-avoid
         className={cn(
           "w-full max-w-3xl rounded-[20px] border bg-background/92 text-center shadow-[0_12px_40px_rgb(0_0_0/0.4)]",
           large ? "px-4 py-3.5 sm:px-8 sm:py-5" : "px-3 py-2.5 sm:px-6 sm:py-3",
-          state.kind === "error" && "pointer-events-auto",
         )}
         aria-live="polite"
       >
@@ -190,7 +188,7 @@ function PlayVoice({ url, large }: { url: string; large: boolean }) {
       type="button"
       variant="outline"
       size={large ? "sm" : "xs"}
-      className={cn(look.pill, "pointer-events-auto")}
+      className={look.pill}
       onClick={play}
     >
       <Volume2 data-icon="inline-start" />

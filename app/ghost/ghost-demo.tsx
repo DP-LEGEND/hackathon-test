@@ -344,7 +344,8 @@ export function GhostDemo({ requestedSwing }: { requestedSwing: string | null })
             <p>The swings couldn&apos;t load: {catalogue.message}</p>
           </StateCard>
         ) : (
-          <StateCard tone="loading" role="status">
+          // As tall as the stage that replaces it, so the page doesn't jump when the swing arrives.
+          <StateCard tone="loading" role="status" className={cn("justify-center", look.stageHeight)}>
             Loading swings…
           </StateCard>
         )
@@ -359,7 +360,7 @@ export function GhostDemo({ requestedSwing }: { requestedSwing: string | null })
               <Badge variant={entry.origin === "api" ? "default" : "secondary"} className={cn(look.chip, "uppercase")}>
                 {entry.origin === "api" ? "Live" : "Sample"}
               </Badge>
-              <span className="truncate">{entry.label}</span>
+              <span className="min-w-0">{entry.label}</span>
             </p>
             {meta.next && (
               <Button
@@ -372,35 +373,6 @@ export function GhostDemo({ requestedSwing }: { requestedSwing: string | null })
               </Button>
             )}
           </div>
-
-          {showGhost && (
-            <div className="flex flex-col gap-2">
-              <FixPicker
-                fixes={fixes}
-                selected={activeFix?.id ?? null}
-                loading={compareState.status === "loading"}
-                faults={faults}
-                coachPick={coachPick?.id ?? null}
-                coached={coachCaption !== null}
-                onSelect={setChosenFix}
-              />
-              <p role="status" className="text-sm text-muted-foreground empty:hidden">
-                {compareState.status === "loading" && activeFix ? `Making the ${fixName(activeFix.id).toLowerCase()} ghost…` : ""}
-              </p>
-              {compareState.status === "error" && (
-                <div
-                  role="alert"
-                  className="flex flex-wrap items-center gap-3 rounded-2xl border border-destructive/40 bg-(--panel) py-3 pr-3 pl-4 text-sm"
-                >
-                  <CircleAlert aria-hidden className="size-4 shrink-0 text-destructive" />
-                  <p className="min-w-0 flex-1">Couldn&apos;t make this ghost: {compareState.message}</p>
-                  <Button variant="outline" size="sm" className={look.pill} onClick={() => setCompareAttempt((n) => n + 1)}>
-                    Try again
-                  </Button>
-                </div>
-              )}
-            </div>
-          )}
 
           <GhostStage
             you={you}
@@ -434,6 +406,15 @@ export function GhostDemo({ requestedSwing }: { requestedSwing: string | null })
                 {onCourt && compare?.validation && <ValidationBadge validation={compare.validation} />}
               </>
             }
+            below={
+              // Keyed by swing, so a new swing never keeps the last one's clip playing.
+              <CoachCaptionBar
+                key={entry.key}
+                state={caption}
+                size={step === "coach" ? "large" : "compact"}
+                explain={coachExplain}
+              />
+            }
           >
             {onCourt && (
               <p
@@ -445,14 +426,37 @@ export function GhostDemo({ requestedSwing }: { requestedSwing: string | null })
                   : "Court 6.40 × 9.75 m · player placed with the hitting hand over the ball's assumed start (display only)"}
               </p>
             )}
-            {/* Keyed by swing, so a new swing never keeps the last one's clip playing. */}
-            <CoachCaptionBar
-              key={entry.key}
-              state={caption}
-              size={step === "coach" ? "large" : "compact"}
-              explain={coachExplain}
-            />
           </GhostStage>
+
+          {/* The fix picker comes after the stage, so the 3D replay is on the first screen. */}
+          {showGhost && (
+            <div className="flex flex-col gap-2">
+              <FixPicker
+                fixes={fixes}
+                selected={activeFix?.id ?? null}
+                loading={compareState.status === "loading"}
+                faults={faults}
+                coachPick={coachPick?.id ?? null}
+                coached={coachCaption !== null}
+                onSelect={setChosenFix}
+              />
+              <p role="status" className="text-sm text-muted-foreground empty:hidden">
+                {compareState.status === "loading" && activeFix ? `Making the ${fixName(activeFix.id).toLowerCase()} ghost…` : ""}
+              </p>
+              {compareState.status === "error" && (
+                <div
+                  role="alert"
+                  className="flex flex-wrap items-center gap-3 rounded-2xl border border-destructive/40 bg-(--panel) py-3 pr-3 pl-4 text-sm"
+                >
+                  <CircleAlert aria-hidden className="size-4 shrink-0 text-destructive" />
+                  <p className="min-w-0 flex-1">Couldn&apos;t make this ghost: {compareState.message}</p>
+                  <Button variant="outline" size="sm" className={look.pill} onClick={() => setCompareAttempt((n) => n + 1)}>
+                    Try again
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
 
           {step === "coach" && <CoachDetails state={caption} />}
           {step === "coach" && (
