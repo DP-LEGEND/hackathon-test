@@ -57,8 +57,8 @@ def test_a_rolled_mock_swing_becomes_a_sample_whose_ghost_goes_straight(script, 
     assert after["swings"][:-1] == before["swings"] and after["defaultSwing"] == before["defaultSwing"]
     assert after["demoAmounts"] == before["demoAmounts"]
     coach = json.loads((out_dir / entry["coach"]).read_text())
-    wrist_fault = next(f for f in coach["faults"] if f["id"] == "rolled_wrist")
-    assert wrist_fault["cue"] == "Keep your wrist firm through contact." and wrist_fault["ghost_ready"] is True
+    assert coach["fault"]["id"] == "rolled_wrist" and coach["cue"] == "Keep your wrist firm through contact."
+    assert coach["ghost_fix"] == "firm_wrist" and coach["ghost_note"] is None
     fix = entry["fixes"]["firm_wrist"]
     assert fix["flagged"] is True and fix["amount"] == pytest.approx(60.8 - 16.5, abs=0.05)
     result = json.loads((out_dir / fix["file"]).read_text())

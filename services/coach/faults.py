@@ -166,7 +166,8 @@ MEASUREMENTS: dict[str, dict[str, Any]] = {
 }
 
 # The library. `priority` breaks severity ties: stance first, then preparation,
-# rotation, wrist (the coaching order in agent.py).
+# rotation, wrist (the coaching order in agent.py). A wrist-sensor fault (rolled_wrist)
+# leads whenever it fires, ahead of every pose fault: see detect_faults.
 FAULTS: dict[str, dict[str, Any]] = {
     "stance_too_open": {"title": "Stance too open", "fix": "close_stance", "priority": 0,
                         "cue": "Your open stance lets your hips fly open early. Close it so you can hold the turn.",
@@ -348,8 +349,12 @@ FRONT_WALL_STANCE_NOTE = ("Stance measured from the feet against the camera's fo
 
 def detect_faults(swing: dict, stroke: Optional[Stroke] = None, fps_real: Optional[float] = None,
                   metrics: Optional[dict[str, Any]] = None) -> list[Fault]:
-    """Every fault that fires on this swing, worst first (severity, then coaching priority).
+    """Every fault that fires on this swing: wrist-sensor faults first, then the rest worst
+    first (severity, then coaching priority).
 
+    A sensor fault (rolled_wrist, real or mock) leads even when a pose fault is more severe: the
+    camera can't see forearm roll, so it is the new information. Without sensor data no sensor
+    fault can fire, so the order is severity then priority, exactly as before.
     Pass `metrics` (from measure_swing) to skip re-measuring.
     """
     m = metrics if metrics is not None else measure_swing(swing, stroke, fps_real)
@@ -390,7 +395,8 @@ def detect_faults(swing: dict, stroke: Optional[Stroke] = None, fps_real: Option
             cue=spec["cue"],
             tip=spec.get("tip"),
         ))
-    found.sort(key=lambda f: (-f["severity"], FAULTS[f["id"]]["priority"]))
+    found.sort(key=lambda f: (not MEASUREMENTS[f["measurement"]].get("sensor", False),
+                              -f["severity"], FAULTS[f["id"]]["priority"]))
     return found
 
 

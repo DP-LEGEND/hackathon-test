@@ -67,7 +67,8 @@ def coach_swing(swing: dict, stroke: Optional[Stroke] = None, fps_real: Optional
     (low confidence; see measure_extra.py). fps_real: real capture rate if slow-mo.
 
     Result keys: stroke, stroke_source, metrics, fault (Fault or None), fix, fix_amount,
-    ghost_ready, cue, other_faults (ids, worst first), not_measured (fault ids), and
+    ghost_ready, cue, other_faults (ids, in detect_faults' order: a wrist-sensor fault
+    leads, then worst first), not_measured (fault ids), and
     for the ghost: ghost_fault (worst fault the ghost can animate, or None),
     ghost_fix, ghost_fix_amount, ghost_note (None when the ghost shows the top fix),
     ghost_fixes ([{fix, amount}], the primary first plus any paired fix) and

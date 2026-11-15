@@ -13,7 +13,7 @@ What it does (nothing is written until every file has passed /ghost's parsers):
  1. Reads the swing and refuses anything that isn't mock: real recordings go through
     scripts/make_sensor_sample.py, which syncs them to their clip.
  2. Coach (coach.agent.coach_swing plus every fault) on the swing WITH its wrist entry: the
-    coach judges rolled_wrist by the mock rule, and firm_wrist is the ghost's fix when it fires.
+    coach judges rolled_wrist by the mock rule; when it fires it is the call and firm_wrist the ghost.
  3. physics.compare.compare for every fix. With the forearm roll, both PREDICTED balls are aimed
     by the racket face (physics/wrist_face.py, an ASSUMED face model): the rolled swing's goes
     cross-court, the firm-wrist ghost's straight.
@@ -24,9 +24,10 @@ What it does (nothing is written until every file has passed /ghost's parsers):
     entry and defaultSwing stay exactly as they were. Only a sample this script made can be
     replaced, and only with --replace.
 
-The body is wrist.synth's placeholder (only the arm moves), so the coach's pose faults on it
-mean nothing: the coach's call may be a pose fault while the ghost shows the firm wrist.
-Everything says MOCK. These files are for a local demo: don't commit them.
+On a rolled swing the coach's call is the wrist ("Keep your wrist firm through contact."): a
+wrist-sensor fault leads, pose faults follow. The body is wrist.synth's placeholder (only the
+arm moves), so those pose faults mean nothing. Everything says MOCK. These files are for a
+local demo: don't commit them.
 """
 
 from __future__ import annotations
