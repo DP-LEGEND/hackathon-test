@@ -193,3 +193,15 @@ def test_without_a_sensor_the_order_is_severity_then_priority(sample: dict) -> N
     for stroke in ("forehand", "backhand"):
         faults = detect_faults(sample, stroke)
         assert faults == sorted(faults, key=lambda f: (-f["severity"], FAULTS[f["id"]]["priority"]))
+
+
+@pytest.mark.parametrize("stroke", ["backhand", "forehand"])
+def test_a_real_swing_at_the_mock_rolled_roll_does_not_fire(sample: dict, stroke: str) -> None:
+    """Codex P2 on #74: 62 deg is a rolled MOCK swing but a normal real one (real good rolls are
+    95-145 deg): real data keeps the per-stroke lines, mock data gets MOCK_ROLLED_WRIST."""
+    assert rolled({**sample, "wrist": wrist(62.0)}, stroke) is None   # real, gyro-peak timed
+    f = rolled({**sample, "wrist": wrist(62.0, mock=True)}, stroke)
+    assert f is not None and f["threshold"] == MOCK_ROLLED_WRIST["threshold"] and f["source"] == WRIST_MOCK
+    # the mock rule has no timing gate: a mock entry timed by its impact spike is still judged
+    f = rolled({**sample, "wrist": wrist(62.0, mock=True, contact_source="impact spike")}, stroke)
+    assert f is not None and f["label"].endswith(MOCK_SENSOR_NOTE)
