@@ -54,7 +54,7 @@ Measuring and choosing the fix are plain code. Claude Opus 5.5 only rewords the 
 - uses the opposite direction word.
 
 **11. What does ElevenLabs do, and what if there's no network?**
-ElevenLabs (`eleven_turbo_v2_5`) reads that sentence aloud server-side, on swings you upload, so the key never reaches the browser. Without keys, without a network, or after a 12 s timeout, the caption still shows the coach's plain cue, with no audio and no error. A clip that worked is cached per swing, so it replays offline.
+ElevenLabs (`eleven_turbo_v2_5`) reads that sentence aloud server-side, on swings you upload, so the key never reaches the browser. If Claude has no key, times out (10 s) or fails the checker, the caption shows the coach's plain cue and ElevenLabs reads that instead; if only ElevenLabs has no key, fails or times out (12 s), Claude's reworded sentence stays and there's simply no audio. Neither case shows an error, and with no network a swing that was voiced before still replays from its cached clip.
 
 **12. How did Figma shape the design?**
 The Figma file came first:
@@ -67,7 +67,7 @@ The data, the coach's wording and the PREDICTED labels didn't change, only the d
 ## Limits
 
 **13. What happens to my video and data?**
-The pipeline runs on our laptop: the browser sends the clip through the web app's same-origin proxy to a local Python service, which processes it in a temporary folder and keeps only the skeleton, the coach's call and the comparison, not the video. On uploaded swings, when the keys are set, stroke data is sent to Claude: the stroke (forehand or backhand) and the coach's fault with its measured number, cue and tip, never the video or the skeleton, and ElevenLabs gets only the one sentence it reads aloud. Videos and sensor recordings are never committed to the repo.
+The pipeline runs on our laptop: the browser sends the clip through the web app's same-origin proxy to a local Python service, which processes it in a temporary folder and keeps the skeleton, the coach's call and the comparison, not the video. On uploaded swings, when the keys are set, stroke data is sent to Claude: the stroke (forehand or backhand) and the coach's fault with its measured number, cue and tip, never the video or the skeleton, and ElevenLabs gets only the one sentence it reads aloud. The sentence behind **Hear the coach** and its MP3 are also saved on the laptop until deleted, in `services/coach/.voice_cache/` (git-ignored; `GHOST_VOICE_CACHE` sets the folder), so the swing replays offline; videos and sensor recordings are never committed to the repo.
 
 **14. What fails today?**
 A clip without one fully tracked swing is rejected ("keep the whole body in frame and film one clear swing"), and stripped slow-motion metadata can need the speed set by hand. Racket speed is estimated from the wrist and is far off on some real backhands; the launch angle is assumed; and one-camera depth is estimated. Only one clip processes at a time, and the coach is tuned on a small labelled set.
