@@ -101,6 +101,41 @@ def test_a_reused_segment_name_is_refused_with_both_lines(tmp_path: Path) -> Non
         read_segments(path)
 
 
+def test_an_excel_csv_with_a_byte_order_mark_parses(tmp_path: Path) -> None:
+    """Codex P2 on #75: Excel's "CSV UTF-8" starts with a BOM, which would glue itself to 'segment'."""
+    path = tmp_path / "segments.csv"
+    path.write_bytes(b"\xef\xbb\xbfsegment,stroke,fault,start_s,end_s\r\n"
+                     b"bh-good,backhand,none,14.889,\r\nbh-rolled,backhand,rolled_wrist,74.149,\r\n")
+    segs = read_segments(path)
+    assert [(s["segment"], s["stroke"], s["start_s"]) for s in segs] == [
+        ("bh-good", "backhand", 14.889), ("bh-rolled", "backhand", 74.149)]
+
+
+def test_a_block_starting_before_the_recording_is_refused() -> None:
+    """Codex P2 on #80: it would be cut silently to the samples there are."""
+    rec = _rec(np.zeros((12001, 3)), np.zeros((12001, 3)))   # 0..120 s at 100 Hz
+    segs = [{"segment": "bh-good", "stroke": "backhand", "fault": "none", "start_s": -5.0, "end_s": 30.0}]
+    with pytest.raises(ValueError, match=r"segment 'bh-good' starts at -5.0 s, before the recording: "
+                                         r"the recording runs 0.000 .. 120.000 s"):
+        place_segments(segs, rec)
+    segs[0]["start_s"] = -0.01   # one sample early: within tolerance
+    assert place_segments(segs, rec)[0]["start_s"] == -0.01
+
+
+def test_a_block_ending_after_the_recording_is_refused() -> None:
+    rec = _rec(np.zeros((12001, 3)), np.zeros((12001, 3)))   # 0..120 s at 100 Hz
+    segs = [{"segment": "fh-good", "stroke": "forehand", "fault": "none", "start_s": 10.0, "end_s": 40.0},
+            {"segment": "fh-rolled", "stroke": "forehand", "fault": "rolled_wrist", "start_s": 40.0, "end_s": 130.0}]
+    with pytest.raises(ValueError, match=r"segment 'fh-rolled' ends at 130.0 s, after the recording: "
+                                         r"the recording runs 0.000 .. 120.000 s"):
+        place_segments(segs, rec)
+    vsegs = [{"segment": "late", "stroke": "forehand", "fault": "none", "video_start_s": 100.0, "video_end_s": 600.0}]
+    with pytest.raises(ValueError, match="'late' ends at 132.0 s, after the recording"):   # 600 x 0.25 - 18
+        place_segments(vsegs, rec, {"scale": 0.25, "offset_s": -18.0})
+    segs[1]["end_s"] = None   # a blank end runs to the end of the recording, never past it
+    assert place_segments(segs, rec)[1]["end_s"] == 120.0
+
+
 def test_overlapping_blocks_are_refused_naming_both() -> None:
     rec = _rec(np.zeros((12001, 3)), np.zeros((12001, 3)))   # 0..120 s
     segs = [{"segment": "fh-good", "stroke": "forehand", "fault": "none", "start_s": 10.0, "end_s": 45.0},

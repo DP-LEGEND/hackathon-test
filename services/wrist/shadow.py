@@ -52,7 +52,10 @@ Segments CSV, one row per block in time order: segment, stroke (forehand/backhan
 or video_start_s,video_end_s (video seconds, mapped with the fitted clock). A blank end
 runs to the next block's start (or the end of the recording). Each block needs its own
 name (swing ids are <segment>-01, ...), and blocks may not overlap or run out of order:
-either would count one swing twice or mislabel it, so both are refused.
+either would count one swing twice or mislabel it, so both are refused. A block that
+starts before the recording or has an explicit end after it is refused too (a typo or a
+wrong video clock), rather than silently cut to the samples there are. A CSV saved by
+Excel as UTF-8 (with a byte-order mark) reads the same as a plain one.
 
 Run (from inside services/; outputs default to data/raw/wrist/, git-ignored):
 
@@ -188,7 +191,7 @@ def find_shadow_swings(rec: Recording, start_s: float, end_s: float,
 
 def read_segments(path: str | Path) -> list[dict[str, Any]]:
     """Blocks from the segments CSV (module doc), in file order. Segment names must be unique."""
-    with Path(path).open(newline="") as fh:
+    with Path(path).open(newline="", encoding="utf-8-sig") as fh:  # -sig: Excel's UTF-8 adds a BOM
         reader = csv.DictReader(fh)
         rows = [(reader.line_num, raw) for raw in reader]  # line_num: the CSV line, blank lines counted
     out: list[dict[str, Any]] = []
@@ -223,8 +226,12 @@ def place_segments(segments: list[dict[str, Any]], rec: Recording,
     """Every block with sensor start_s/end_s: video times mapped with `clock`, blank ends run on.
 
     Refuses blocks out of time order (start_s not increasing) and overlapping blocks (one's end
-    past the next one's start): a swing in both would be found twice under two labels.
+    past the next one's start): a swing in both would be found twice under two labels. Refuses
+    a block starting before the recording or with an explicit end after it (one sample's
+    tolerance): find_shadow_swings would silently cut it to the samples there are while the
+    summary reported the requested times.
     """
+    first, last, tol = float(rec.t[0]), float(rec.t[-1]), 1.0 / rec.rate_hz
     placed = []
     for seg in segments:
         s = dict(seg)
@@ -233,6 +240,13 @@ def place_segments(segments: list[dict[str, Any]], rec: Recording,
                 if clock is None:
                     raise ValueError(f"segment {s['segment']!r}: video times need the video clock (--video-taps)")
                 s[f"{k}_s"] = round(to_sensor(s[f"video_{k}_s"], clock), 3)
+        span = f"the recording runs {first:.3f} .. {last:.3f} s (sensor clock)"
+        if s["start_s"] < first - tol:
+            raise ValueError(f"segment {s['segment']!r} starts at {s['start_s']} s, before the recording: {span}; "
+                             "check its time (or the video clock)")
+        if s.get("end_s") is not None and s["end_s"] > last + tol:
+            raise ValueError(f"segment {s['segment']!r} ends at {s['end_s']} s, after the recording: {span}; "
+                             "check its time (or the video clock), or leave the end blank to run to the end")
         placed.append(s)
     # Order first: a blank end runs to the next start, so an out-of-order pair would otherwise
     # only show up as "ends before it starts".
