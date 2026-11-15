@@ -1,7 +1,6 @@
 <!--
-TODO (before judging): beat 4 and every beat time follow docs/pitch.md from PR #70, so merge #70
-first. The Wi-Fi row's local fonts arrive with #76. The aim answer under "Rules on stage" is
-#73's behaviour.
+Beat 4 and every beat time follow docs/pitch.md (#70, merged). The Wi-Fi row's local fonts are
+#76's (merged). The aim answer under "Rules on stage" is #73's behaviour (merged).
 Earlier: written against main at 34b9298 (wrist sensor #44 merged).
 Beat 3 uses the /upload page (#48, merged in cca6a0d; flow checked in app/upload/ on main).
 If #53 (ghost honesty: measured vs guessed joints) merges, re-check beat 2 and the
@@ -336,7 +335,7 @@ All of these come from the saved samples in `public/swings/` and are the same on
 | Racket speed (ESTIMATE) | 28.3 → 25.3 m/s | Not shown |
 | **Launch angle (ASSUMED)** | **12°**, not on screen | 3°, not said in beat 2 |
 | Court | Two paths | Not shown |
-| Real-ball check (tracked from the real video, not on screen) | The tracked ball hit the front wall at 1.17 m; Ghost predicted 1.45 m from body motion alone (0.28 m off, launch angle assumed) | Tracked 0.69 m vs 0.77 m predicted; the real ball went 23° cross-court where the aim is assumed straight. Not said in beat 2 |
+| Real-ball check (tracked from the real video; on screen in the court step's *Reference check against a real ball* badge, under the 3D view's legend) | The tracked ball hit the front wall at 1.17 m; Ghost predicted 1.45 m from body motion alone (0.28 m off, launch angle assumed) | Tracked 0.69 m vs 0.77 m predicted; the real ball went 23° cross-court where the aim is assumed straight. Not said in beat 2 |
 
 The launch angle isn't shown as a number. The court panel's footnote says the launch angle is assumed and the spot on court is measured from the video, so say the angle out loud and call it assumed.
 
@@ -351,7 +350,7 @@ The launch angle isn't shown as a number. The court panel's footnote says the la
 | **Slow-mo clip fails** | `/upload` (browser tab 2): *"Couldn't build your ghost"* with the server's message (e.g. *"No fully tracked swing found; keep the whole body in frame and film one clear swing"*) | Set **Slowdown** by hand: **1×** for a normal 60 fps video, **4×** or **8×** for slow motion. Set **Hitting hand** or **Stroke** if those were misread. Then click **Try again**. To show the rehearsal swing instead, stop terminal tab 1 (Ctrl+C), restart it with `GHOST_SWINGS_DIR=~/ghost-rehearsal ~/ghost-env/bin/python -m uvicorn pipeline.server:app --port 8000`, then in browser tab 1 go to **Pick a swing** and click **Check again**. |
 | **Speed wildly wrong** | Browser tab 2 opened the fresh swing in `/ghost`, but its speed is wildly wrong | There's no **Try again** here: a finished upload jumps to `/ghost`, and `/upload` resets. In browser tab 2, go back to http://localhost:3000/upload, click **Choose a video** and pick `~/Downloads/fresh.mov` again. Set **Slowdown** (**1×** for a normal 60 fps video, **4×** or **8×** for slow motion), and **Hitting hand** or **Stroke** if those were misread. Then click **Build my ghost**. |
 | **Pipeline missing** | `/upload` (browser tab 2): *"Couldn't build your ghost"* with *"Live pipeline unavailable; configure the pose model and ffmpeg/ffprobe"* | Pre-flight step 3 failed. Skip beat 3 and use the saved swings. |
-| **Wi-Fi dies** | Nothing, as long as the app is already running | Keep going: the service, the coach and the ghost all run on this Mac. The fonts are local, so nothing loads from Google. That's true once #76 merges; until then the fonts come from Google Fonts, so don't restart the app or run a build while offline. If anything misbehaves, **use the saved swings** (beats 1 and 2) and skip beat 3. |
+| **Wi-Fi dies** | Nothing, as long as the app is already running | Keep going: the service, the coach and the ghost all run on this Mac. The fonts are local, so nothing loads from Google. If anything misbehaves, **use the saved swings** (beats 1 and 2) and skip beat 3. |
 | **A ghost won't load** | *"Couldn't make this ghost: …"* | Click **Try again**. If it fails again, click **1 Pick a swing** in the steps at the top and pick a saved sample. |
 | **Everything is broken** | | Play the backup video from the same moment. Never debug in front of the judges. |
 
@@ -362,6 +361,6 @@ The launch angle isn't shown as a number. The court panel's footnote says the la
   - the **real-ball check** on the forehand (the tracked ball hit the front wall at 1.17 m; Ghost predicted 1.45 m from body motion alone, 0.28 m off, launch angle assumed), which you always say was **tracked from the real video**
 - Every ball path is **PREDICTED**. Say the word the first time a path appears.
 - The wrist sensor: show terminal tab 3 only when it passes the checks in *Tab 3*, and call its numbers an **ESTIMATE**. Never show *MOCK DATA* on stage; if you mention the mock tests, say **mock**.
-- If a judge asks about the ghost's aim, the answer is: "We aimed it at the straight drive the player said he meant." That's #73's behaviour: until #73 merges, the ghost's ball direction comes from its own wrist motion, so don't give this answer before then.
+- If a judge asks about the ghost's aim, the answer is: "We aimed it at the straight drive the player said he meant." That's #73's behaviour.
 
 After the demo, stop terminal tabs 1 and 2 with Ctrl+C.
