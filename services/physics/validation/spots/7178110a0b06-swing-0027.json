@@ -1,0 +1,12 @@
+{
+ "x": 5.457,
+ "z": 4.217,
+ "label": "MEASURED",
+ "method": "video: the right foot at contact put on the floor through the court lines (5 floor landmarks), plus the skeleton's foot-to-racket-head offset",
+ "footM": [4.845, 4.496],
+ "offsetM": [0.612, -0.279],
+ "floorLandmarkRmsM": 0.008,
+ "cameraYawDeg": -0.4,
+ "clip": "IMG_2115.MOV",
+ "contactFileFrame": 30450
+}
