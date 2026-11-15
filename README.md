@@ -1,10 +1,60 @@
-# Imperial AI Hackathon (14–15 Nov 2026)
+# Ghost
 
-**Team: follow [WORKFLOW.md](WORKFLOW.md)** for the exact steps (start a task, test, PR, merge, after a merge). Roles and prompts are in [TEAM.md](TEAM.md).
+**Film a squash swing, find one fix, and see a 3D ghost of yourself making it, with PREDICTED ball paths for both swings.**
 
-Team repo for the Imperial AI Hackathon. Our product is **Ghost**: film one squash swing, and Ghost finds the one fix that matters and shows a ghost of you making it, with the PREDICTED ball path for both swings. The Devpost write-up is in [docs/devpost.md](docs/devpost.md); product rules and folder ownership are in [CLAUDE.md](CLAUDE.md).
+## What it does
+
+- Takes a phone video, or opens the saved forehand and backhand samples for a demo with no keys.
+- Measures the swing and names a coaching priority, its fix, and what could not be checked.
+- Replays your motion beside a corrected 3D ghost, then compares their **PREDICTED** ball paths on a squash court.
+- Shows a short coaching cue, with optional Claude wording and ElevenLabs speech for live uploads.
+
+## How it works
+
+**Phone video → MediaPipe pose → physics ball model PREDICTS the ball path from body motion → coach names one fault and fix, optionally worded by Claude → 3D ghost of the corrected swing → optional ElevenLabs voice.**
+
+Code measures the joints, estimates racket motion, ranks faults and selects the fix. **Claude optionally words that selected fault and fix**; it does not invent the measurements. The ghost edits the skeleton while preserving bone lengths, then the same physics code measures the corrected swing. Without provider keys, the live pipeline keeps its deterministic coaching cue. Saved samples use committed results and make no provider calls.
+
+An **optional wrist IMU workflow** uses a phone strapped to the forearm to add roll measurements and sensor-assisted estimates. It is a separate workflow, not a requirement for video uploads or the saved demo; see [the wrist sensor guide](services/wrist/README.md).
+
+## Honest limits
+
+- **Ball paths are PREDICTED, not tracked.** The displayed paths come from body motion, estimated racket motion and model assumptions. Single-camera depth is estimated, and launch angle is assumed.
+- **Real-ball reference check:** on the forehand clip, the front-wall height was **1.17 m tracked vs 1.45 m predicted**. Tracking was a separate offline check with court landmarks marked by hand. Launch angles were chosen using the same demo clips, so this is a reference check, not independent accuracy validation. See [the validation results](services/physics/validation/results/7178110a0b06-swing-0027.json).
+- **Adaption is an experiment, not the live coach.** A Qwen3.5-2B fine-tune used **SIMULATED** fault-injection data and achieved a **66% win rate against its base model on Adaption's own evaluation**. That is not accuracy on our held-out swings, and the fine-tune is **not used by the live coach**. See [the Adaption write-up](docs/devpost.md#adaption).
+- **The wrist sensor is optional and limited.** Its real-data thresholds come from one shadow-swing session without a ball. Forearm roll is measured; its conversion to racket-face angle and ball aim is **ASSUMED**.
+
+## Built with
+
+- **Next.js**: React/TypeScript web app and 3D replay with Three.js.
+- **FastAPI**: local Python processing and coaching API.
+- **MediaPipe**: pose landmarks from video.
+- **Claude**: optional coaching language grounded in measured values.
+- **ElevenLabs**: optional spoken coaching cues.
+- **Figma**: interface designs, components and visual direction.
+- **Adaption**: the separate fine-tuning experiment described above.
+
+## Quick start: judge the saved demo
+
+Install **Git and Node.js 26**, then run:
+
+```sh
+git clone https://github.com/DP-LEGEND/hackathon-test.git
+cd hackathon-test
+npm ci
+npm run dev
+```
+
+On Windows PowerShell, use `npm.cmd ci` and `npm.cmd run dev`.
+
+Open **http://localhost:3000**, then **Demo → Start with the demo swing**. Follow **Show the ghost → Show the court**, then try the saved backhand. The saved demo needs **no API keys, Python service, pose-model download or camera**. Dependencies must be installed first; fonts and saved sample assets are served locally.
+
+For a fresh video, follow the full setup below and open **http://localhost:3000/upload**. The [demo runbook](docs/demo-runbook.md) covers the presentation flow; [docs/devpost.md](docs/devpost.md) gives the longer project write-up.
+
+**Contributors:** follow [WORKFLOW.md](WORKFLOW.md). Product rules and ownership are in [CLAUDE.md](CLAUDE.md), with starter prompts in [TEAM.md](TEAM.md).
 
 ## Team and roles
+
 | Who | GitHub | Owns |
 |---|---|---|
 | Dev | DP-LEGEND | Pipeline, infra and live clips (`services/pipeline/`, Ghost API routes) |
@@ -14,7 +64,7 @@ Team repo for the Imperial AI Hackathon. Our product is **Ghost**: film one squa
 
 ## Run Ghost locally
 
-Ghost has two parts: a Python API (`services/`, FastAPI on port 8000) and the Next.js web app (port 3000). The web app also works on its own: without the API, `/ghost` falls back to the saved sample swings in `public/swings/`.
+Ghost has two parts: a Python API (`services/`, FastAPI on port 8000) and the Next.js web app (port 3000). The web app also works on its own: without the API, `/demo` and `/ghost` use the saved sample swings in `public/swings/`. The API is needed for new uploads.
 
 ### You need
 
@@ -25,6 +75,8 @@ Ghost has two parts: a Python API (`services/`, FastAPI on port 8000) and the Ne
 
 ### 1. Install the web app
 
+From the cloned repository root:
+
 ```
 npm ci
 ```
@@ -33,50 +85,50 @@ Windows PowerShell: `npm.cmd ci`
 
 ### 2. Install the Python service (first time only)
 
-Mac:
-```
+macOS / Linux (commands use Python 3.12):
+```sh
 cd services
-python3 -m venv .venv
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
 source .venv/bin/activate
-pip install -r requirements.txt
 ```
 
 Windows PowerShell:
-```
+```powershell
 cd services
 py -3.12 -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\Activate.ps1
 ```
 
-If Windows blocks the activate script, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once. In every new terminal, activate the environment again before running Python.
+In each new terminal, activate the environment before running the Python commands below. If PowerShell blocks activation, stay in `services/` and use `.\.venv\Scripts\python.exe` wherever a command says `python`; no execution-policy change is needed.
 
 ### 3. Download the pose model (only needed for new clips)
 
 Mac:
 ```
 mkdir -p ~/ghost-models
-curl -L -o ~/ghost-models/pose_landmarker_heavy.task https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/latest/pose_landmarker_heavy.task
+curl -fL -o ~/ghost-models/pose_landmarker_heavy.task https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/latest/pose_landmarker_heavy.task
 ```
 
 Windows PowerShell:
 ```
 New-Item -ItemType Directory -Force "$HOME\ghost-models"
-curl.exe -L -o "$HOME\ghost-models\pose_landmarker_heavy.task" https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/latest/pose_landmarker_heavy.task
+curl.exe -fL -o "$HOME\ghost-models\pose_landmarker_heavy.task" https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/latest/pose_landmarker_heavy.task
 ```
 
-To keep the model somewhere else, set `GHOST_POSE_MODEL` to its path.
+To keep the model somewhere else, set `GHOST_POSE_MODEL` in the Python process environment before starting the service. Likewise, set `GHOST_FFMPEG`, `GHOST_FFPROBE` and `GHOST_SWINGS_DIR` there when overriding their defaults; the pipeline does not automatically load these settings from `.env.local`.
 
 ### 4. API keys (optional)
 
-The live flow (the API, `/ghost` and new clips) needs no keys: coaching, the ghost and the ball paths are all plain code. With keys, the live `/ghost` caption has a **Hear the coach** button: Claude rewords the coach's cue (`ANTHROPIC_API_KEY`), a checker rejects any number the code didn't measure, and ElevenLabs speaks it (`ELEVENLABS_API_KEY`). Without keys it falls back to the plain cue.
+The live upload flow needs no provider keys: measurements, fault ranking, the ghost and ball paths run in code. For live swings, `ANTHROPIC_API_KEY` optionally lets Claude reword the selected cue, with numbers checked against the measured values. Independently, `ELEVENLABS_API_KEY` enables speech, including speech of the plain deterministic cue without Claude. **Hear the coach** appears only when audio is available. Missing configuration or provider failures keep the plain caption. Saved samples never request these providers.
 
 The same keys also run two command-line demos:
 
 - `python -m coach.cue` has Claude word a cue from MOCK metrics
 - `python -m coach.cue --speak` also reads it aloud with ElevenLabs
 
-To use them, copy `.env.example` to `.env.local` at the repo root and fill in those keys, then restart the service and reload `/ghost`. Never commit `.env.local`.
+If enabling these optional providers, copy `.env.example` to `.env.local` at the repo root, configure the provider privately, then restart the service. The quick start needs no environment file. Never commit `.env.local` or paste credentials into documentation.
 
 ### 5. Start the API
 
@@ -98,11 +150,13 @@ npm run dev
 
 Windows PowerShell: `npm.cmd run dev`
 
-Open http://localhost:3000/ghost. The page reaches the API through its own `/api` route, so the browser never calls port 8000 directly. To point it at another API, set `GHOST_API_URL` in `.env.local`.
+Open http://localhost:3000. Use `/demo` for saved swings and `/upload` for a new clip; `/ghost` remains the replay route. The web app reaches the service through its `/api` proxy, so the browser never calls port 8000 directly. To point it at another API, set the server-side `GHOST_API_URL` before starting Next.js (or in its `.env.local`).
 
 ### 7. Try your own swing
 
-Film one swing on a phone (slow motion is detected automatically). Then, from inside `services/`:
+Film one swing on a phone and upload it at http://localhost:3000/upload. Auto reads available timing metadata and may infer slowdown; choose a known slowdown manually when needed. Metadata-stripped exports cannot always recover the real timing. A successful upload opens its result at `/ghost?swing=<id>`.
+
+Alternatively, from inside `services/` with the Python environment active:
 
 ```
 python -m pipeline /path/to/clip.mov
@@ -114,30 +168,34 @@ Or send it to the running API (Windows: `curl.exe`):
 curl -F "file=@clip.mov" http://localhost:8000/process
 ```
 
-Each accepted swing is saved under `data/processed/` (or `GHOST_SWINGS_DIR`) with the coach's call and the ghost comparison. Refresh `/ghost` to pick it. Add `--slowdown 4`, `--hand L` or `--stroke backhand` to override the automatic detection. If ffmpeg isn't on your PATH, set `GHOST_FFMPEG` and `GHOST_FFPROBE` to the two programs. More detail: [services/pipeline/README.md](services/pipeline/README.md).
+Each accepted swing is saved under `data/processed/` (or `GHOST_SWINGS_DIR`) with the coach's call and the ghost comparison. After a CLI/API upload, refresh `/ghost` to pick it. Add `--slowdown 4`, `--hand L` or `--stroke backhand` to override the automatic detection. If ffmpeg isn't on your PATH, set `GHOST_FFMPEG` and `GHOST_FFPROBE` to the two programs. More detail: [services/pipeline/README.md](services/pipeline/README.md).
 
 Never commit clips or model files. Put videos in `data/raw/`, which git ignores.
 
 ### 8. Checks
 
+From the repository root:
+
 ```
 bash scripts/check.sh
 ```
 
-Windows: `powershell -ExecutionPolicy Bypass -File scripts\check.ps1`. This runs lint, the production build, the Python tests and the sample swing check. Stop `npm run dev` first, because the build uses the same folder.
+Windows: `powershell -ExecutionPolicy Bypass -File scripts\check.ps1`. This runs lint, the production build, Python tests, the sample swing contract check and a Python-service import check. It does not run the browser suite. Stop `npm run dev` first, because the build uses the same folder.
 
-## Before Saturday (setup only, no product code)
+## Team setup checklist
+
 - [ ] Accept the GitHub invite and clone the repo
 - [ ] `npm ci` then `npm run dev`, check http://localhost:3000 loads (Node.js 26, see section 2 below)
 - [ ] Install the recommended VS Code extensions
 - [ ] Claim Adaption credits (link in the hackathon page announcements) and start Figma for Education verification
-- [ ] Put your own keys in `.env.local` (never committed). Never paste keys in WhatsApp, Discord or a commit
-- [ ] Draft `PRODUCT_BRIEF.md` for the top two ideas so Saturday starts fast
+- [ ] Configure provider keys only if enabling optional services. Never paste keys in WhatsApp, Discord or a commit
+- [ ] Read the Ghost product rules in [CLAUDE.md](CLAUDE.md) and the team workflow before changing product scope
 
 ## Safety rules for humans and agents
 Read `docs/COLLABORATION.md` before running any AI agent. Short version: one agent per folder (use `git worktree` for a second), nobody pushes to `main`, only the repo owner merges and installs packages, and agents never run destructive git commands.
 
-## Saturday timeline
+## Original hackathon timeline (historical)
+
 - 09:00 check-in, everyone there by 10:00 (after 12:00 = disqualified)
 - After sponsor briefs: pick the idea, finish `PRODUCT_BRIEF.md`
 - +1 h: agree the contracts between pieces in `docs/interfaces.md`
@@ -146,9 +204,9 @@ Read `docs/COLLABORATION.md` before running any AI agent. Short version: one age
 
 ---
 
-# Starter guide (from DP-LEGEND/hackathon-test)
+# Maintainer and starter reference
 
-A reusable, production-oriented Next.js starter designed for rapid AI product development at hackathons.
+Ghost grew from a reusable Next.js hackathon starter. The reference below preserves its contributor and setup guidance; template-specific steps apply when creating a separate project, not when running Ghost.
 
 Built for a four-person team working collaboratively with Codex or Claude Code, GitHub, and Vercel.
 
@@ -170,7 +228,7 @@ Built for a four-person team working collaboratively with Codex or Claude Code, 
 
 The starter includes a responsive application shell, reusable components, UI state patterns, an example API route, and an API request helper.
 
-It does not include a working AI provider, database, or authentication system. These are configured according to the chosen product.
+Ghost adds the Python pipeline and optional Claude/ElevenLabs integrations described above. It does not require a database or authentication for the local demo.
 
 ## 2. Starting a New Hackathon Project
 
@@ -194,7 +252,7 @@ Open `http://localhost:3000`.
 
 On Windows PowerShell, use `npm.cmd` if PowerShell blocks npm scripts.
 
-### Define the product
+### Define the product when reusing the starter
 
 1. Copy `PRODUCT_BRIEF.template.md` to `PRODUCT_BRIEF.md`.
 2. Complete the product brief with your team.
@@ -218,7 +276,11 @@ Codex reads `AGENTS.md` directly; Claude Code reads `CLAUDE.md`, which points to
 | `components/shared/` | Reusable loading, empty, and error states |
 | `components/ui/` | shadcn/Base UI components |
 | `lib/api/` | Frontend API request helpers |
-| `lib/integrations/` | External AI and sponsor-service integrations |
+| `lib/integrations/` | Starter integration scaffolding |
+| `services/pipeline/` | Video processing and FastAPI service |
+| `services/physics/` | Measurements, ghost edits and PREDICTED ball paths |
+| `services/coach/` | Fault ranking, optional Claude wording and ElevenLabs voice |
+| `services/wrist/` | Optional forearm IMU workflow |
 | `.env.example` | Environment variable template |
 | `.github/workflows/ci.yml` | Automated validation |
 
@@ -231,6 +293,7 @@ Codex reads `AGENTS.md` directly; Claude Code reads `CLAUDE.md`, which points to
 | `npm run lint` | Run ESLint |
 | `npm run build` | Verify a production build |
 | `npm run start` | Serve the production build |
+| `npm run test:ui` | Run the UI-lab browser suite against an existing server |
 | `npm audit` | Inspect dependency advisories |
 
 Run lint and build before requesting a merge.
@@ -259,7 +322,7 @@ For each feature:
 5. Push the branch to GitHub.
 6. Open a pull request targeting `main`.
 7. Wait for CI and any required review.
-8. Merge once all required checks pass.
+8. The repo owner merges once all required checks and reviews pass.
 
 **Do not force-push to `main` or commit secrets.**
 
@@ -295,9 +358,9 @@ Once the product brief is complete, use `HACKATHON_START_PROMPT.md` to guide the
 
 Place Next.js API route handlers in `app/api/`.
 
-Place external provider logic in `lib/integrations/`.
+Ghost's provider logic lives in `services/coach/`; `lib/integrations/` retains the starter scaffolding.
 
-Use the existing `lib/api/client.ts` helper for supported frontend POST requests.
+The `lib/api/client.ts` helper sends JSON POST requests. Ghost's video upload uses the multipart transport in `app/upload/process-clip.ts` instead.
 
 The `POST /api/example` endpoint is a demonstration route that echoes supplied input. It is not a production AI integration.
 
@@ -318,13 +381,13 @@ Copy `.env.example` to `.env.local` and populate only the variables required by 
 
 Variables prefixed with `NEXT_PUBLIC_` can be included in the client-side bundle. Do not store secrets in them.
 
-Configure production credentials separately through Vercel environment settings.
+Configure Claude and ElevenLabs credentials on the separately hosted Python service. Configure the web app's server-side `GHOST_API_URL` in its hosting environment, such as Vercel.
 
 Never hardcode real credentials into prompts, screenshots, or committed source files.
 
 ## 9. Deployment
 
-Use Vercel to deploy the application.
+Vercel can host the Next.js web app. A full live-upload deployment also needs a separately hosted Python service with ffmpeg, ffprobe and the pose model; configure the web server's `GHOST_API_URL` to reach it. Vercel does not deploy `services/` automatically. The saved sample demo can run without that service.
 
 For each new project:
 
@@ -346,10 +409,11 @@ It verifies:
 - Dependency installation with `npm ci`
 - ESLint with `npm run lint`
 - Production compilation and TypeScript checking with `npm run build`
+- UI-lab Playwright smoke tests with `npm run test:ui`, using Microsoft Edge and a dedicated production server
 
 The new hackathon repository should require the `validate` check before merging when GitHub ruleset support is available.
 
-The starter does not currently define a separate automated test suite.
+The repository has Python tests under `services/` and browser checks described in [docs/BROWSER_TESTING.md](docs/BROWSER_TESTING.md). The CI browser suite covers `/ui-lab`; Ghost's local demo smoke check is `python scripts/demo_smoke.py` from the repo root with both servers running. Python tests are included in `scripts/check.sh` / `scripts/check.ps1`, not the current CI job.
 
 ## 11. Hackathon-Day Priorities
 
