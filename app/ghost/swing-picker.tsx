@@ -98,9 +98,7 @@ export function SwingPicker({
                         ? "The coach measures it live; ghosts are computed on request"
                         : "Coach's call and ghosts saved from the Python service"}
                     </span>
-                    {entry.origin === "sample" && (
-                      <span className="font-mono text-xs break-all text-muted-foreground">{entry.id}</span>
-                    )}
+                    <span className="font-mono text-xs break-all text-muted-foreground">{entry.id}</span>
                   </span>
                   <span
                     aria-hidden
@@ -148,14 +146,20 @@ function ApiStatus({ api, onRetry }: { api: ApiState; onRetry: () => void }) {
         <>
           <p role="status" className="flex gap-2.5">
             {dot}
-            <span>
-              The live Python service isn&apos;t running, so these are the saved samples. To add live swings, run this
-              from the repo folder:
-            </span>
+            <span>The live Python service isn&apos;t running, so these are the saved samples.</span>
           </p>
-          <code className="w-fit max-w-full rounded-xl border bg-(--media) px-3 py-2 font-mono text-xs break-all text-foreground">
-            python -m uvicorn pipeline.server:app --app-dir services --port 8000
-          </code>
+          {/* The shell command is for the team, not judges: folded away, word for word. */}
+          <details className="pl-[18px]">
+            <summary className="w-fit cursor-pointer rounded-sm text-foreground underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
+              For developers
+            </summary>
+            <div className="mt-2 flex flex-col gap-2">
+              <p>To add live swings, run this from the repo folder:</p>
+              <code className="w-fit max-w-full rounded-xl border bg-(--media) px-3 py-2 font-mono text-xs break-all text-foreground">
+                python -m uvicorn pipeline.server:app --app-dir services --port 8000
+              </code>
+            </div>
+          </details>
           <div>{retry}</div>
         </>
       )}
