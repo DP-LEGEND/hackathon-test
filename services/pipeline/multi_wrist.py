@@ -5,15 +5,19 @@ accel_x/y/z in m/s² and gyro_x/y/z in rad/s. ax/ay/az and gx/gy/gz are accepted
 aliases. Optional qx/qy/qz/qw and mock retain Sensor Logger provenance. The
 phone's long edge (y) must lie along the hitting forearm, as in wrist/README.md.
 No clocks are fitted to ball impacts: an unambiguous audible double tap is
-required, otherwise the optional CSV is ignored.
+required, otherwise the optional sensor data is ignored. Sensor Logger ZIPs use
+the same native reader as scripts/make_sensor_sample.py.
 """
 from __future__ import annotations
 
 import copy
 import csv
+import io
 import math
 from pathlib import Path
+import shutil
 import tempfile
+import zipfile
 
 import numpy as np
 
@@ -31,6 +35,58 @@ MAX_SENSOR_BYTES = 25 * 1024 * 1024
 MAX_SENSOR_ROWS = 500_000
 TAP_GAP_TOLERANCE_S = 0.04
 GYRO_PEAK_SEARCH_S = 0.3
+
+
+def is_sensor_zip(path: Path) -> bool:
+    """Recognize ZIP exports independently of their multipart filename/MIME type."""
+    if path.suffix.lower() == ".zip":
+        return True
+    with path.open("rb") as stream:
+        return stream.read(4) in (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")
+
+
+def _zip_recording(path: Path, work: Path) -> Recording:
+    """Bound archive expansion and the native reader's resampling allocation."""
+    if path.stat().st_size > MAX_SENSOR_BYTES:
+        raise ValueError("sensor ZIP exceeds 25 MB")
+    with zipfile.ZipFile(path) as archive:
+        members = archive.infolist()
+        if len(members) > 128 or sum(member.file_size for member in members) > MAX_SENSOR_BYTES:
+            raise ValueError("sensor ZIP expands beyond the sensor data limit")
+        tables = {Path(member.filename).stem.lower(): member for member in members
+                  if member.filename.lower().endswith(".csv")}
+        accel = tables.get("accelerometer") or tables.get("totalacceleration")
+        if accel is None:
+            raise ValueError("sensor ZIP needs Accelerometer.csv or TotalAcceleration.csv")
+        # Acceleration determines the native reader's rate; overlap with other
+        # streams can only shorten its grid. Check before numpy allocates it.
+        with archive.open(accel) as raw, io.TextIOWrapper(raw, encoding="utf-8-sig", newline="") as stream:
+            reader = csv.DictReader(stream)
+            reader.fieldnames = [name.strip().lower() for name in (reader.fieldnames or [])]
+            time = next((name for name in ("seconds_elapsed", "time") if name in reader.fieldnames), None)
+            if time is None:
+                raise ValueError("sensor ZIP accelerometer needs seconds_elapsed or time")
+            samples = []
+            for row in reader:
+                if len(samples) >= MAX_SENSOR_ROWS:
+                    raise ValueError("sensor ZIP has too many samples")
+                samples.append(float(row[time]))
+        times = np.sort(np.asarray(samples) / (1e9 if time == "time" else 1))
+        if len(times) < 3 or not np.isfinite(times).all():
+            raise ValueError("sensor ZIP needs finite accelerometer timestamps")
+        interval = float(np.median(np.diff(times)))
+        span = times[-1] - times[0]
+        if not 0.001 <= interval <= 0.1 or not 1 <= span <= 3600:
+            raise ValueError("sensor ZIP needs 10–1000 Hz samples over 1–3600 seconds")
+        if span * round(1 / interval) + 1 > MAX_SENSOR_ROWS:
+            raise ValueError("sensor ZIP time grid is too large")
+    # The existing reader dispatches by suffix. Keep magic-detected uploads on
+    # that exact ZIP path too, without extracting or flattening the export.
+    if path.suffix.lower() != ".zip":
+        destination = work / "sensor.zip"
+        shutil.copyfile(path, destination)
+        path = destination
+    return load_recording(path)
 
 
 def _flat_recording(path: Path, work: Path) -> Recording:
@@ -112,7 +168,7 @@ def _tap_sync(rec: Recording, contacts: list[tuple[str, float]], hits: np.ndarra
     events = [event for event in find_tap_events(rec, spikes)
               if event["taps_s"][-1] <= float(rec.t[0]) + 60]
     if not events:
-        raise ValueError("no still-arm double tap found in the sensor CSV")
+        raise ValueError("no still-arm double tap found in the sensor data")
     taps = events[0]["taps_s"]
     impacts, rejected = find_impacts(spikes, taps[-1] + IMPACT_GUARD_S)
     speed = np.degrees(np.linalg.norm(rec.gyro, axis=1))
@@ -176,7 +232,7 @@ def _at_gyro_peak(rec: Recording, sync: dict, metrics: dict) -> tuple[dict, list
 
 def attach_sensor(swings: list[dict], clip_a: Path, csv_path: Path, *, slowdown: float | None,
                   work: Path, info: VideoInfo | None = None) -> tuple[list[dict], list[str]]:
-    """Return wrist-enriched swings, or the originals with a warning on any CSV/sync failure.
+    """Return wrist-enriched swings, or originals with a warning on any sensor/sync failure.
 
     Swings must already have final unique IDs and metadata.sourceContactSeconds in
     video A's real-time clock. Pass info when slowdown was inferred/retried.
@@ -190,7 +246,8 @@ def attach_sensor(swings: list[dict], clip_a: Path, csv_path: Path, *, slowdown:
         work.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix=".wrist-", dir=work) as temporary:
             folder = Path(temporary)
-            rec = _flat_recording(csv_path, folder)
+            rec = (_zip_recording(csv_path, folder) if is_sensor_zip(csv_path)
+                   else _flat_recording(csv_path, folder))
             sync = _tap_sync(rec, contacts, _video_taps(clip_a, folder, info))
             originals = {s["id"]: copy.deepcopy(s) for s in swings}
             metrics, _, filled = wrist_report(rec, sync, swings=originals)
@@ -206,11 +263,11 @@ def attach_sensor(swings: list[dict], clip_a: Path, csv_path: Path, *, slowdown:
                     "forearmAxis": "y", "mock": rec.mock}
                 swing["metadata"]["wristTiming"] = accepted[sid]["timing"]
             if len(attached) != len(swings):
-                warnings.append("Sensor CSV was ignored for swings without trusted tap/contact alignment or usable wrist data.")
+                warnings.append("Sensor data was ignored for swings without trusted tap/contact alignment or usable wrist data.")
             warnings.append("Sensor forearm axis assumed y: strap the phone's long edge along the hitting forearm.")
             return [attached.get(s["id"], s) for s in swings], list(dict.fromkeys(warnings))
     except Exception as exc:
         # Optional input must not fail a successfully reconstructed video. Limit
         # diagnostics to our validation messages; tool/library errors may contain paths.
         reason = str(exc) if type(exc) is ValueError else "invalid sensor data or tap sync failed"
-        return swings, [f"Sensor CSV ignored: {reason}."]
+        return swings, [f"Sensor data ignored: {reason}."]

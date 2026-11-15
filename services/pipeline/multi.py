@@ -149,14 +149,14 @@ def process_multi_clips(
                 attached, sensor_warnings = attach_sensor(copy.deepcopy(swings), video_a, sensor_csv,
                     slowdown=options.slowdown_a, work=work, info=info_a)
                 # Validate the optional result before discarding the video-only
-                # version. CSV failures must never make an otherwise usable upload fail.
+                # version. Sensor failures must never make an otherwise usable upload fail.
                 for swing in attached:
                     _coach_and_compare(swing)
                     json.dumps(swing, allow_nan=False)
                 swings = attached
                 notices.extend(sensor_warnings)
             except Exception:
-                notices.append('Wrist CSV could not be synced or measured; ignored the sensor data.')
+                notices.append('Wrist data could not be synced or measured; ignored the sensor data.')
 
         prepared = []
         published = work / 'published'

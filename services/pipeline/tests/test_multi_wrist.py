@@ -1,9 +1,10 @@
-"""Optional CSV attachment: generated sensor motion, real sync/metrics/fusion code."""
+"""Optional CSV/ZIP attachment: generated motion, real sync/metrics/fusion code."""
 import copy
 import csv
 import json
 from pathlib import Path
 import wave
+import zipfile
 
 import numpy as np
 import pytest
@@ -18,7 +19,7 @@ from wrist.synth import make_session
 @pytest.fixture
 def session(tmp_path):
     truth = make_session(tmp_path / "mock", labels=("none", "rolled_wrist"),
-                         camera=True, video_jitter_s=0, shadow=(1,))
+                         camera=True, video_jitter_s=0, shadow=(1,), zip_export=True)
     rec = load_recording(truth["export"])
     swings = list(read_swings(truth["swings_dir"]).values())
     return truth, rec, swings
@@ -41,10 +42,21 @@ def info(slowdown=1, edits=None):
 
 
 @pytest.mark.parametrize("mock", [True, False])
-def test_tap_synced_csv_attaches_wrist_and_preserves_camera_contact(session, tmp_path, monkeypatch, mock):
+@pytest.mark.parametrize("filename", ["sensor.csv", "sensor.ZIP", "sensor.bin"])
+def test_tap_synced_sensor_attaches_wrist_and_preserves_camera_contact(session, tmp_path, monkeypatch, mock, filename):
     truth, rec, swings = session
     original = copy.deepcopy(swings)
-    sensor = flat_csv(tmp_path / "sensor.csv", rec, mock=mock)
+    sensor = tmp_path / filename
+    if sensor.suffix == ".csv":
+        flat_csv(sensor, rec, mock=mock)
+    else:
+        # Native Sensor Logger streams keep their separate sample clocks and
+        # nested folders; a non-ZIP filename exercises magic-byte detection.
+        with zipfile.ZipFile(sensor, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for source in (Path(truth["export"]).parent / "export").glob("*.csv"):
+                if source.name != "Metadata.csv":
+                    archive.write(source, f"recording/{source.name}")
+            archive.writestr("recording/Metadata.csv", f"mock\n{str(mock).lower()}\n")
     hits = np.asarray(truth["taps_s"]) - truth["video_offset_s"]
     monkeypatch.setattr(multi_wrist, "_video_taps", lambda *args: hits)
     enriched, warnings = multi_wrist.attach_sensor(swings, tmp_path / "clip.mov", sensor,
@@ -61,7 +73,7 @@ def test_tap_synced_csv_attaches_wrist_and_preserves_camera_contact(session, tmp
         assert wrist["racket_speed_sensor"]["contact_source"] == wrist["timing"]["found_from"]
         assert after["metadata"]["wristSync"]["offsetSeconds"] == pytest.approx(truth["video_offset_s"], abs=.02)
         assert wrist["racket_speed_sensor"]["value"] > 0
-    assert not any(warning.startswith("Sensor CSV ignored") for warning in warnings)
+    assert not any(warning.startswith("Sensor data ignored") for warning in warnings)
     assert not list(tmp_path.glob(".wrist-*")), "decoded optional inputs are temporary"
     json.dumps(enriched, allow_nan=False)
 
@@ -91,7 +103,7 @@ def test_bad_csv_is_ignored_without_mutating_swings(session, tmp_path, contents)
     result, warnings = multi_wrist.attach_sensor(swings, tmp_path / "clip.mov", sensor,
                                                 slowdown=1, work=tmp_path, info=info())
     assert result is swings and swings == original
-    assert warnings and warnings[0].startswith("Sensor CSV ignored:")
+    assert warnings and warnings[0].startswith("Sensor data ignored:")
     assert not list(tmp_path.glob(".wrist-*"))
 
 
@@ -129,7 +141,7 @@ def test_no_audio_or_decoder_failure_is_only_a_warning(session, tmp_path, monkey
     result, warnings = multi_wrist.attach_sensor(swings, tmp_path / "clip.mov", sensor,
                                                 slowdown=1, work=tmp_path, info=info())
     assert result is swings and "private" not in str(warnings)
-    assert "Sensor CSV ignored" in warnings[0]
+    assert "Sensor data ignored" in warnings[0]
 
 
 def test_quicktime_audio_taps_use_existing_real_time_mapping(tmp_path, monkeypatch):
@@ -183,4 +195,31 @@ def test_sensor_failure_after_partial_processing_discards_all_mutations(session,
     result, warnings = multi_wrist.attach_sensor(swings, tmp_path / "clip.mov", sensor,
                                                 slowdown=1, work=tmp_path, info=info())
     assert result is swings and swings == original
-    assert warnings[0].startswith("Sensor CSV ignored:")
+    assert warnings[0].startswith("Sensor data ignored:")
+
+
+@pytest.mark.parametrize("failure", ["corrupt", "missing_gyro", "expanded_size", "time_grid"])
+def test_unreadable_or_unbounded_zip_is_only_a_warning(session, tmp_path, monkeypatch, failure):
+    _, _, swings = session
+    original = copy.deepcopy(swings)
+    sensor = tmp_path / "bad.zip"
+    if failure == "corrupt":
+        sensor.write_bytes(b"PK\x03\x04broken archive")
+    else:
+        with zipfile.ZipFile(sensor, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            if failure == "expanded_size":
+                archive.writestr("Accelerometer.csv", "0" * 2048)
+                monkeypatch.setattr(multi_wrist, "MAX_SENSOR_BYTES", 512)
+            else:
+                times = [0, .01, .02, 1e12] if failure == "time_grid" else np.arange(101) / 100
+                archive.writestr("Accelerometer.csv", "seconds_elapsed,x,y,z\n" +
+                                 "".join(f"{t},0,0,0\n" for t in times))
+    result, warnings = multi_wrist.attach_sensor(swings, tmp_path / "clip.mov", sensor,
+                                                slowdown=1, work=tmp_path, info=info())
+    assert result is swings and swings == original
+    assert warnings[0].startswith("Sensor data ignored:")
+    if failure == "expanded_size":
+        assert "expands beyond" in warnings[0]
+    elif failure == "time_grid":
+        assert "10–1000 Hz" in warnings[0]
+    assert not list(tmp_path.glob(".wrist-*"))

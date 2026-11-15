@@ -124,16 +124,25 @@ def test_two_videos_and_csv_attach_before_coaching(multi_run, monkeypatch):
     assert result['compare']['assumptions']['launch']['you']['azimuth']['label'] == 'MOCK (sensor)'
 
 
-def test_bad_csv_is_ignored_and_upload_still_publishes(multi_run):
+@pytest.mark.parametrize('filename,contents', [
+    ('sensor.csv', b'not,a,sensor\n1,2,3'),
+    ('sensor.zip', b'not an archive'),
+    ('sensor.bin', b'PK\x03\x04truncated archive'),
+    ('sensor.bin', b'unreadable sensor file'),
+])
+def test_bad_sensor_is_ignored_and_upload_still_publishes(multi_run, filename, contents):
     client, root, _ = multi_run
-    result, saved = published(client, root, client.post('/process/multi', files=uploads(True, b'not,a,sensor\n1,2,3')))
+    files = uploads(True)
+    files['sensor_csv'] = (filename, contents, 'application/octet-stream')
+    result, saved = published(client, root, client.post('/process/multi', files=files))
     assert result['warnings']
     assert any('sensor' in warning.lower() or 'csv' in warning.lower() for warning in result['warnings'])
     assert all('wrist' not in swing for swing in saved)
 
 
-def test_real_csv_sync_measurement_and_publish_are_chained(multi_run, tmp_path, monkeypatch):
-    """Generated sensor recording; actual CSV loader, tap sync, wrist/coach/physics."""
+@pytest.mark.parametrize('filename', ['sensor.csv', 'sensor.ZIP', 'sensor.bin'])
+def test_real_sensor_sync_measurement_and_publish_are_chained(multi_run, tmp_path, monkeypatch, filename):
+    """Generated recording; actual CSV/ZIP loader, tap sync, wrist/coach/physics."""
     import pipeline.multi as multi
     import pipeline.multi_wrist as wrist
     from pipeline.tests.test_multi_wrist import flat_csv, info
@@ -143,7 +152,7 @@ def test_real_csv_sync_measurement_and_publish_are_chained(multi_run, tmp_path, 
 
     client, root, _ = multi_run
     truth = make_session(tmp_path / 'sensor-session', labels=('none', 'rolled_wrist'),
-                         camera=True, video_jitter_s=0, shadow=(1,))
+                         camera=True, video_jitter_s=0, shadow=(1,), zip_export=True)
     recording = load_recording(truth['export'])
     swings = list(read_swings(truth['swings_dir']).values())
     for swing in swings:
@@ -151,8 +160,11 @@ def test_real_csv_sync_measurement_and_publish_are_chained(multi_run, tmp_path, 
     monkeypatch.setattr(multi, '_stereo', lambda *args: (copy.deepcopy(swings),
         {'detected': len(swings), 'written': len(swings), 'rejected': [], 'sync': {}, 'calibration': {}}, info()))
     monkeypatch.setattr(wrist, '_video_taps', lambda *args: [t - truth['video_offset_s'] for t in truth['taps_s']])
-    csv = flat_csv(tmp_path / 'sensor.csv', recording)
-    result, saved = published(client, root, client.post('/process/multi', files=uploads(True, csv.read_bytes())))
+    sensor = (flat_csv(tmp_path / 'sensor.csv', recording) if filename.endswith('.csv')
+              else Path(truth['export']))
+    files = uploads(True)
+    files['sensor_csv'] = (filename, sensor.read_bytes(), 'application/octet-stream')
+    result, saved = published(client, root, client.post('/process/multi', files=files))
     assert not any('ignored' in warning.lower() for warning in result['warnings'])
     for swing in saved:
         assert swing['wrist']['usable'] and swing['wrist']['contact_source'] == 'gyro peak'

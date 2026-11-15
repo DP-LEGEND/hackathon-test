@@ -27,6 +27,7 @@ from physics.compare import GuessedFixError, compare
 from physics.ghost import FIXES
 from pipeline.live import LiveOptions, process_live_clip, ghost_choice
 from pipeline.multi import MultiOptions, process_multi_clips
+from pipeline.multi_wrist import is_sensor_zip
 
 MAX_UPLOAD_BYTES = 250 * 1024 * 1024
 PROCESS_SEMAPHORE = threading.Semaphore(1)
@@ -292,7 +293,7 @@ def process_video(
 def process_multi_video(
     video_a: Annotated[UploadFile, File(description="Primary MOV, MP4, AVI or M4V clip")],
     video_b: Annotated[UploadFile | None, File(description="Optional second camera clip")] = None,
-    sensor_csv: Annotated[UploadFile | None, File(description="Optional combined wrist-sensor CSV")] = None,
+    sensor_csv: Annotated[UploadFile | None, File(description="Optional Sensor Logger ZIP or combined wrist-sensor CSV")] = None,
     slowdown_a: Annotated[float, Form(gt=0, le=16, allow_inf_nan=False)] = 1,
     slowdown_b: Annotated[float, Form(gt=0, le=16, allow_inf_nan=False)] = 1,
     offset_b_s: Annotated[float | None, Form(allow_inf_nan=False,
@@ -340,11 +341,12 @@ def process_multi_video(
                 else:
                     notices.append('Second video is empty or unsupported; using video_a with estimated (1 camera) depth.')
             if sensor_csv is not None:
-                candidate, size = save(sensor_csv, 'wrist.csv')
-                if size and size <= 10 * 1024 * 1024 and Path(sensor_csv.filename or '').suffix.lower() == '.csv':
+                suffix_sensor = Path(sensor_csv.filename or '').suffix.lower()
+                candidate, size = save(sensor_csv, 'wrist.zip' if suffix_sensor == '.zip' else 'wrist.csv')
+                if size and size <= 10 * 1024 * 1024 and (suffix_sensor in ('.csv', '.zip') or is_sensor_zip(candidate)):
                     sensor = candidate
                 else:
-                    notices.append('Wrist CSV is empty, unsupported or over 10 MB; ignored the sensor data.')
+                    notices.append('Wrist CSV/ZIP is empty, unsupported or over 10 MB; ignored the sensor data.')
             # Share the live worker's admission lock, only after every part is saved.
             if not PROCESS_SEMAPHORE.acquire(blocking=False):
                 raise HTTPException(429, 'A clip is already processing')

@@ -497,7 +497,7 @@ node --experimental-strip-types "app/api/[...path]/route.test.mjs"
 |---|---|
 | `video_a` | Required primary MOV, MP4, M4V or AVI clip |
 | `video_b` | Optional second camera, recording the same swing |
-| `sensor_csv` | Optional combined wrist-sensor CSV, up to 10 MiB |
+| `sensor_csv` | Optional Sensor Logger ZIP or combined wrist-sensor CSV, up to 10 MiB |
 | `slowdown_a`, `slowdown_b` | Playback slowdown factors, each defaulting to 1; positive and at most 16 |
 | `offset_b_s` | Optional B playback seconds at A's beginning; replaces automatic audio sync |
 
@@ -509,13 +509,19 @@ with a warning. A partial stereo reconstruction labels each swing separately:
 `metadata.depth` is `triangulated (2 cameras)` or `estimated (1 camera)`; existing
 `source` and `metadata.reconstruction` remain `stereo` or `mono`.
 
-CSV columns are `seconds_elapsed` (seconds) or `time` (Unix nanoseconds),
+Sensor Logger ZIP exports are detected by ZIP signature or filename extension and
+passed to the same wrist reader as `scripts/make_sensor_sample.py`. The export
+needs Accelerometer.csv (or TotalAcceleration.csv) and Gyroscope.csv; Orientation.csv
+and Metadata.csv are optional. Archives are read without extraction, with a 25 MiB
+expanded-size limit and bounded sensor timestamps. Unreadable exports only add a warning.
+
+Single-file CSV columns are `seconds_elapsed` (seconds) or `time` (Unix nanoseconds),
 `accel_x`, `accel_y`, `accel_z` (m/s²), and `gyro_x`, `gyro_y`, `gyro_z` (rad/s).
 Aliases `ax/ay/az` and `gx/gy/gz` are accepted. Optional `qx/qy/qz/qw` supply
 orientation; `mock=true` marks synthetic sensor data. Strap the phone's long edge
 (y axis) along the hitting forearm and record an audible still-arm double tap
 before swinging. The tap interval and subsequent contact must align with video A.
-Failed or ambiguous tap sync, malformed CSV or unusable wrist measurements only
+Failed or ambiguous tap sync, malformed CSV/ZIP or unusable wrist measurements only
 add warnings; the video result still loads. Wrist roll uses the gyro peak, while
 sensor-assisted camera fill and racket speed retain their impact timing.
 
