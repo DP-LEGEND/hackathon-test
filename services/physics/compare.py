@@ -789,7 +789,7 @@ def explain_fix(fix_name: str, amount: float, stroke: str, you: dict, ghost: dic
 
 
 def _face_words(face_deg: float, cross: str) -> str:
-    return "square" if face_deg == 0 else f"{face_deg:g}° open, {cross} (cross-court)"
+    return "square" if face_deg == 0 else f"{face_deg:g}° closed, {cross} (cross-court)"
 
 
 def explain_face_fix(fix_name: str, amount: float, stroke: str, you: dict, ghost: dict, you_launch: dict,

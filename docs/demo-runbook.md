@@ -14,6 +14,48 @@ For the live demo on aryan's Mac. Code: `~/hackathon-demo` (a git worktree). Pyt
 
 Two people: **PRESENTER** talks, **OPERATOR** drives the laptop and terminal.
 
+## 08:00: one real hit with the wrist sensor
+
+`scripts/make_sensor_sample.py` turns one real hit (iPhone slow-motion clip + Sensor Logger export) into a saved `/ghost` sample with the Wrist sensor panel. Work in `~/hackathon-sensor`: it has this script and #74's real-hit lines. Don't use `~/hackathon-demo` while it's pinned before #74, because its coach judges real hits with the mock line. Replace every `<…>` before you press Enter.
+
+1. Get the latest script:
+```
+cd ~/hackathon-sensor
+```
+```
+git pull
+```
+2. Copy the clip and the export out of Downloads (copy, never move):
+```
+cp ~/Downloads/<clip>.MOV ~/Downloads/<export>.zip data/raw/
+```
+3. Find the first tap. Scrub QuickTime to the second the hand first lands on the phone, then make a sheet of about 1.5 playback seconds around it:
+```
+~/ghost-env/bin/python scripts/make_sensor_sample.py data/raw/<clip>.MOV --sheet <start> <end>
+```
+Open the image the `sheet:` line names. Pick the **first** frame where the hand touches the phone: that's `f<frame>`.
+
+4. Make the sample. For `--window`, give playback times from about 1 s before contact to 1 s after (6–8 playback seconds at 4×). There's a ball, so don't add `--shadow`, and don't add `--wrist-timing impact`:
+```
+~/ghost-env/bin/python scripts/make_sensor_sample.py data/raw/<clip>.MOV data/raw/<export>.zip --tap f<frame> --window <start> <end> --stroke <forehand|backhand>
+```
+5. Open the image the `TAP CHECK:` line names (`data/raw/tapcheck_<id>.jpg`). Every row must show the hand on the phone, and on tap 1 the hand must not be on it yet 3 frames before. If not, go back to step 3: a wrong tap makes every number wrong, and nothing else catches it.
+6. Check the output. All four must hold:
+   - There's a line `impact: sensor … s; the pipeline's contact (audio-transient) is … ms from it`, and **no** `no impact near this swing` warning. If that warning shows on a hit with a ball, the `--window` or the tap is off: go back to step 5.
+   - `wrist timing: roll window on the fastest forearm turn, <±N> ms from the impact spike`.
+   - `rolled_wrist: checked, …` names the real line (forehand 145.75°, backhand 124.3°) and the forearm roll. If it says `rolled_wrist: NOT CHECKED`, don't quote a wrist call from this sample.
+   - It ends with `wrote … appended catalogue entry '<id>'` and `open: /ghost?swing=<id> on the web app run from …`.
+7. **Send these to aryan if the `wrist timing` offset is 250 ms or more either way** (the search stops at ±300 ms), or if the script stopped with `no forearm-turn peak … within 300 ms`:
+   - the `impact:`, `wrist:`, `wrist timing:` and `rolled_wrist:` lines, or the whole output if it stopped;
+   - the tap-check image.
+
+   Don't rerun with `--wrist-timing impact` to get past it: the coach then doesn't check the wrist.
+8. To see the sample, start a web app from this folder on a spare port (3000 and 8000 are the show's):
+```
+npx next dev -p 3461
+```
+Open `http://localhost:3461/ghost?swing=<id>`. The sample's files are local demo data: don't commit them.
+
 ## Before you go on (30 minutes before)
 
 **1. Put the demo folder on the latest main.**
@@ -99,6 +141,11 @@ SSL_CERT_FILE="$(~/ghost-env/bin/python -m certifi)" GHOST_SWINGS_DIR=~/ghost-re
 ```
 
 Reload the swing in `/ghost` and click **Hear the coach** again. If that fixed it, put the same `SSL_CERT_FILE=...` in front of the show's tab 1 command too (see *Tab 1* below).
+
+**Turn on for demo: Ask the coach (optional, needs #94; skip it to keep the rehearsed demo).**
+1. Add the agent ID with hidden input, as `~/set-ghost-keys.sh` does (copy the ID from the ElevenLabs dashboard, Agents → *Ghost: ask the coach*): `read -rsp "ElevenLabs agent ID: " id && printf '\nELEVENLABS_AGENT_ID=%s\n' "$id" >> ~/hackathon-demo/.env.local && unset id && echo " saved"`
+2. Restart terminal tab 1: Ctrl+C, then the same tab 1 command (with `SSL_CERT_FILE=...` if step 5 needed it).
+3. Test one spoken question: at a swing's coach's call, click **Ask the coach**, allow the microphone, and ask "Why?". The coach should answer with the measured number in digits. No button means the key or the agent ID is missing, so leave it off.
 
 **6. Optional: the morning wrist-sensor sample (for beat 4).** If the morning recording has been run through `wrist.run` into a `wrist_metrics.json`, beat 4 can show it; *Tab 3* below says how to print and check it. Otherwise beat 4 is spoken, with no number. Don't use the mock data (`wrist.synth`) on stage: beat 4 never shows *MOCK DATA*.
 
