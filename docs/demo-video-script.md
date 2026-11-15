@@ -1,15 +1,18 @@
 <!--
 TODO (before recording). Rules: 2:00 hard cut, no logos, intros or music. Every sped-up part
-shows its speed (e.g. "4x") and the real run time. Gates, checked on the morning's main:
-- #73 and #74 are merged. The court and real-ball rows need #86 (measured hit spot, rebuilt hero
-  files: 1.45 m predicted vs 1.17 m tracked) and #85 (the badge). Until both merge, cut the
+shows its speed (e.g. "4x") and the real run time.
+Gates: don't trust a list of PRs here. The morning of recording, run `git log` on main (see
+"Set up") and check that each beat's merge is there:
+- #73, #74 and #86 are merged (#86: measured hit spot, hero files at 1.45 m predicted vs 1.17 m
+  tracked). The real-ball row also needs #85 (the badge). Without it in git log, cut the
   real-ball row: see "If the gates aren't met".
 - The voice only appears on live uploads (app/ghost/ghost-demo.tsx). The measured hit spot and
   the badge are only on the saved hero copy (#86: a live upload has no court lines). So the one
   swing is recorded in two passes, with the seam captioned.
-- Ask the coach (10 s): only if #94 (the ElevenLabs voice agent) is merged and the spoken test
-  in "Set up" passes on the demo Mac. Otherwise record the times without it. #94 tested typed
-  turns only, so the spoken test is the first real check.
+- Ask the coach (10 s): only if git log on main shows #94 (the ElevenLabs voice agent) merged,
+  and the spoken test in "Set up" passes 3 of 3 on the demo Mac, timing included (speaking within
+  3 s of "Why?"; fault, number and fix within 10 s). Otherwise record the times without it.
+  #94 tested typed turns only, so the spoken test is the first real check.
 - Sensor beat (optional, 5 s): only if a real sensor sample is on main by 09:00 and its coach's
   call reads "Rolled wrist…" with no MOCK label. On main, a real swing not timed at the forearm's
   fastest turn lists rolled_wrist as not measured (#74), so check the call, not just the file.
@@ -98,16 +101,17 @@ Use this version (A) only if the live call reads exactly *"Over-rotation: hips t
 
 ### 2a. Ask the coach (gated, 10 s)
 
-Only if #94 is merged on main **and** the spoken test in *Set up* passes on the demo Mac. Otherwise record the times above, unchanged.
+Only if git log on main shows #94 merged the morning of recording, **and** the spoken test in *Set up* passes 3 of 3 on the demo Mac, timing included. Otherwise record the times above, unchanged.
 
 It comes right after the coach's call and voice, on the same swing: the live upload in version A, the saved copy in version B. #94's tools read both.
 
 | Time (A) | Screen | Audio |
 |---|---|---|
-| 0:44–0:54 | Still at **the coach's call**. Click **Ask the coach**. The panel reads *"Listening: ask why, or what you should feel"*. Aryan says "Why?" out loud. The panel switches to *"The coach is speaking"*, and the answer fills the **Conversation** transcript. Caption for the whole beat, exactly: *"Real-time ElevenLabs voice agent: numbers only from Ghost's tools"* | Aryan: "Why?", then the agent's answer. No voiceover. |
+| 0:44–0:54 | Still at **the coach's call**, with the panel already open and reading *"Listening: ask why, or what you should feel"*. The slot starts as Aryan says "Why?" out loud. The panel switches to *"The coach is speaking"*, and the answer fills the **Conversation** transcript. Caption for the whole beat, exactly: *"Real-time ElevenLabs voice agent: numbers only from Ghost's tools"* | Aryan: "Why?", then the agent's answer. No voiceover. |
 
-- The gap between "Why?" and the answer is real time, so never cut it.
-- If the answer runs past the slot, fade it out and add the caption *"answer cut short"*. Every number spoken before the fade must be in the transcript on screen.
+- **Before the slot:** click **Ask the coach**, allow the microphone, and let the agent's greeting finish (#94's agent opens with one). Cut that part: the slot opens on "Why?".
+- The gap between "Why?" and the answer is real time, so never cut it. The spoken test proves it fits: speaking within 3 s, with the fault, its number and the fix said by 10 s.
+- If the answer runs past the slot, fade it out at 10 s and add the caption *"answer cut short"*. Every number spoken before the fade must be in the transcript on screen.
 - Don't add a voiceover that repeats the agent's numbers.
 
 **Where the 10 s come from:** part 3's ElevenLabs row goes in both versions, because the agent now shows ElevenLabs live.
@@ -172,9 +176,9 @@ Each tool as it really looks on screen, with no logo cards. No API keys, emails 
 
 ### If the gates aren't met
 
-- **#86 or #85 not on main:** the saved copy has the older heights and no badge. Read the court panel as it is. Cut the real-ball row and give its 18 s to the ghost and court rows. Don't show validate_ball output from a branch. If shot 2 wasn't filmed either, drop the real-ball sentence from part 4's fallback caption and voiceover.
+- **#85 not in main's git log:** the court has #86's heights but no badge, so the tracked 1.17 m isn't on screen. Read the court panel as it is. Cut the real-ball row and give its 18 s to the ghost and court rows. Don't show validate_ball output from a branch. If shot 2 wasn't filmed either, drop the real-ball sentence from part 4's fallback caption and voiceover.
 - **No keys or no internet:** no voice and no Ask beat. Use version B without 2a, and keep the ElevenLabs row in part 3 on the web app.
-- **#94 not merged, or the spoken test fails:** no Ask beat. Record the times without 2a, exactly as before.
+- **#94 not in main's git log, or any spoken-test run fails a check (timing included):** no Ask beat. Record the times without 2a, exactly as before.
 
 ## Shot list: 08:00 court session
 
@@ -194,17 +198,33 @@ Upload the shot-2 clips into a separate `GHOST_SWINGS_DIR`, never `~/ghost-stage
 ## Recording checklist
 
 **Set up**
-- [ ] On the morning's main, check `git log` for #85 and #86. The hero court step should show the badge *"Reference check against a real ball: 1.45 m predicted, 1.17 m tracked"*. Otherwise follow *If the gates aren't met*.
+- [ ] **The morning of recording, check main's git log** for the merges the beats need. Don't go by this file's notes.
+  ```
+  git -C ~/hackathon-demo fetch origin
+  ```
+  ```
+  git -C ~/hackathon-demo log --oneline origin/main | grep -E "pull request #(85|86|94) "
+  ```
+  - **#86:** already merged.
+  - **#85:** needed for the real-ball row. The hero court step should then show the badge *"Reference check against a real ball: 1.45 m predicted, 1.17 m tracked"*.
+  - **#94:** needed for the Ask beat.
+
+  If a needed line is missing, follow *If the gates aren't met*.
 - [ ] Make the one-swing hero clip from IMG_2115. Ask Dev for the safest cut: sharing can change the frame rate, and the hit sound must survive. Rehearse its upload: the call must read exactly *"Over-rotation: hips turn 157°"*. Otherwise use version B. If Auto picks the wrong speed, set **Slowdown** by hand.
 - [ ] Run the service on its own empty folder: `mkdir -p ~/ghost-video`, then the runbook's tab 1 command with `GHOST_SWINGS_DIR=~/ghost-video` in place of `~/ghost-stage`.
 - [ ] **A faulted live swing for the voice, ready before recording.** Upload a clip where the coach names a fault into `~/ghost-video` (the hero clip if it matches, otherwise any shot-2 clip with a fault). Check that **Hear the coach** plays. Version B's part 3 needs this, unless the Ask beat is in.
 - [ ] Both keys in `.env.local`, and the Mac online. Never open `.env.local` on screen.
-- [ ] **Ask beat only:** with #94 on main, add `ELEVENLABS_AGENT_ID` to `~/hackathon-demo/.env.local` for the recording (without it the panel stays hidden). Take it out again after recording: #94 keeps it off the demo Mac so the stage demo stays exactly as rehearsed.
-- [ ] **Ask beat spoken test, on the demo Mac.** Use the recording browser and the swing you'll record (version A: the live hero upload; version B: the saved hero copy). Click **Ask the coach**, allow the microphone, and say "Why?" out loud. Run it 3 times, and use the beat only if all 3 pass:
+- [ ] **Ask beat only:** once git log shows #94, add `ELEVENLABS_AGENT_ID` to `~/hackathon-demo/.env.local` for the recording (without it the panel stays hidden). Take it out again after recording: #94 keeps it off the demo Mac so the stage demo stays exactly as rehearsed.
+- [ ] **Ask beat spoken test, on the demo Mac.** Use the recording browser and the swing you'll record (version A: the live hero upload; version B: the saved hero copy). Screen-record each run with the microphone and system audio. Click **Ask the coach**, allow the microphone, let the greeting finish, and say "Why?" out loud. Run it 3 times, and use the beat only if all 3 pass **every** check below. **If any run misses any check, timing included, the beat is out.**
   1. The agent answers by voice, and the answer appears in the **Conversation** transcript.
   2. Every number it says appears in the transcript and is a value from the swing's tools. #94's typed test on the saved hero quoted 157.2° and 87.5°. Digits or words both count.
   3. It names the same fault and the same direction of fix as the coach's call.
   4. No error (*"The coach couldn't connect."* or *"The coach isn't available right now."*).
+  5. **Timing,** read off that run's screen recording, not by feel. Take 0 s as the moment Aryan starts saying "Why?".
+     - The agent starts speaking by **3 s**.
+     - By **10 s** it has said the fault, its number and the fix.
+
+     Write down both times for each run.
 - [ ] Ask beat: wear headphones, so the agent doesn't hear itself through the microphone. The screen recorder captures the microphone (Aryan's "Why?") as well as system audio (the agent).
 - [ ] Browser window 1440 × 900, zoom 100%, Do Not Disturb on, desktop clear, macOS **Reduce motion off**.
 - [ ] Screen recorder captures system audio, for the ElevenLabs clip.
@@ -214,7 +234,7 @@ Upload the shot-2 clips into a separate `GHOST_SWINGS_DIR`, never `~/ghost-stage
 **Record**
 - [ ] Note the upload's real run time from the recording's own clock. That's the *"real run time"* in the caption. The speed in the caption is the real time divided by the time on screen.
 - [ ] Two passes: live (upload, call, voice, and the Ask beat in version A), then the saved copy (ghost, court, badge). Pause 2 s before and after every click.
-- [ ] Ask beat: record it in one continuous take. Never cut between "Why?" and the answer.
+- [ ] Ask beat: record it in one continuous take. Only the greeting before "Why?" may be cut. Never cut between "Why?" and the answer. If the take misses the 3 s or 10 s mark, retake it. If no take makes it, the beat is out.
 - [ ] Record the voiceover last, to the edited picture. Fill in [k] and [N] first, and [X] and [Y] only if shot 2 was filmed.
 
 **Before you upload**
