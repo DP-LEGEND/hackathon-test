@@ -53,19 +53,26 @@ def sample_b_at_a(A: dict, B: dict, scale: float, offset: float):
 
 
 def calibrate(A: dict, B: dict, scale: float, offset: float, f_a=1400.0, f_b=1400.0,
-              min_vis=0.8, thresh_px=6.0) -> dict:
+              min_vis=0.8, thresh_px=6.0, *, diagnostics: dict | None = None) -> dict:
     imgB, visB = sample_b_at_a(A, B, scale, offset)
     J = CALIB_JOINTS
     m = (A["vis"][:, J] > min_vis) & (visB[:, J] > min_vis)
     m &= np.isfinite(A["img"][:, J, :2]).all(axis=-1) & np.isfinite(imgB[:, J, :2]).all(axis=-1)
     pa, pb = A["img"][:, J, :2][m], imgB[:, J, :2][m]
+    if diagnostics is not None:
+        diagnostics.update(sharedJointSamples=int(len(pa)), requiredJointSamples=12,
+                           reprojectionErrorPx=None, tolerancePx=float(thresh_px), status="failed")
     if len(pa) < 12:
+        if diagnostics is not None:
+            diagnostics['reason'] = 'too few tracked joints'
         raise ValueError("Not enough shared visible joints for stereo calibration; check sync and camera overlap")
     Ka, Kb = _K(f_a, tuple(A["size"])), _K(f_b, tuple(B["size"]))
     na = cv2.undistortPoints(pa.reshape(-1, 1, 2), Ka, None).reshape(-1, 2)
     nb = cv2.undistortPoints(pb.reshape(-1, 1, 2), Kb, None).reshape(-1, 2)
     E, inl = cv2.findEssentialMat(na, nb, np.eye(3), cv2.RANSAC, 0.999, thresh_px / ((f_a + f_b) / 2))
     if E is None or inl is None:
+        if diagnostics is not None:
+            diagnostics['reason'] = 'calibration could not estimate camera geometry'
         raise ValueError("Stereo calibration failed; check sync, focal lengths and camera baseline")
     candidates = []
     for candidate in np.split(E, len(E) // 3):
@@ -73,6 +80,9 @@ def calibrate(A: dict, B: dict, scale: float, offset: float, f_a=1400.0, f_b=140
         candidates.append((count, R, t, mask))
     count, R, t, mask = max(candidates, key=lambda item: item[0])
     if count < 12 or count / len(pa) < 0.25:
+        if diagnostics is not None:
+            diagnostics.update(reason='too few tracked joints in front of both cameras',
+                               positiveDepthJointSamples=int(count))
         raise ValueError("Stereo calibration has too few points in front of both cameras")
     good = mask.ravel() != 0
     p1 = Ka @ np.hstack([np.eye(3), np.zeros((3, 1))])
@@ -85,8 +95,14 @@ def calibrate(A: dict, B: dict, scale: float, offset: float, f_a=1400.0, f_b=140
         error = np.maximum(np.linalg.norm((proj_a[:2] / proj_a[2]).T - pa[good], axis=1),
                            np.linalg.norm((proj_b[:2] / proj_b[2]).T - pb[good], axis=1))
     reprojection = float(np.median(error))
+    if diagnostics is not None:
+        diagnostics['reprojectionErrorPx'] = reprojection if np.isfinite(reprojection) else None
     if not np.isfinite(reprojection) or reprojection > thresh_px:
+        if diagnostics is not None:
+            diagnostics['reason'] = 'calibration reprojection error exceeds tolerance'
         raise ValueError("Stereo reprojection error exceeds calibration tolerance")
+    if diagnostics is not None:
+        diagnostics.update(status='calibrated', reason=None)
     return {"Ka": Ka, "Kb": Kb, "R": R, "t": t, "scale": scale, "offset": offset,
             "inliers": float(good.mean()), "n": int(len(pa)), "reprojectionErrorPx": reprojection}
 

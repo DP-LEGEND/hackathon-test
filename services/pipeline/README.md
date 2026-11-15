@@ -506,10 +506,26 @@ Auto uses the existing video timing detection (edit list, capture tag or AirDrop
 playback-intent). The one-camera path also retains the live worker's 2/4/8 retry
 when capture timing is absent and no swing is initially found. With both fields
 omitted, each camera's metadata is detected independently.
-Both clips are normalized to real time before stereo. Without an explicit offset,
-matching hit-audio transients establish the clock offset. Missing or ambiguous
-audio, failed stereo, or an unusable second clip falls back to the primary video
-with a warning. A partial stereo reconstruction labels each swing separately:
+Native edit lists supply each swing's local slowdown, including different speed
+switches on the two cameras. For flattened exports without that mapping, local
+wrist motion estimates 1/2/4/8x around each dominant swing using the live path's
+12–35 m/s plausibility range. Those estimates and midpoint transition boundaries
+are **heuristics**, disclosed in warnings/debug; they are not recovered metadata.
+Manual slowdown overrides take precedence. A corrected temporary video replaces
+the initial one only after successful decoding.
+
+Audio RMS and gyro-speed peaks must reach 50% of the median of the session's five
+strongest peaks (or all candidates if fewer), and be the single strongest event
+within two real seconds. Equal peaks keep the earlier event. Small feed taps,
+movements and pickups do not establish the clock. Automatic sync matches at least
+three dominant swings by their spacing (at least 60% of the shorter sequence),
+rejecting ambiguous offsets. `offset_b_s` still overrides the camera clock; it
+does not set the sensor clock.
+
+Both clips are normalized to real time before stereo. Missing or ambiguous
+sequences, failed stereo, or an unusable second clip falls back to the primary
+video with a specific reason: offset not found, calibration error (including its
+value when measured), or too few tracked joints. A partial reconstruction labels each swing separately:
 `metadata.depth` is `triangulated (2 cameras)` or `estimated (1 camera)`; existing
 `source` and `metadata.reconstruction` remain `stereo` or `mono`.
 
@@ -523,15 +539,24 @@ Single-file CSV columns are `seconds_elapsed` (seconds) or `time` (Unix nanoseco
 `accel_x`, `accel_y`, `accel_z` (m/s²), and `gyro_x`, `gyro_y`, `gyro_z` (rad/s).
 Aliases `ax/ay/az` and `gx/gy/gz` are accepted. Optional `qx/qy/qz/qw` supply
 orientation; `mock=true` marks synthetic sensor data. Strap the phone's long edge
-(y axis) along the hitting forearm and record an audible still-arm double tap
-before swinging. The tap interval and subsequent contact must align with video A.
-Failed or ambiguous tap sync, malformed CSV/ZIP or unusable wrist measurements only
-add warnings; the video result still loads. Wrist roll uses the gyro peak, while
-sensor-assisted camera fill and racket speed retain their impact timing.
+(y axis) along the hitting forearm. The sensor's dominant gyro swings are matched
+to video A's dominant audio sequence; a double tap is no longer required.
+Failed or ambiguous sequence sync, malformed CSV/ZIP or unusable wrist measurements
+only add warnings; the video result still loads. Wrist metrics are centred on the
+matched gyro peak and retain that provenance, rather than claiming an impact tap.
 
 The 201 response has the same report, `swingId`, `swingIds`, `coach`, `compare` and
-`webPath` fields as `/process`, with an additional `warnings` array. Every swing,
+`webPath` fields as `/process`, with additional `warnings` and `debug` fields. Every swing,
 coach and comparison is ready before its manifest is published. The aggregate
 upload limit is 250 MiB; each video has the live path's 30-real-second limit.
 The existing `/process` route and `process_live_clip` are unchanged. Both servers
 remain local-only and need no provider keys for these measurements.
+
+`debug.videoA` / `videoB` list chosen swing times, source playback times and local
+slowdowns. `debug.sync` contains sequence pairs, camera offset and residual;
+`debug.stereo` contains status/reason, shared-joint sample counts, reprojection
+error and tolerance when available. `debug.sensor` contains chosen gyro/video
+times, sensor offset, match count/residual and attachment/ignore reason. Offsets
+use `B_real = A_real + offsetBRealSeconds` and
+`sensor_time = A_real + sensor.offsetSeconds`. Processing failures also return
+`debug` alongside `detail`. Unknown measurements are null, never a made-up zero.
