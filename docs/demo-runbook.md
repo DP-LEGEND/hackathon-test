@@ -1,5 +1,9 @@
 <!--
-TODO (9 AM freeze): written against main at 34b9298 (wrist sensor #44 merged).
+TODO (before judging): beat 4 and every beat time follow docs/pitch.md from PR #70, so merge #70
+first. The Wi-Fi row's local fonts arrive with #76. #73 changes the forehand ghost's front wall
+(1.88 → 1.86 m) and landing (7.32 → 8.04 m) in this file: leave those numbers to #73. The aim
+answer under "Rules on stage" is #73's behaviour.
+Earlier: written against main at 34b9298 (wrist sensor #44 merged).
 Beat 3 uses the /upload page (#48, merged in cca6a0d; flow checked in app/upload/ on main).
 If #53 (ghost honesty: measured vs guessed joints) merges, re-check beat 2 and the
 "What each screen should show" table.
@@ -97,14 +101,7 @@ SSL_CERT_FILE="$(~/ghost-env/bin/python -m certifi)" GHOST_SWINGS_DIR=~/ghost-re
 
 Reload the swing in `/ghost` and click **Hear the coach** again. If that fixed it, put the same `SSL_CERT_FILE=...` in front of the show's tab 1 command too (see *Tab 1* below).
 
-**6. Optional: make the mock wrist-sensor data (once).**
-
-```
-cd ~/hackathon-demo/services
-```
-```
-~/ghost-env/bin/python -m wrist.synth ~/wrist-mock --camera --mishit 3
-```
+**6. Optional: the morning wrist-sensor sample (for beat 4).** If the morning recording has been run through `wrist.run` into a `wrist_metrics.json`, beat 4 can show it; *Tab 3* below says how to print and check it. Otherwise beat 4 is spoken, with no number. Don't use the mock data (`wrist.synth`) on stage: beat 4 never shows *MOCK DATA*.
 
 **7. Run the smoke check** (`~/ghost-env/bin/python scripts/demo_smoke.py`) once terminal tabs 1 and 2 are up: see tab 3 below.
 
@@ -162,7 +159,7 @@ npm run dev
 
 Wait for "Ready". The first page load compiles the page, so open it before you go on.
 
-**Tab 3: smoke check, then the wrist-sensor command for beat 4** (big font)
+**Tab 3: smoke check, then the morning wrist sample for beat 4** (big font)
 
 With tabs 1 and 2 running, check the service, the web app and the saved swings:
 
@@ -173,15 +170,38 @@ cd ~/hackathon-demo
 ~/ghost-env/bin/python scripts/demo_smoke.py
 ```
 
-Every line should say PASS, ending *"5/5 checks passed"*. A FAIL line says what's wrong: fix it before you go on. Then:
+Every line should say PASS, ending *"5/5 checks passed"*. A FAIL line says what's wrong: fix it before you go on.
+
+Then, only if the morning wrist sample is ready (pre-flight step 6), print it last, so it's what's on screen at beat 4:
 
 ```
 cd ~/hackathon-demo/services
 ```
 
+Edit the path to the morning `wrist_metrics.json` and the run name in the next two lines before you press Enter on each:
+
+```
+WRIST_JSON=~/path/to/morning/wrist_metrics.json
+```
+```
+RUN=your_run_name
+```
+```
+clear
+```
+```
+~/ghost-env/bin/python -m wrist.tune "$WRIST_JSON" ../data/labels/labels.csv --run "$RUN"
+```
+
+Beat 4 shows this tab only if **all four** hold. Otherwise beat 4 is spoken and this tab stays hidden:
+1. The first line does **not** say *MOCK DATA*, and it shows **at least 5 normal and 5 rolled** usable swings (wrist.tune's own minimum).
+2. There's a `roll_change_abs_deg (deg)` block with a `normal median …` line, a `rolled median …` line and an `in-sample: …` line. If it says *"roll_change_abs_deg: not measured in both groups"*, there are no medians to read.
+3. The rolled median is larger than the normal median.
+4. wrist.tune reports **no skipped swings**: the first line ends *"0 labelled swings skipped."*, with no `skipped …` lines under it.
+
 ## Browser tabs, in this order
 
-1. **http://localhost:3000/ghost**: beats 1 and 2. Full screen.
+1. **http://localhost:3000/ghost**: beats 1 and 2. Type this address: `/` is now a landing page. Full screen.
 2. **http://localhost:3000/upload**: beat 3. Before you go on, click **Choose a video**, pick `~/Downloads/fresh.mov`, and leave all three settings (**Hitting hand**, **Stroke**, **Slowdown**) on **Auto**. Don't click **Build my ghost** yet.
 3. **http://localhost:8000/health**: shows `{"ok":true}`. Reload it if you're unsure whether the service is up.
 4. **The backup video**, once it's recorded at the freeze.
@@ -195,17 +215,23 @@ The page has four steps: **Pick a swing → Coach's call → The ghost → On co
 - **0.25× slow-mo** only changes speed. **Contact** jumps to contact and pauses.
 - **Side by side** / **Overlay** and **Court view** / **Player view** change the layout, and **Reset view** undoes rotation.
 
-**OPERATOR, at 0:00, before the hook** (or before beat 1 if there's no pitch): in browser tab 2 (`/upload`, clip already chosen, settings on Auto), click **Build my ghost**, then switch to browser tab 1. This matches `docs/pitch.md`. **Keep browser tab 2 open:** leaving `/upload` cancels the upload. While it works, browser tab 2 shows *Uploading your clip → Finding your swing… → Measuring… → Building your ghost…*. When the ghost is ready, browser tab 2 opens `/ghost?swing=<id>` at the coach's call by itself.
+**OPERATOR, at 0:00, before the hook** (or before beat 1 if there's no pitch): in browser tab 2 (`/upload`, clip already chosen, settings on Auto), click **Build my ghost**, then switch to browser tab 1. This matches `docs/pitch.md`. **Keep browser tab 2 open:** leaving `/upload` cancels the upload, so don't click the top navigation in that tab either (Home, Demo, …). While it works, browser tab 2 shows *Uploading your clip → Finding your swing… → Measuring… → Building your ghost…*. When the ghost is ready, browser tab 2 opens `/ghost?swing=<id>` at the coach's call by itself.
 
-### Beat 1: forehand over-rotation ghost (0:00–1:10)
+Beat times are the pitch's (`docs/pitch.md`), counted from the hook at 0:00. The order is beat 1, beat 2, **beat 4 (wrist sensor)**, then beat 3 (the fresh clip), as in the pitch.
+
+### Beat 1: forehand over-rotation ghost (0:34–1:16)
+
+Browser tab 1 is http://localhost:3000/ghost, opened directly: `/` is now a landing page.
 
 | Click | Screen shows | PRESENTER says |
 |---|---|---|
 | The top card, **"Forehand · over-rotation (acted and flagged) · iPhone 120 fps (IMG_2115 16:55)"** (badges *Saved sample*, *Demo swing*) | **The coach's call:** *"Over-rotation: hips turn 157°"*, cue *"Turn a little less and stay balanced through the ball."* | Code measured the swing; the coach names one fix and only quotes numbers the code measured. |
 | **Show the ghost** | **Your ghost makes the fix.** Fix *Turn shoulders less*, badge *Coach's pick*. *What the fix changes:* Shoulder turn 137.6° → 85°. It's already playing: click **0.25× slow-mo** only | Orange is the swing they played, cyan is the same body with one fix. |
-| **Show the court** | **Where the ball goes:** two paths, each labelled *PREDICTED · … · in*. Panel: ball speed 133.2 → 119.1 km/h, **front wall height 1.92 → 1.88 m** | These are **PREDICTED**; there's no real ball. Launch angle is **assumed, 12° for a forehand**. Checked by eye against the video, the real ball hit about 1.8 m. We set the 12° from this clip, so it's a sanity check, not a test. |
+| **Show the court** | **Where the ball goes:** two paths, each labelled *PREDICTED · … · in* | These are **PREDICTED**; there's no real ball. Launch angle is **assumed, 12° for a forehand**. Checked by eye against the video, the real ball hit about 1.8 m. We set the 12° from this clip, so it's a sanity check, not a test. |
+| Scroll down with the pointer **beside** the replay, not over it (scrolling over the 3D view zooms it) | The **Ball** panel (*PREDICTED*): ball speed 133.2 → 119.1 km/h, **front wall height 1.92 → 1.88 m** | *(Read the front wall heights from this panel.)* |
+| Scroll back up to the top, again with the pointer beside the replay | The step bar and **Try another swing** | |
 
-### Beat 2: backhand, nothing to fix (1:10–1:30)
+### Beat 2: backhand, nothing to fix (1:16–1:34)
 
 | Click | Screen shows | PRESENTER says |
 |---|---|---|
@@ -214,7 +240,23 @@ The page has four steps: **Pick a swing → Coach's call → The ghost → On co
 
 Don't click **Show the ghost** here. With nothing flagged, the page would show an uncoached example edit.
 
-### Beat 3: the coach's call on a fresh 60 fps clip (1:30–2:45)
+### Beat 4: wrist sensor (1:34–1:59, straight after beat 2)
+
+As in `docs/pitch.md`, this beat now runs between beats 2 and 3. There's no wrist screen in `/ghost`: it's terminal tab 3 or nothing. Call any sensor number an **ESTIMATE**, and never show *MOCK DATA* on stage.
+
+**Show terminal tab 3 only if it passes all four checks** in *Tab 3* above (not *MOCK DATA*, with at least 5 normal and 5 rolled usable swings; both `roll_change_abs_deg` medians and the `in-sample:` line printed; rolled median larger; no skipped swings). Then (25 s, 1:34–1:59):
+
+| Click | Screen shows | PRESENTER says |
+|---|---|---|
+| Switch to terminal tab 3 | The morning `wrist.tune` output: `roll_change_abs_deg (deg)`, the normal and rolled medians, the in-sample line | The camera can't see wrist roll, which is why the coach couldn't check it. So we strapped a phone to the forearm. It's an estimate from one session: normal backhands turned [normal median]° through contact, rolled ones [rolled median]°, and every usable swing was sorted correctly. *(Read both medians exactly as printed. Say "estimate". Don't subtract them out loud. Only say "every usable swing sorted correctly" if the in-sample line shows 100% of rolled and 0% of normal.)* |
+
+**Otherwise, including whenever tab 3 prints *MOCK DATA*, don't show the tab** (17 s, 1:34–1:51). Switch nothing and say no number:
+
+> The camera can't see wrist roll, which is why the coach couldn't check it. So we strapped a phone to the forearm. We've tried it on real practice swings without a ball, but the numbers aren't solid enough to quote yet.
+
+Then go straight on to beat 3. After the spoken version it starts at 1:51, and every later time is 8 s earlier.
+
+### Beat 3: the coach's call on a fresh 60 fps clip (1:59–2:21, or 1:51–2:13 if beat 4 was spoken)
 
 The clip was sent at 0:00 from browser tab 2 (`/upload`: **Choose a video**, settings on **Auto**, **Build my ghost**).
 
@@ -227,20 +269,10 @@ The clip was sent at 0:00 from browser tab 2 (`/upload`: **Choose a video**, set
 If browser tab 2 says *"Your ghost is ready."* but hasn't moved on, click **Open it in Ghost**.
 
 **If the caption says "No fault found" or "No fault found in what was checked":** read it as shown. Then do one of these:
-- Stop beat 3 there and go on to beat 4.
+- Stop beat 3 there and go on (in the pitch, to *How it works*).
 - Or click **Show the ghost** and say: "This is an example edit at demo size, not a coached fix." The panel says *"Demo size: the coach didn't flag this fault."* Never call it the fix.
 
-**If the coach named a fault but the panel says *"Demo size: the coach didn't flag this fault"*:** the coach's fault has no ghost yet. Say: "This is an example edit at demo size, not the coached fix." Never call it the fix, or stop beat 3 and go to beat 4.
-
-### Beat 4: wrist sensor (2:45–3:00, optional)
-
-Merged (#44), but **MOCK data only** and **terminal only**: there's no wrist screen in `/ghost`. In terminal tab 3:
-
-```
-~/ghost-env/bin/python -m wrist.run ~/wrist-mock/export --contacts ~/wrist-mock/contacts.csv --swings ~/wrist-mock/swings --video-tap 3.304 --out ~/wrist-mock/wrist_metrics.json --series-out ~/wrist-mock/wrist_series.json --filled-out ~/wrist-mock/filled
-```
-
-It shows **"MOCK DATA. 100 Hz, 73 s recorded."** and *"10/10 pairs within 100 ms"*. Forearm roll is about +9° to +21° on the normal swings and +58° to +70° on the rolled ones, and synth-04 shows impact 12.63 g, ring-down 75 ms (not judged). Say **"mock"** out loud: the camera can't see a rolled wrist, but a phone on the forearm can. A real recording comes next.
+**If the coach named a fault but the panel says *"Demo size: the coach didn't flag this fault"*:** the coach's fault has no ghost yet. Say: "This is an example edit at demo size, not the coached fix." Never call it the fix, or stop beat 3 there and go on (in the pitch, to *How it works*).
 
 ## What each screen should show
 
@@ -267,13 +299,13 @@ The launch angle isn't shown as a number. The court panel's footnote says the la
 | If | You'll see | Do this |
 |---|---|---|
 | **Python service down** | `/ghost`: *"The live Python service isn't running, so these are the saved samples."* `/upload`: *"The Ghost service isn't running"*. The health tab doesn't load | Beats 1 and 2 don't need it: the saved swings always work. Re-run the terminal tab 1 command with the same `GHOST_SWINGS_DIR=~/ghost-stage` (so the stage upload is kept). If it won't start, skip beat 3 and say the upload needs the service. |
-| **Upload still processing** | Browser tab 2 still shows the progress panel (*Finding your swing… / Measuring… / Building your ghost…*) | Say "that clip is still processing" and carry on. Switch back to browser tab 2 before the end, or skip beat 3. |
+| **Upload still processing** | Browser tab 2 still shows the progress panel (*Finding your swing… / Measuring… / Building your ghost…*) | Skip beat 3, as the pitch does: say "That clip is still processing, so here's how it works." and go on to *How it works*. Don't switch back to browser tab 2 later: switching tabs mid-pitch looks shaky. |
 | **Upload times out** | `/upload` (browser tab 2): *"Still processing, but this page stopped waiting"* | The Python service keeps going and saves the swing when done. Carry on. Later, in browser tab 1, go to **Pick a swing** and click **Check again**: the swing appears as a **Live** card. `~/ghost-stage` started empty, so it's the only **Live** card, unless you already re-uploaded after a wrong speed: then there are two **Live** cards in no set order, so open each and use the one whose speed looks right. |
 | **Upload refused** | `/upload` (browser tab 2): *"A clip is already processing"* | Only one clip at a time. Wait for the first one, then click **Try again**. |
 | **Slow-mo clip fails** | `/upload` (browser tab 2): *"Couldn't build your ghost"* with the server's message (e.g. *"No fully tracked swing found; keep the whole body in frame and film one clear swing"*) | Set **Slowdown** by hand: **1×** for a normal 60 fps video, **4×** or **8×** for slow motion. Set **Hitting hand** or **Stroke** if those were misread. Then click **Try again**. To show the rehearsal swing instead, stop terminal tab 1 (Ctrl+C), restart it with `GHOST_SWINGS_DIR=~/ghost-rehearsal ~/ghost-env/bin/python -m uvicorn pipeline.server:app --port 8000`, then in browser tab 1 go to **Pick a swing** and click **Check again**. |
 | **Speed wildly wrong** | Browser tab 2 opened the fresh swing in `/ghost`, but its speed is wildly wrong | There's no **Try again** here: a finished upload jumps to `/ghost`, and `/upload` resets. In browser tab 2, go back to http://localhost:3000/upload, click **Choose a video** and pick `~/Downloads/fresh.mov` again. Set **Slowdown** (**1×** for a normal 60 fps video, **4×** or **8×** for slow motion), and **Hitting hand** or **Stroke** if those were misread. Then click **Build my ghost**. |
 | **Pipeline missing** | `/upload` (browser tab 2): *"Couldn't build your ghost"* with *"Live pipeline unavailable; configure the pose model and ffmpeg/ffprobe"* | Pre-flight step 3 failed. Skip beat 3 and use the saved swings. |
-| **Wi-Fi dies** | Nothing, as long as the app is already running | Keep going: the service, the coach and the ghost all run on this Mac. Don't restart the app or run a build while offline (the fonts come from Google Fonts). If anything misbehaves, **use the saved swings** (beats 1 and 2) and skip beat 3. |
+| **Wi-Fi dies** | Nothing, as long as the app is already running | Keep going: the service, the coach and the ghost all run on this Mac. The fonts are local, so nothing loads from Google. That's true once #76 merges; until then the fonts come from Google Fonts, so don't restart the app or run a build while offline. If anything misbehaves, **use the saved swings** (beats 1 and 2) and skip beat 3. |
 | **A ghost won't load** | *"Couldn't make this ghost: …"* | Click **Try again**. If it fails again, click **1 Pick a swing** in the steps at the top and pick a saved sample. |
 | **Everything is broken** | | Play the backup video from the same moment. Never debug in front of the judges. |
 
@@ -283,6 +315,7 @@ The launch angle isn't shown as a number. The court panel's footnote says the la
   - the **launch angle** (12° forehand, 3° backhand), which you always call **assumed**
   - the **video-check heights** (about 1.8 m forehand, 0.5–0.8 m backhand), which you always say were **checked by eye against the video**
 - Every ball path is **PREDICTED**. Say the word the first time a path appears.
-- Anything mock is **MOCK**: today that's the wrist sensor.
+- The wrist sensor: show terminal tab 3 only when it passes the checks in *Tab 3*, and call its numbers an **ESTIMATE**. Never show *MOCK DATA* on stage; if you mention the mock tests, say **mock**.
+- If a judge asks about the ghost's aim, the answer is: "We aimed it at the straight drive the player said he meant." That's #73's behaviour: until #73 merges, the ghost's ball direction comes from its own wrist motion, so don't give this answer before then.
 
 After the demo, stop terminal tabs 1 and 2 with Ctrl+C.
