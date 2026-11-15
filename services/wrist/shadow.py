@@ -25,8 +25,11 @@ sensor:
    residuals say how well the taps agree. One event needs the scale given.
 3. Swings (find_shadow_swings): peaks of the forearm's smoothed turn rate (tempo.speed_dps)
    in a block, at least SWING_GAP_S apart, above sync.MIN_SWING_DPS and at least
-   SWING_PEAK_FRACTION of the block's median peak (the recovery between swings is a
-   smaller bump). CONTACT IS AN ESTIMATE: with no ball, a swing's contact is its fastest
+   SWING_PEAK_FRACTION of a swing-sized peak: the block's SWING_REFERENCE_PCT percentile.
+   The recovery after a swing is a smaller bump; when it comes SWING_GAP_S or more after
+   the swing, both reach this filter, and with one recovery per swing the median would sit
+   between them and keep every recovery. A swing has at most one recovery, so recoveries
+   are at most half the peaks and the 75th percentile is a swing's. CONTACT IS AN ESTIMATE: with no ball, a swing's contact is its fastest
    turn (contact_source "gyro peak"), and the metrics' window (-150..+100 ms) sits on it.
    Where real contact falls relative to that peak is unknown, and for a forehand the roll
    in the window depends on it (the swing part peaks 50-80 ms before the total turn rate
@@ -86,7 +89,8 @@ MIN_TAP_G = 0.5            # a tap knocks at least this hard (the first real ses
 TAP_MERGE_S = 0.1          # spikes closer than this are one tap (the knock and its ringing)
 TAP_ONSET_G = 0.3          # a tap starts at the first sample of its knock above this...
 TAP_ONSET_S = 0.05         # ...at most this long before its peak
-SWING_PEAK_FRACTION = 0.5  # a swing peaks at least this fraction of its block's median peak
+SWING_PEAK_FRACTION = 0.5  # a swing peaks at least this fraction of a swing-sized peak...
+SWING_REFERENCE_PCT = 75   # ...this percentile of the block's peaks (recoveries are at most half)
 STROKES = ("forehand", "backhand")
 
 # Summary numbers: entry key -> (unit, what it is). racket_rotation_ms is
@@ -178,7 +182,7 @@ def find_shadow_swings(rec: Recording, start_s: float, end_s: float,
     if not peaks.size:
         return []
     heights = s[idx][peaks]
-    keep = peaks[heights >= SWING_PEAK_FRACTION * float(np.median(heights))]
+    keep = peaks[heights >= SWING_PEAK_FRACTION * float(np.percentile(heights, SWING_REFERENCE_PCT))]
     return [round(float(rec.t[idx[k]]), 3) for k in keep]
 
 
@@ -348,7 +352,10 @@ def shadow_report(rec: Recording, segments: list[dict[str, Any]], axis: str = "y
 
 
 def _cell(st: dict[str, Any]) -> str:
-    return "n/a" if st["mean"] is None else f"{st['mean']:.1f} ± {st['sd'] if st['sd'] is not None else 0:.1f}"
+    """mean ± sample SD; the SD is n/a for one swing (it can't be computed), never 0."""
+    if st["mean"] is None:
+        return "n/a"
+    return f"{st['mean']:.1f} ± " + ("n/a" if st["sd"] is None else f"{st['sd']:.1f}")
 
 
 def main(argv: list[str] | None = None) -> int:
