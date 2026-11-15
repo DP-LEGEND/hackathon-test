@@ -48,7 +48,7 @@ export function noFaultInWhatWasChecked(caption: CoachCaption): boolean {
 }
 
 /** The cue when the coach found no fault but couldn't check everything: never an outright all-clear. */
-const PARTIAL_CHECK_CUE = "Nothing to fix in what the coach could check.";
+export const PARTIAL_CHECK_CUE = "Nothing to fix in what the coach could check.";
 
 /** How far "Hear the coach" has played the clip at `url`: 0 to 1 of the clip's duration. */
 type VoiceProgress = { url: string; fraction: number };
