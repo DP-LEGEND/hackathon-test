@@ -92,6 +92,38 @@ def test_segments_from_video_times_run_to_the_next_block(tmp_path: Path) -> None
         read_segments(path)
 
 
+def test_a_reused_segment_name_is_refused_with_both_lines(tmp_path: Path) -> None:
+    """Swing ids are <segment>-NN, so two 'good' blocks would overwrite each other's swings."""
+    path = tmp_path / "segments.csv"
+    path.write_text("segment,stroke,fault,start_s\ngood,forehand,none,10\nrolled,forehand,rolled_wrist,40\n"
+                    "\ngood,backhand,none,70\n")  # the blank line still counts: the reuse is on line 5
+    with pytest.raises(ValueError, match=r"segment 'good' is used twice: lines 2 and 5; give each block a unique name"):
+        read_segments(path)
+
+
+def test_overlapping_blocks_are_refused_naming_both() -> None:
+    rec = _rec(np.zeros((12001, 3)), np.zeros((12001, 3)))   # 0..120 s
+    segs = [{"segment": "fh-good", "stroke": "forehand", "fault": "none", "start_s": 10.0, "end_s": 45.0},
+            {"segment": "fh-rolled", "stroke": "forehand", "fault": "rolled_wrist", "start_s": 40.0, "end_s": None}]
+    with pytest.raises(ValueError, match=r"'fh-good' \(10.0 .. 45.0 s\) and 'fh-rolled' \(40.0 .. 120.0 s\) overlap"):
+        place_segments(segs, rec)
+    segs[0]["end_s"] = 40.0  # touching is fine: a block ends where the next one starts
+    assert [(s["start_s"], s["end_s"]) for s in place_segments(segs, rec)] == [(10.0, 40.0), (40.0, 120.0)]
+
+
+def test_out_of_order_blocks_are_refused_naming_both() -> None:
+    rec = _rec(np.zeros((12001, 3)), np.zeros((12001, 3)))   # 0..120 s
+    segs = [{"segment": "bh-rolled", "stroke": "backhand", "fault": "rolled_wrist", "start_s": 60.0, "end_s": None},
+            {"segment": "bh-good", "stroke": "backhand", "fault": "none", "start_s": 20.0, "end_s": None}]
+    with pytest.raises(ValueError, match=r"'bh-rolled' \(starts 60.0 s\) and 'bh-good' \(starts 20.0 s\) are out of order"):
+        place_segments(segs, rec)
+    # video times are checked after mapping to the sensor clock, the same way
+    vsegs = [{"segment": "a", "stroke": "forehand", "fault": "none", "video_start_s": 300.0},
+             {"segment": "b", "stroke": "forehand", "fault": "none", "video_start_s": 300.0}]
+    with pytest.raises(ValueError, match="out of order"):
+        place_segments(vsegs, rec, {"scale": 0.25, "offset_s": -18.0})
+
+
 @pytest.fixture(scope="module")
 def shadow_session(tmp_path_factory: pytest.TempPathFactory):
     """5 normal then 5 rolled swings, none with a ball (all shadow swings)."""

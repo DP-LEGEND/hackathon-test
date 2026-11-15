@@ -47,7 +47,9 @@ wrist), and the summary reports that, named as such. The camera adds the wrist's
 Segments CSV, one row per block in time order: segment, stroke (forehand/backhand), fault
 ("none" for a good block, e.g. "rolled_wrist"), and either start_s,end_s (sensor seconds)
 or video_start_s,video_end_s (video seconds, mapped with the fitted clock). A blank end
-runs to the next block's start (or the end of the recording).
+runs to the next block's start (or the end of the recording). Each block needs its own
+name (swing ids are <segment>-01, ...), and blocks may not overlap or run out of order:
+either would count one swing twice or mislabel it, so both are refused.
 
 Run (from inside services/; outputs default to data/raw/wrist/, git-ignored):
 
@@ -181,14 +183,20 @@ def find_shadow_swings(rec: Recording, start_s: float, end_s: float,
 
 
 def read_segments(path: str | Path) -> list[dict[str, Any]]:
-    """Blocks from the segments CSV (module doc), in file order."""
+    """Blocks from the segments CSV (module doc), in file order. Segment names must be unique."""
     with Path(path).open(newline="") as fh:
-        rows = list(csv.DictReader(fh))
+        reader = csv.DictReader(fh)
+        rows = [(reader.line_num, raw) for raw in reader]  # line_num: the CSV line, blank lines counted
     out: list[dict[str, Any]] = []
-    for n, raw in enumerate(rows, 2):
+    line_of: dict[str, int] = {}
+    for n, raw in rows:
         r = {(k or "").strip().lower(): (v or "").strip() for k, v in raw.items()}
         if not r.get("segment"):
             raise ValueError(f"{path}:{n}: every row needs a segment name")
+        if r["segment"] in line_of:  # swing ids are <segment>-NN: a reused name overwrites swings
+            raise ValueError(f"{path}: segment {r['segment']!r} is used twice: lines {line_of[r['segment']]} "
+                             f"and {n}; give each block a unique name")
+        line_of[r["segment"]] = n
         stroke = r.get("stroke") or None
         if stroke is not None and stroke not in STROKES:
             raise ValueError(f"{path}:{n}: stroke must be one of {STROKES}, got {stroke!r}")
@@ -208,7 +216,11 @@ def read_segments(path: str | Path) -> list[dict[str, Any]]:
 
 def place_segments(segments: list[dict[str, Any]], rec: Recording,
                    clock: Optional[dict[str, Any]] = None) -> list[dict[str, Any]]:
-    """Every block with sensor start_s/end_s: video times mapped with `clock`, blank ends run on."""
+    """Every block with sensor start_s/end_s: video times mapped with `clock`, blank ends run on.
+
+    Refuses blocks out of time order (start_s not increasing) and overlapping blocks (one's end
+    past the next one's start): a swing in both would be found twice under two labels.
+    """
     placed = []
     for seg in segments:
         s = dict(seg)
@@ -218,11 +230,23 @@ def place_segments(segments: list[dict[str, Any]], rec: Recording,
                     raise ValueError(f"segment {s['segment']!r}: video times need the video clock (--video-taps)")
                 s[f"{k}_s"] = round(to_sensor(s[f"video_{k}_s"], clock), 3)
         placed.append(s)
+    # Order first: a blank end runs to the next start, so an out-of-order pair would otherwise
+    # only show up as "ends before it starts".
+    for a, b in zip(placed, placed[1:]):
+        if b["start_s"] <= a["start_s"]:
+            raise ValueError(f"segments {a['segment']!r} (starts {a['start_s']} s) and {b['segment']!r} "
+                             f"(starts {b['start_s']} s) are out of order: list the blocks in time order, "
+                             "each starting after the one before")
     for a, b in zip(placed, placed[1:] + [None]):
         if a.get("end_s") is None:
             a["end_s"] = b["start_s"] if b is not None else float(rec.t[-1])
         if a["end_s"] <= a["start_s"]:
             raise ValueError(f"segment {a['segment']!r} ends before it starts ({a['start_s']} .. {a['end_s']} s)")
+    for a, b in zip(placed, placed[1:]):
+        if a["end_s"] > b["start_s"]:
+            raise ValueError(f"segments {a['segment']!r} ({a['start_s']} .. {a['end_s']} s) and {b['segment']!r} "
+                             f"({b['start_s']} .. {b['end_s']} s) overlap by {a['end_s'] - b['start_s']:.3f} s: "
+                             "a swing in both would be counted twice; end each block before the next starts")
     return placed
 
 
