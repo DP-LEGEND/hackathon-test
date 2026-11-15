@@ -26,6 +26,13 @@ For live swings only (saved samples never call it), the page asks `GET /api/coac
 
 A 404 (a swing the service doesn't know), any error, a 28 s timeout (just under the proxy's 30 s) or a malformed answer all keep the plain caption, with no message. Only a voice with audio is kept until the page reloads. No voice, or one without audio (no ElevenLabs key yet), isn't kept: the next time the caption shows, for example after **Check again** finds the service or once the service has its keys, the page asks again. Only an inline `data:audio/…` clip or a path on this site is played: one leading `/`, no backslash, and it must resolve to the page's own origin.
 
+### Physics' explanation and the real-ball check
+
+Two optional compare fields. A file without them looks exactly as before.
+
+- **`fix.explain`** (text): physics' chain from body to ball for the fix, e.g. "Your hips turned 157°, which pointed the racket face 13.5° across court, so the ball went cross-court. …". It shows under the cue on the coach's call, in the caption's secondary text. It shows only when the ghost's fix is the one the coach's top fault names, so it explains the cue on screen, and never when physics made no correction.
+- **`validation`** (`{predicted, tracked, error_deg, error_m, method}`): physics checked the PREDICTED ball against a real ball. On the court step a small badge says "Checked against the real ball: 1.92 m predicted, 1.90 m tracked", with "Method: tracked" or "Method: hand-labelled" under it. The numbers print as the file holds them. The badge needs `predicted` and `tracked` as numbers and `method` as one of those two values; anything else is ignored rather than shown.
+
 The ghost starts on the coach's `ghost_fix` with `ghost_fix_amount`, and the caption shows `ghost_note` when the ghost shows a different fix from the top fault. Older coach files without those fields fall back to the worst fault physics can fix. Fixes the coach didn't flag use a small fixed demo size (`demoAmounts` in the catalogue). A fix physics can't apply to a swing shows its reason. When a fix leaves both PREDICTED paths identical, the court step draws one path and says so.
 
 ## Wrist sensor panel

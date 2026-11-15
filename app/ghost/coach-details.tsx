@@ -30,8 +30,7 @@ export function CoachDetails({ state }: { state: CaptionState }) {
       {state.kind === "ready" && (
         <>
           <p className="text-[13px] leading-relaxed text-muted-foreground">
-            Code measured the {state.caption.stroke || "swing"}. The fault library ranks every number past its threshold,
-            worst first, and the top one is the call.
+            Code measured the {state.caption.stroke || "swing"}. A wrist-sensor fault leads; the rest are ranked worst first.
           </p>
           {state.caption.faults.length === 0 ? (
             <p className="text-sm text-muted-foreground">

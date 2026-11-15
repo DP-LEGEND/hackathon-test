@@ -49,7 +49,16 @@ export function noFaultInWhatWasChecked(caption: CoachCaption): boolean {
 /** The cue when the coach found no fault but couldn't check everything: never an outright all-clear. */
 const PARTIAL_CHECK_CUE = "Nothing to fix in what the coach could check.";
 
-export function CoachCaptionBar({ state, size }: { state: CaptionState; size: "large" | "compact" }) {
+export function CoachCaptionBar({
+  state,
+  size,
+  explain = null,
+}: {
+  state: CaptionState;
+  size: "large" | "compact";
+  /** Physics' chain from body to ball for the coach's fix (compare `fix.explain`); null hides it. */
+  explain?: string | null;
+}) {
   const large = size === "large";
   // No fault, but the coach skipped checks or couldn't check some faults: its own cue ("Nothing to
   // fix on this swing") and any voice, which words or speaks that cue, would read as an all-clear
@@ -104,6 +113,11 @@ export function CoachCaptionBar({ state, size }: { state: CaptionState; size: "l
             >
               “{partial ? PARTIAL_CHECK_CUE : (voice?.cue ?? state.caption.cue)}”
             </blockquote>
+            {explain && !partial && (
+              <p className={cn("mt-1.5 text-pretty text-muted-foreground", large ? "text-sm sm:text-base" : "text-xs sm:text-sm")}>
+                {explain}
+              </p>
+            )}
             {voice && (voice.audioUrl || voice.wordedByClaude) && (
               <div className="mt-2 flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
                 {voice.audioUrl && <PlayVoice url={voice.audioUrl} large={large} />}
