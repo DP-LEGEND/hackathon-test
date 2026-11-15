@@ -54,7 +54,9 @@ def test_ghost_swing_is_the_fixed_synthetic_swing(good, elbow):
     assert ghost["edits"] == [{"id": "elbow_bend", "size": -12.0, "unit": "deg"}]
     assert ghost["contactFrame"] == you["contactFrame"] == elbow["contactFrame"] == good["contactFrame"]
     assert len(ghost["frames"]) == len(you["frames"])
-    assert elbow["fix"] == {"id": "straighten_elbow", "amount": 12.0, "unit": "deg"}
+    assert {k: v for k, v in elbow["fix"].items() if k != "explain"} == {"id": "straighten_elbow", "amount": 12.0,
+                                                                        "unit": "deg"}
+    assert "PREDICTED" in elbow["fix"]["explain"]
 
 
 def test_more_shoulder_turn_swings_faster_so_the_predicted_ball_is_faster(good):
@@ -79,7 +81,7 @@ def test_new_fixes_work_in_compare(good, fix, amount, metric):
     for k in ("elbow_at_contact_deg", "shoulder_turn_deg", "wrist_at_contact_deg", "wrist_release_ms"):
         if k != metric:
             assert d[k]["change"] == 0.0, k
-    assert r["fix"] == {"id": fix, "amount": float(amount), "unit": "deg"}
+    assert {k: v for k, v in r["fix"].items() if k != "explain"} == {"id": fix, "amount": float(amount), "unit": "deg"}
     assert r["ghost"]["swing"]["synthetic"] is True
     assert r["ghost"]["ball"]["label"] == "PREDICTED"
     assert any(line.startswith(METRICS[metric][1]) for line in r["delta"]["summary"])

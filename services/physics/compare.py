@@ -23,9 +23,10 @@ Where the ball model's inputs come from (physics/ball.py):
   pipeline's label, else measured from the skeleton (ESTIMATE), else forehand labelled ASSUMED.
   A label the pipeline's classifier or the coach guessed is checked against the skeleton first.
 - Launch point: each swing's racket head at contact, height above the lowest foot MEASURED.
-  Yours sits over the ASSUMED anchor, the drive spot for the stroke (DRIVE_SPOT_RIGHT_HANDED,
-  mirrored for a left-hander). The ghost's is wherever its racket head ends up with your
-  placement. The racket head itself is an ESTIMATE until racket tracking exists
+  Yours sits over the anchor: where you hit from, MEASURED from the video when the camera sees
+  the court lines (physics/court_spot.py, passed as `spot`), else the ASSUMED drive spot for the
+  stroke (DRIVE_SPOT_RIGHT_HANDED, mirrored for a left-hander). The ghost's is wherever its
+  racket head ends up with your placement. The racket head itself is an ESTIMATE until racket tracking exists
   (skeleton.racket_head: wrist + 0.45 m along the forearm).
 - Racket speed is an ESTIMATE until racket tracking exists, from one of two sources:
   - Wrist sensor, when the swing carries a usable swing["wrist"] entry with a racket speed
@@ -47,6 +48,14 @@ Where the ball model's inputs come from (physics/ball.py):
   racket line's floor heading at contact (elbow -> racket head, ghost minus you), with your
   label: the racket face turns with the trunk and forearm that carry it. A fix that leaves the
   trunk and forearm at contact where they were leaves the aim where it was.
+- Every ghost aims a straight drive (TARGET_INTENT): parallel to the side walls, so down the right
+  wall from the forehand spot and down the left from the backhand spot (mirrored for a
+  left-hander). On top of its fix, the ghost holds the smallest shoulder turn at contact that puts
+  its aim on that line (contact_turn_for_intent); your swing and ball are never changed. Pass
+  intent=None for the fix alone.
+- fix.explain says in plain words how the fix gets from body to ball, quoting only the numbers
+  above with their labels. `validation` (when a validate_ball result is passed as `tracked`) puts
+  your PREDICTED ball next to the real ball tracked in the clip.
 - Elevation (launch angle) is ASSUMED: DEFAULT_ELEVATION_DEG for the stroke (12 forehand,
   3 backhand) unless you pass one for the swing. A swing's path at contact is too noisy to
   give the launch angle, and the face angle needs racket tracking.
@@ -71,7 +80,7 @@ from pathlib import Path
 
 import numpy as np
 
-from physics.ball import COURT_WIDTH_M, DEFAULT_CONTACT, predict_ball_path
+from physics.ball import COURT_LENGTH_M, COURT_WIDTH_M, DEFAULT_CONTACT, predict_ball_path
 from physics.ghost import EDITS, FIXES, apply_fix
 from physics.metrics import contact_frame, measure, real_fps, shoulder_coil, shoulder_yaw
 from physics.skeleton import (
@@ -118,6 +127,14 @@ RACKET_LINE_MIN_FLOOR_M = 0.05
 # hold the smallest turn at contact that puts the ghost's aim on it (contact_turn_for_intent).
 INTENT_AIMS = {"straight drive": 0.0}
 AIM_FIXES = ("turn_shoulders_less", "turn_shoulders_more")
+# Every ghost aims this shot unless the caller says otherwise: 0 deg is parallel to the side walls,
+# so from the forehand spot it runs down the right wall and from the backhand spot down the left
+# (the spots are mirrored for a left-hander). Labelled TARGET; an intent passed in is STATED.
+TARGET_INTENT = "straight drive"
+# The largest turn a fix other than the shoulder fixes may hold at contact to aim the ghost, deg
+# (a shoulder fix is capped at its own size). The aim itself is clamped to this too.
+AIM_HOLD_LIMIT_DEG = AZIMUTH_LIMIT_DEG
+_TARGET = object()  # compare()'s default intent: TARGET_INTENT, labelled TARGET
 
 SIDES = ("forehand", "backhand")
 
@@ -411,7 +428,7 @@ def ghost_azimuth(you_aim: dict, Pc_you: np.ndarray, Pc_ghost: np.ndarray, hand:
     shown = round(turn, 1) + 0.0  # + 0.0 so a rounding speck never reads "-0.0"
     lim = AZIMUTH_LIMIT_DEG
     return {
-        "value": round(min(max(raw, -lim), lim), 1), "unit": "deg",
+        "value": round(min(max(raw, -lim), lim), 1) + 0.0, "unit": "deg",
         "estimate": you_aim["estimate"], "label": you_aim["label"],
         "method": f"your aim ({you_aim['value']:g} deg, {you_aim['label']}) turned by the fix's change in the "
                   f"racket line (elbow -> racket head) at contact, {shown:+.1f} deg",
@@ -421,17 +438,23 @@ def ghost_azimuth(you_aim: dict, Pc_you: np.ndarray, Pc_ghost: np.ndarray, hand:
 
 
 def contact_turn_for_intent(P: np.ndarray, Pc: np.ndarray, hand: str, contact: int, you_aim: dict,
-                            intent: str, fix_name: str, amount: float) -> tuple[dict, float]:
+                            intent: str, fix_name: str, amount: float, *, fix_turn_deg: float | None = 0.0,
+                            stated: bool = True) -> tuple[dict, float]:
     """(assumptions.aim, contact_turn_deg for apply_fix): the smallest shoulder turn held at contact
-    that puts the ghost's aim on the line the player said they meant (INTENT_AIMS).
+    that puts the ghost's aim on the intended line (INTENT_AIMS).
 
     The ghost's aim is yours plus the racket line's turn at contact (ghost_azimuth), and turning
     the trunk about the vertical turns the racket line by exactly that angle. So the turn needed
-    is the intent's aim minus yours: no search, and nothing about the result is set by hand (the
-    ghost's aim is still measured from its pose). Capped at the fix's size (`amount`). Only the
-    shoulder fixes (AIM_FIXES) turn the trunk; for any other fix, a zero amount, an aim that is
-    only ASSUMED (no measured aim to turn) or a racket line that can't be measured, nothing is
-    held (contact_turn_deg 0) and `why` says so.
+    is the intent's aim minus the aim the fix alone gives (yours + fix_turn_deg, the fix's own
+    turn of the racket line: 0 for the shoulder and stance fixes, which leave contact alone): no
+    search, and nothing about the result is set by hand (the ghost's aim is still measured from
+    its pose). Capped at the fix's size for a shoulder fix (AIM_FIXES), else AIM_HOLD_LIMIT_DEG.
+    For a zero amount, an aim that is only ASSUMED (no measured aim to turn), a racket line that
+    can't be measured (fix_turn_deg None too) or shoulders that don't turn, nothing is held
+    (contact_turn_deg 0) and `why` says so.
+
+    stated: the player said this is the shot they meant (label STATED); False when it is the
+    target every ghost aims (TARGET_INTENT, label TARGET).
 
     contactTurnDeg is in the shoulders' sense (- = turned less far through at contact, i.e. less
     open), as apply_fix takes it; headingTurnDeg is the same turn on the court (+ = towards the
@@ -439,43 +462,52 @@ def contact_turn_for_intent(P: np.ndarray, Pc: np.ndarray, hand: str, contact: i
     backswing to contact (the coil's sign, as ghost.py measures it).
     """
     target = INTENT_AIMS[intent]
-    aim = {"intent": intent, "label": "STATED", "targetDeg": target, "applied": False}
+    aim = {"intent": intent, "label": "STATED" if stated else "TARGET", "targetDeg": target, "applied": False}
+    coil = 0.0
     why = None
-    if fix_name not in AIM_FIXES:
-        why = "only the shoulder-turn fixes turn the trunk at contact"
-    elif float(amount) == 0.0:
+    if float(amount) == 0.0:
         why = "the fix's amount is 0"
     elif not you_aim.get("estimate"):
         why = "your aim is assumed, not measured, so there is no measured aim to turn onto the line"
-    elif racket_line_heading(Pc, hand, contact) is None:
+    elif racket_line_heading(Pc, hand, contact) is None or fix_turn_deg is None:
         why = "the racket line at contact can't be measured, so a turn of it can't be aimed"
+    else:
+        _, coil = shoulder_coil(shoulder_yaw(P, up_vector(P)), contact)
+        if abs(coil) < 1.0:
+            why = "the shoulders don't turn before contact, so there is no turn to hold"
     if why:
         return {**aim, "why": why}, 0.0
-    _, coil = shoulder_coil(shoulder_yaw(P, up_vector(P)), contact)
     s = float(np.sign(coil))
-    need = target - you_aim["value"]  # heading turn that puts your aim on the target
-    cap = abs(float(amount))
+    fix_turn = float(fix_turn_deg or 0.0)
+    need = target - (you_aim["value"] + fix_turn)  # heading turn that puts the fix's aim on the target
+    shoulder_fix = fix_name in AIM_FIXES
+    cap = abs(float(amount)) if shoulder_fix else AIM_HOLD_LIMIT_DEG
     contact_turn = float(np.clip(s * need, -cap, cap))  # heading turn = s x contact turn (ghost.py)
     heading_turn = s * contact_turn
+    start = f"your aim ({you_aim['value']:g} deg)" if fix_turn == 0 else \
+        f"the aim the fix alone gives ({you_aim['value'] + fix_turn:.1f} deg: yours {fix_turn:+.1f})"
+    cap_by = "the fix's size" if shoulder_fix else "the hold limit"
     return {
         **aim, "applied": True,
         "contactTurnDeg": round(contact_turn, 1) + 0.0, "headingTurnDeg": round(heading_turn, 1) + 0.0,
-        "capDeg": cap, "capped": abs(need) > cap,
-        "method": f"smallest shoulder turn held at contact that turns the racket line from your aim "
-                  f"({you_aim['value']:g} deg) to the {intent} line ({target:g} deg), capped at the fix's "
-                  f"{cap:g} deg; the ghost's aim is then measured from its pose",
+        "capDeg": cap, "capBy": cap_by, "capped": abs(need) > cap,
+        "method": f"smallest shoulder turn held at contact that turns the racket line from {start} to the "
+                  f"{intent} line ({target:g} deg), capped at {cap_by} ({cap:g} deg); the ghost's aim is then "
+                  "measured from its pose",
     }, contact_turn
 
 
 def _intent_note(aim: dict) -> str:
     """The sentence /ghost shows under the PREDICTED ball (assumptions.note) for an applied intent."""
     turn = aim["contactTurnDeg"]
+    why = "the player's stated intent" if aim["label"] == "STATED" else "every ghost's target"
     if turn == 0:
-        return f" Aiming: {aim['intent']} (the player's stated intent). Your drive already goes straight, so nothing is held at contact."
-    text = (f" Aiming: {aim['intent']} (the player's stated intent). Smallest change that sends your drive "
+        return f" Aiming: {aim['intent']} ({why}). The drive already goes straight, so nothing is held at contact."
+    text = (f" Aiming: {aim['intent']} ({why}). Smallest change that sends your drive "
             f"straight: {'−' if turn < 0 else '+'}{abs(turn):g}° of shoulder turn at contact.")
     if aim["capped"]:
-        text += f" Capped at the fix's {aim['capDeg']:g}°, so the ghost's aim stops short of straight."
+        whose = "the fix's " if aim["capBy"] == "the fix's size" else ""
+        text += f" Capped at {whose}{aim['capDeg']:g}°, so the ghost's aim stops short of straight."
     return text
 
 
@@ -613,9 +645,130 @@ def _delta(you: dict, ghost: dict) -> dict:
     return {"metrics": metrics, "ball": ball, "summary": summary}
 
 
+# fix.explain: what the ghost changes, in words. {a} is the fix's amount.
+FIX_WORDS = {
+    "straighten_elbow": "straightens its elbow {a:g}° at contact",
+    "bend_elbow": "bends its elbow {a:g}° more at contact",
+    "turn_shoulders_more": "turns its shoulders {a:g}° more in the backswing",
+    "turn_shoulders_less": "turns its shoulders {a:g}° less in the backswing",
+    "hold_wrist_cock": "holds its wrist cock {a:g} ms longer",
+    "close_stance": "closes its stance {a:g}°",
+}
+OUTCOME_WORDS = {"tin": "hits the tin", "out": "goes out", "down": "never reaches the front wall"}
+
+
+def _line_turn(Pc_you: np.ndarray, Pc_ghost: np.ndarray, hand: str, contact: int) -> float | None:
+    """The fix's turn of the racket line at contact, degrees (ghost minus you); None if unmeasured."""
+    a, b = racket_line_heading(Pc_you, hand, contact), racket_line_heading(Pc_ghost, hand, contact)
+    return None if a is None or b is None else (b - a + 180.0) % 360.0 - 180.0
+
+
+def _near_wall(x: float) -> str:
+    return "right" if x > COURT_WIDTH_M / 2 else "left"
+
+
+def _aim_words(az: float, x: float) -> str:
+    """'straight', '13.5° across court' or '4° towards the right wall', from a launch at x."""
+    if abs(az) < 0.5:
+        return "straight"
+    towards = "right" if az > 0 else "left"
+    return f"{abs(az):g}° towards the {towards} wall" if towards == _near_wall(x) else f"{abs(az):g}° across court"
+
+
+def _path_words(az: float, x: float) -> str:
+    if abs(az) < 0.5:
+        return "straight down the middle" if abs(x - COURT_WIDTH_M / 2) < 1.0 else f"straight down the {_near_wall(x)} wall"
+    towards = "right" if az > 0 else "left"
+    return f"towards the {towards} wall" if towards == _near_wall(x) else "cross-court"
+
+
+def _ball_words(ball: dict) -> str:
+    if ball["outcome"] in OUTCOME_WORDS and ball["outcome"] != "out":
+        return OUTCOME_WORDS[ball["outcome"]]
+    parts = [] if ball["frontWallHeightM"] is None else [f"front wall {ball['frontWallHeightM']:.2f} m high"]
+    if ball["outcome"] == "out":
+        parts.append("out")
+    elif ball["landing"] is not None:
+        parts.append(f"lands {ball['landing'][1]:.2f} m from the front wall")
+    return ", ".join(parts)
+
+
+def explain_fix(fix_name: str, amount: float, stroke: str, you: dict, ghost: dict, you_launch: dict,
+                ghost_launch: dict, aim: dict | None, elevation: float, spot_measured: bool,
+                racket_note: dict) -> str:
+    """fix.explain: the chain from body to ball for this fix, in plain words.
+
+    Quotes only numbers compare() measured or solved, each with its label: the fix's measurement
+    (measured), the aims (ESTIMATE or ASSUMED), the held turn (solved), the PREDICTED balls, and
+    the ASSUMED launch angle and spot. The coach's own wording is never touched.
+    """
+    metric = FIX_TARGETS[fix_name][0]
+    unit, words = METRICS[metric]
+    u = "°" if unit == "deg" else f" {unit}"
+    mine, theirs = you["metrics"].get(metric), ghost["metrics"].get(metric)
+    you_az, ghost_az = you_launch["azimuth"], ghost_launch["azimuth"]
+    x_you, x_ghost = you_launch["point"][0], ghost_launch["point"][0]
+    body = f"Your {words} was {mine:g}{u} (measured)" if mine is not None else f"Your {words} couldn't be measured"
+    if you_az["label"] == "ASSUMED":
+        line = "your aim is ASSUMED straight (the wrist moves sideways at contact)"
+    else:
+        line = f"your racket line pointed {_aim_words(you_az['value'], x_you)} at contact ({you_az['label']}, from the wrist)"
+    text = (f"{body}, and {line}, so your PREDICTED ball goes {_path_words(you_az['value'], x_you)}: "
+            f"{_ball_words(you['ball'])}.")
+    if amount == 0:
+        text += " The ghost is your swing unchanged."
+    else:
+        change = FIX_WORDS[fix_name].format(a=abs(amount))
+        turn = aim.get("contactTurnDeg", 0.0) if aim and aim.get("applied") else 0.0
+        if mine is not None and theirs is not None:
+            # The stance is measured against the shot line, which the held turn moves as well.
+            relative = " against the straight shot line" if metric == "stance_open_deg" and turn else ""
+            change += f" ({mine:g}{u} → {theirs:g}{u}{relative})"
+        hold = f" and holds {abs(turn):g}° {'less' if turn < 0 else 'more'} shoulder turn at contact" if turn else ""
+        points = ("its aim stays ASSUMED straight" if ghost_az["label"] == "ASSUMED" else
+                  f"which points its racket line {_aim_words(ghost_az['value'], x_ghost)}")
+        text += (f" The ghost {change}{hold}, {points}, so its PREDICTED ball goes "
+                 f"{_path_words(ghost_az['value'], x_ghost)}: {_ball_words(ghost['ball'])}.")
+    text += (f" Ball speed {you['ball']['speedKmh']:g} → {ghost['ball']['speedKmh']:g} km/h, {racket_note['label']}."
+             f" ASSUMED: the {elevation:g}° launch angle{'' if spot_measured else ' and the spot on court'}.")
+    if spot_measured:
+        text += " The spot on court is MEASURED from the video."
+    return text
+
+
+def _validation(swing: dict, you_ball: dict, you_az: dict, tracked: dict) -> dict | None:
+    """`validation`: your PREDICTED ball next to the real one tracked in the clip (validate_ball).
+
+    predicted/tracked are front-wall heights (m); error_m and error_deg are tracked minus
+    predicted. None when your PREDICTED ball never reaches the front wall (nothing to compare).
+    """
+    if not isinstance(tracked, dict) or tracked.get("method") not in ("tracked", "hand-labelled"):
+        raise ValueError("tracked must be a physics.validate_ball result with method 'tracked' or 'hand-labelled'")
+    if swing.get("id") and tracked.get("swing") and tracked["swing"] != swing["id"]:
+        raise ValueError(f"the validation is for swing {tracked['swing']!r}, not {swing['id']!r}")
+    real = tracked.get("tracked") or {}
+    h, az = (real.get("frontWall") or {}).get("heightM"), real.get("azimuthDeg")
+    if not all(isinstance(v, (int, float)) and math.isfinite(v) for v in (h, az)):
+        raise ValueError("the validation result has no tracked front-wall height and direction")
+    pred = you_ball["frontWallHeightM"]
+    if pred is None:
+        return None
+    return {
+        "label": "PREDICTED vs tracked",
+        "what": "your ball: front-wall height (m) and direction (deg, + = towards the right wall)",
+        "predicted": round(pred, 2), "tracked": round(h, 2), "error_m": round(h - pred, 2),
+        "predictedAzimuthDeg": you_az["value"], "trackedAzimuthDeg": round(az, 1),
+        "error_deg": round(az - you_az["value"], 1),
+        "errorSign": "tracked minus predicted",
+        "method": tracked["method"],
+        "clip": tracked.get("clip"),
+    }
+
+
 def compare(swing: dict, fix_name: str, amount: float, fps_real: float | None = None,
             hand: str | None = None, elevation_deg: float | None = None, *,
-            side: str | None = None, intent: str | None = None) -> dict:
+            side: str | None = None, intent: str | None | object = _TARGET, spot: dict | None = None,
+            tracked: dict | None = None) -> dict:
     """The swing as played next to its ghost (one fix applied), in court coordinates. Never mutates `swing`.
 
     fix_name: one of physics.ghost.FIXES, e.g. compare(swing, "straighten_elbow", 12).
@@ -625,10 +778,18 @@ def compare(swing: dict, fix_name: str, amount: float, fps_real: float | None = 
         Default: DEFAULT_ELEVATION_DEG for the stroke (12 forehand, 3 backhand).
     side: "forehand" or "backhand", e.g. the stroke the coach was told. Default: the pipeline's
         label, else measured from the skeleton, else forehand labelled ASSUMED (swing_stroke).
-    intent: the shot the player says they meant, one of INTENT_AIMS ("straight drive"). With a
-        shoulder fix, the ghost holds the smallest turn at contact that sends its PREDICTED ball on
-        that line (contact_turn_for_intent; assumptions.aim and the note say so). Default: none,
-        and nothing is held.
+    intent: the shot the ghost aims, one of INTENT_AIMS ("straight drive"). On top of its fix the
+        ghost holds the smallest shoulder turn at contact that sends its PREDICTED ball on that
+        line (contact_turn_for_intent; assumptions.aim and the note say so). Default: every ghost
+        aims TARGET_INTENT (label TARGET); passed in, it is the player's STATED intent; None
+        holds nothing (the fix alone).
+    spot: where the player hit from, MEASURED from the video (physics.court_spot.measure_spot:
+        {"x", "z", "label": "MEASURED", "method", ...}); your racket head at contact sits over it
+        instead of the ASSUMED drive spot. Default: the ASSUMED drive spot (a live upload has no
+        court lines to measure from).
+    tracked: a physics.validate_ball result for this swing (the real ball tracked in its clip);
+        adds `validation`: your PREDICTED front-wall height and direction next to the tracked
+        ones, errors tracked minus predicted. Default: no validation.
     swing: a pipeline swing (hip-centred, facing +z), not a compare() output.
     """
     if fix_name not in FIXES:
@@ -637,6 +798,8 @@ def compare(swing: dict, fix_name: str, amount: float, fps_real: float | None = 
         raise ValueError(f"unknown fix {fix_name!r}{tip}; known fixes: {', '.join(FIXES)}")
     if hand not in (None, "R", "L"):
         raise ValueError(f"hand must be 'R' or 'L', got {hand!r}")
+    stated = intent is not _TARGET
+    intent = TARGET_INTENT if intent is _TARGET else intent
     if intent is not None and intent not in INTENT_AIMS:
         raise ValueError(f"intent must be one of {', '.join(map(repr, INTENT_AIMS))}, got {intent!r}")
     if not swing.get("frames"):
@@ -647,7 +810,8 @@ def compare(swing: dict, fix_name: str, amount: float, fps_real: float | None = 
     hand = hand or swing_hand(swing, P)
     contact, contact_method = ball_contact(swing, P, hand)
     stroke, stroke_source = swing_stroke(swing, P, hand, contact, side)
-    anchor = drive_spot(hand, stroke)
+    spot = _measured_spot(spot)
+    anchor = (spot["x"], spot["z"]) if spot else drive_spot(hand, stroke)
     given_elevation = elevation_deg is not None
     elevation = float(elevation_deg) if given_elevation else DEFAULT_ELEVATION_DEG[stroke]
     shift = court_shift(P, hand, contact, anchor)  # from YOUR racket head; the ghost reuses it
@@ -662,9 +826,14 @@ def compare(swing: dict, fix_name: str, amount: float, fps_real: float | None = 
                               "around contact (guessed joints), so a ghost of this fix would edit a guess.")
     Pc = court_axes(P)
     you_aim = estimate_azimuth(Pc + shift, hand, contact)  # as _on_court measures it
-    aim, contact_turn = (None, 0.0) if intent is None else contact_turn_for_intent(
-        P, Pc, hand, contact, you_aim, intent, fix_name, amount)
-    ghost_swing = apply_fix(played, fix_name, amount, fps_real, hand, contact_turn_deg=contact_turn)
+    ghost_swing = apply_fix(played, fix_name, amount, fps_real, hand)  # the fix alone
+    aim, contact_turn = None, 0.0
+    if intent is not None:
+        aim, contact_turn = contact_turn_for_intent(
+            P, Pc, hand, contact, you_aim, intent, fix_name, amount, stated=stated,
+            fix_turn_deg=_line_turn(Pc, court_axes(to_array(ghost_swing)), hand, contact))
+    if contact_turn:
+        ghost_swing = apply_fix(played, fix_name, amount, fps_real, hand, contact_turn_deg=contact_turn)
     ghost_swing.pop("wrist", None)  # your forearm phone's data isn't the ghost's: nothing may coach it
 
     you_racket, ghost_racket, racket_note = racket_speeds(
@@ -677,13 +846,18 @@ def compare(swing: dict, fix_name: str, amount: float, fps_real: float | None = 
     _drop_guessed(ghost, guessed)
     delta = _delta(you, ghost)
     edit, _ = FIXES[fix_name]
-    note = ("Ball paths are PREDICTED. The launch angle and the spot on court are assumed; racket "
+    where = ("The launch angle is assumed; the spot on court is measured from the video (court lines "
+             "and the hitting-side foot)" if spot else "The launch angle and the spot on court are assumed")
+    note = (f"Ball paths are PREDICTED. {where}; racket "
             "speed (from the forearm phone when the swing has usable wrist data, else the video), "
             "racket head and aim are estimated from the wrist and forearm until racket tracking exists.")
     fix = {"id": fix_name, "amount": float(amount), "unit": EDITS[edit]["unit"]}
     if aim is not None and aim["applied"]:
         note += _intent_note(aim)
         fix["aiming"] = aim["intent"]  # for the ghost legend: "turn shoulders less · aiming: straight drive"
+    fix["explain"] = explain_fix(fix_name, float(amount), stroke, you, ghost, you_launch, ghost_launch,
+                                 aim, elevation, spot is not None, racket_note)
+    validation = None if tracked is None else _validation(swing, you["ball"], you_launch["azimuth"], tracked)
     return {
         "fix": fix,
         "hand": hand,
@@ -702,6 +876,10 @@ def compare(swing: dict, fix_name: str, amount: float, fps_real: float | None = 
                 "method": f"{stroke} drive spot for a {'right' if hand == 'R' else 'left'}-hander. Your racket "
                           "head at contact sits here; the ghost is moved by exactly the same amount, so the "
                           "bodies overlap.",
+            } if not spot else {
+                "x": anchor[0], "z": anchor[1], "assumed": False, "label": spot["label"],
+                "method": f"{spot['method']}. Your racket head at contact sits here; the ghost is moved by "
+                          "exactly the same amount, so the bodies overlap.",
             },
             "launch": {
                 "racketHead": f"ESTIMATE: hitting wrist + {RACKET_HEAD_M:g} m along elbow -> wrist, "
@@ -719,7 +897,22 @@ def compare(swing: dict, fix_name: str, amount: float, fps_real: float | None = 
             **({} if aim is None else {"aim": aim}),
             "note": note,
         },
+        **({} if validation is None else {"validation": validation}),
     }
+
+
+def _measured_spot(spot: dict | None) -> dict | None:
+    """A MEASURED spot from physics.court_spot, checked; None keeps the ASSUMED drive spot."""
+    if spot is None:
+        return None
+    if not isinstance(spot, dict) or spot.get("label") != "MEASURED":
+        raise ValueError("spot must be a physics.court_spot result labelled MEASURED")
+    x, z = spot.get("x"), spot.get("z")
+    if not all(isinstance(v, (int, float)) and math.isfinite(v) for v in (x, z)):
+        raise ValueError(f"spot needs finite x and z, got {x!r}, {z!r}")
+    if not (0.0 <= x <= COURT_WIDTH_M and 0.0 < z <= COURT_LENGTH_M):
+        raise ValueError(f"spot ({x}, {z}) m is off the court")
+    return {"x": float(x), "z": float(z), "label": "MEASURED", "method": str(spot.get("method") or "measured")}
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -738,8 +931,13 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--side", choices=SIDES, default=None,
                         help="stroke (default: the pipeline's label, else measured, else forehand labelled ASSUMED)")
     parser.add_argument("--intent", choices=list(INTENT_AIMS), default=None,
-                        help="the shot the player meant; a shoulder fix then holds the smallest turn at "
-                             "contact that sends the ghost's ball on that line")
+                        help="the shot the player says they meant (labelled STATED); default: every ghost "
+                             f"aims a {TARGET_INTENT} (labelled TARGET)")
+    parser.add_argument("--no-aim", action="store_true", help="the fix alone: hold nothing at contact")
+    parser.add_argument("--spot-file", type=Path, default=None,
+                        help="where the player hit from, MEASURED (physics.court_spot output JSON)")
+    parser.add_argument("--validation-file", type=Path, default=None,
+                        help="this swing's physics.validate_ball result: adds `validation` (PREDICTED vs tracked)")
     parser.add_argument("--no-swings", action="store_true",
                         help="leave out the two swings' frames so the numbers are easy to read")
     args = parser.parse_args(argv)
@@ -747,8 +945,11 @@ def main(argv: list[str] | None = None) -> None:
     try:
         swing = json.loads(args.swing.read_text())
         swing.setdefault("id", args.swing.stem)
+        spot = json.loads(args.spot_file.read_text()) if args.spot_file else None
+        tracked = json.loads(args.validation_file.read_text()) if args.validation_file else None
+        intent = None if args.no_aim else (args.intent or _TARGET)
         result = compare(swing, args.fix, args.amount, args.fps_real, args.hand, args.elevation, side=args.side,
-                         intent=args.intent)
+                         intent=intent, spot=spot, tracked=tracked)
         if args.no_swings:
             for side in ("you", "ghost"):
                 del result[side]["swing"]

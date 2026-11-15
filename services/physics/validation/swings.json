@@ -2,11 +2,11 @@
  "note": "Swings checked against the real ball. contactFileFrame is the 30 fps file frame of the hit; fpsReal / slowdown give each file frame's real duration (4x slow motion: 1/120 s).",
  "swings": [
   {"swing": "7178110a0b06-swing-0027", "stroke": "forehand", "clip": "IMG_2115.MOV", "court": "court_IMG_2115.json",
-   "compare": "public/swings/compare_fh_over_rotation_turn_shoulders_less.json",
+   "compare": "public/swings/compare_fh_over_rotation_turn_shoulders_less.json", "swingFile": "public/swings/swing_fh_over_rotation.json",
    "contactFileFrame": 30450, "contactSource": "audio transient (swing metadata.sourceContactFrame)",
    "fpsReal": 120, "slowdown": 4},
   {"swing": "sample_2116_backhand_stereo", "stroke": "backhand", "clip": "IMG_2116.MOV", "court": "court_IMG_2116.json",
-   "compare": "public/swings/compare_2116_turn_shoulders_more.json",
+   "compare": "public/swings/compare_2116_turn_shoulders_more.json", "swingFile": "public/swings/swing_2116_bh_stereo.json",
    "contactFileFrame": 21647, "contactSource": "hit sound at source frame 21647 (commit 9cd5496); the swing file stores the wrist peak 3 frames earlier",
    "fpsReal": 120, "slowdown": 4}
  ]

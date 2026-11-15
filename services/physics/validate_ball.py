@@ -53,6 +53,7 @@ SERVICES = Path(__file__).resolve().parents[1]
 REPO = SERVICES.parent
 VALIDATION_DIR = Path(__file__).resolve().parent / "validation"
 RESULTS_DIR = VALIDATION_DIR / "results"
+SPOTS_DIR = VALIDATION_DIR / "spots"   # where the player hit from, MEASURED (physics/court_spot.py)
 DEBUG_DIR = REPO / "data" / "processed" / "validation"
 CLIP_DIR = REPO / "data" / "raw"
 
@@ -784,11 +785,57 @@ def table(results: list[dict]) -> str:
     return "\n".join(rows)
 
 
+def spot_check(entry: dict) -> dict | None:
+    """Before and after measuring where the player hit from, next to the tracked ball.
+
+    before: your PREDICTED ball as the saved compare file has it (the ASSUMED drive spot).
+    after: the same compare() run (same fix, amount, rate, hand, stroke and ASSUMED launch angle)
+    with the MEASURED spot from validation/spots/<swing>.json. Nothing is fitted to the ball:
+    the spot comes from the court lines and the feet. None when the swing has no measured spot.
+    """
+    path = SPOTS_DIR / f"{entry['swing']}.json"
+    if not path.exists():
+        return None
+    from physics.compare import compare
+
+    saved = json.loads((REPO / entry["compare"]).read_text())
+    swing = json.loads((REPO / entry["swingFile"]).read_text())
+    result = json.loads((RESULTS_DIR / f"{entry['swing']}.json").read_text())
+    a = saved["assumptions"]
+    after = compare(swing, saved["fix"]["id"], saved["fix"]["amount"], saved["fpsReal"], saved["hand"],
+                    a["launchElevationDeg"], side=a["stroke"]["value"], intent=None,
+                    spot=json.loads(path.read_text()))
+    before, now = predicted_from_compare(saved), predicted_from_compare(after)
+    return {"swing": entry["swing"], "stroke": entry["stroke"], "method": result["method"],
+            "tracked": result["tracked"], "before": before, "after": now,
+            "spot": after["assumptions"]["anchor"],
+            "errorBefore": errors(result["tracked"], before), "errorAfter": errors(result["tracked"], now)}
+
+
+def spot_table(rows: list[dict]) -> str:
+    out = ["| Swing | Method | Spot (x, z) m: ASSUMED → MEASURED | Front wall height (m): tracked / before / after "
+           "(error before → after) | Direction (deg): tracked / PREDICTED (error) |",
+           "|---|---|---|---|---|"]
+    for r in rows:
+        t, b, a = r["tracked"], r["before"], r["after"]
+        eb, ea = r["errorBefore"], r["errorAfter"]
+        out.append(
+            f"| {r['swing']} ({r['stroke']}) | {r['method']} | "
+            f"({b['contactPointM'][0]:.2f}, {b['contactPointM'][2]:.2f}) → "
+            f"({a['contactPointM'][0]:.2f}, {a['contactPointM'][2]:.2f}) | "
+            f"{_fmt(t['frontWall']['heightM'])} / {_fmt(b['frontWall']['heightM'])} / {_fmt(a['frontWall']['heightM'])} "
+            f"(**{_fmt(eb['frontWallHeightM'], 2, True)} → {_fmt(ea['frontWallHeightM'], 2, True)}**) | "
+            f"{_fmt(t['azimuthDeg'], 1)} / {_fmt(a['azimuthDeg'], 1)} ({_fmt(ea['directionDeg'], 1, True)}) |")
+    return "\n".join(out)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Check the PREDICTED ball against the real ball in the clip.")
     ap.add_argument("--swing", action="append", help="swing id from validation/swings.json (default: all)")
     ap.add_argument("--clips", type=Path, default=CLIP_DIR, help="folder with the clips (default data/raw)")
     ap.add_argument("--no-save", action="store_true", help="print only; don't write results or images")
+    ap.add_argument("--spot", action="store_true",
+                    help="no tracking: print the saved results before / after the MEASURED spot (validation/spots)")
     args = ap.parse_args(argv)
     entries = json.loads((VALIDATION_DIR / "swings.json").read_text())["swings"]
     if args.swing:
@@ -796,6 +843,10 @@ def main(argv: list[str] | None = None) -> int:
         if not entries:
             print("no such swing in validation/swings.json", file=sys.stderr)
             return 1
+    if args.spot:
+        rows = [r for r in map(spot_check, entries) if r is not None]
+        print(spot_table(rows))
+        return 0 if rows else 1
     results = []
     for entry in entries:
         try:
