@@ -339,8 +339,9 @@ def _grid(tiles: list[np.ndarray], cols: int) -> np.ndarray:
 
 def tap_frames(clip: Path, tap_play: float, taps: list[float], slowdown: float) -> list[tuple[float, int]]:
     """(playback s, frame) where each sensor tap should land in the clip. SampleError naming every tap
-    whose frame is outside the clip or can't be read: a tap check missing a row would hide a wrong
-    --slowdown or a short or mismatched clip (the later taps are the ones that show clock drift)."""
+    whose frame, or whose frame BEFORE_FRAMES earlier, is outside the clip or can't be read: a tap
+    check missing a row would hide a wrong --slowdown or a short or mismatched clip (the later taps
+    show clock drift), and without the earlier frame nobody can confirm tap 1 is the first contact."""
     import cv2
 
     times = [tap_play + (t - taps[0]) * slowdown for t in taps]
@@ -348,8 +349,16 @@ def tap_frames(clip: Path, tap_play: float, taps: list[float], slowdown: float) 
     fps = cap.get(cv2.CAP_PROP_FPS)
     count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     frames = [(play_s, int(round(play_s * fps))) for play_s in times]
-    bad = [f"tap {k + 1} at {play_s:.3f} playback s (f{i})" for k, (play_s, i) in enumerate(frames)
-           if i < 0 or (count > 0 and i >= count) or _read(cap, i) is None]
+    def unreadable(i: int) -> bool:
+        return i < 0 or (count > 0 and i >= count) or _read(cap, i) is None
+
+    bad = []
+    for k, (play_s, i) in enumerate(frames):
+        if unreadable(i):
+            bad.append(f"tap {k + 1} at {play_s:.3f} playback s (f{i})")
+        elif unreadable(i - BEFORE_FRAMES):
+            bad.append(f"tap {k + 1}'s frame {BEFORE_FRAMES} frames before (f{i - BEFORE_FRAMES}, tap at "
+                       f"{play_s:.3f} playback s, f{i})")
     cap.release()
     if bad:
         span = f"f0-f{count - 1}, 0-{count / fps:.3f} playback s" if count > 0 and fps > 0 else "unknown length"
@@ -363,8 +372,9 @@ def tap_check_image(clip: Path, tap_play: float, taps: list[float], slowdown: fl
                     box: tuple[int, int, int, int] | None = None) -> list[float]:
     """For each sensor tap, the frame at its predicted playback time: the whole frame, and with `box`
     (find_hands_box) a zoom on the hands at that frame and BEFORE_FRAMES earlier. A misread --tap,
-    or a wrong --slowdown (taps 2+ drift off the phone), shows. Every tap gets its row: if any tap's
-    frame can't be read, SampleError (tap_frames) and no image is written."""
+    or a wrong --slowdown (taps 2+ drift off the phone), shows. Without `box` the earlier frame is the
+    whole frame, at the same tile size. Every tap gets its row, with its earlier frame: if any of
+    them can't be read, SampleError (tap_frames) and no image is written, never a blank tile."""
     import cv2
 
     frames = tap_frames(clip, tap_play, taps, slowdown)
@@ -376,16 +386,19 @@ def tap_check_image(clip: Path, tap_play: float, taps: list[float], slowdown: fl
             cap.release()
             raise SampleError(f"couldn't read sensor tap {k + 1}'s frame (f{i}, {play_s:.3f} playback s): check --tap, "
                               "--slowdown, and that the clip covers every tap")
+        before = _read(cap, i - BEFORE_FRAMES)
+        if before is None:
+            cap.release()
+            raise SampleError(f"couldn't read sensor tap {k + 1}'s frame {BEFORE_FRAMES} frames before "
+                              f"(f{i - BEFORE_FRAMES}): check --tap, --slowdown, and that the clip covers every tap")
         row = [_label(_tile(img), f"sensor tap {k + 1}: video {play_s:.3f} s (f{i})")]
         if box is not None:
-            before = _read(cap, i - BEFORE_FRAMES)
             row.append(_label(_tile(img, box), "hand on the phone?"))
-            row.append(_label(_tile(before if before is not None else np.zeros_like(img), box),
-                              f"{BEFORE_FRAMES} frames before"))
+        row.append(_label(_tile(before, box), f"{BEFORE_FRAMES} frames before (f{i - BEFORE_FRAMES})"))
         rows.append(np.hstack(row))
     cap.release()
     out.parent.mkdir(parents=True, exist_ok=True)
-    cv2.imwrite(str(out), _grid(rows, 1 if box is not None else 3))
+    cv2.imwrite(str(out), _grid(rows, 1))
     return [play_s for play_s, _ in frames]
 
 
@@ -644,6 +657,24 @@ def wrist_for_sample(rec: Recording, sync: dict[str, Any], axis: str, swing_id: 
     return gp_metrics, gp_series, filled, info
 
 
+def rebase_to_clip(md: dict, start: float, slowdown: float, fps_real: float) -> None:
+    """The pipeline ran on the cut window, so its source times count from the window's start. Once
+    md["sourceClip"] names the original clip, they must count from ITS start: real seconds
+    (source*Seconds, realStartSeconds) + start / slowdown, playback seconds (source*PlaybackSeconds)
+    + start, frames (source*Frame, at fps_real like the pipeline's) + start / slowdown x fps_real."""
+    real_s = start / slowdown
+    frames = int(round(real_s * fps_real))
+    for key, value in list(md.items()):
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            continue
+        if key.startswith("source") and key.endswith("PlaybackSeconds"):
+            md[key] = value + start
+        elif (key.startswith("source") and key.endswith("Seconds")) or key == "realStartSeconds":
+            md[key] = value + real_s
+        elif key.startswith("source") and key.endswith("Frame"):
+            md[key] = value + frames
+
+
 def sample_files(sample_id: str, fixes) -> list[str]:
     """Every file a sample with this id can write: swing, coach, wrist series, one compare per fix."""
     return [f"swing_{sample_id}.json", f"coach_{sample_id}.json", f"wrist_{sample_id}.json",
@@ -770,6 +801,7 @@ def make_sample(args: argparse.Namespace) -> int:
         swing["id"] = sample_id
         md = swing["metadata"]
         md["sourceClip"] = clip.name
+        rebase_to_clip(md, start, slowdown, swing["fpsReal"])  # source* times now count from the original clip
         md["sourceWindowPlaybackSeconds"] = [start, end]
         md["wristSync"] = {"method": "first tap's onset matched to the video frame where the hand lands",
                            "slowdown": slowdown, "videoTapPlaybackSeconds": round(tap_play, 4),
@@ -801,7 +833,7 @@ def make_sample(args: argparse.Namespace) -> int:
                                       f"{args.tolerance_ms:.0f}). Open {check_path}: if the hand is on the phone in "
                                       "every frame, rerun with --contact-from-impact; if not, fix --tap")
                 t = np.array([f["t"] for f in swing["frames"]])
-                rel = hit - offset - start / slowdown - md["realStartSeconds"]
+                rel = hit - offset - md["realStartSeconds"]  # realStartSeconds is in the original clip now
                 new_cf = int(np.argmin(np.abs(t - rel)))
                 if not (0 < new_cf < len(t) - 1) or abs(t[new_cf] - rel) > 1.5 / swing["fpsReal"]:
                     raise SampleError("the impact falls outside the pipeline's swing frames: widen --window")
@@ -812,7 +844,7 @@ def make_sample(args: argparse.Namespace) -> int:
                 md["sourceContactFrame"] = md.get("sourceStartFrame", 0) + new_cf
                 md["sourceContactSeconds"] = md["realStartSeconds"] + float(t[new_cf])
                 md["sourceContactPlaybackSeconds"] = md["sourceContactSeconds"] * slowdown
-                contact_real = start / slowdown + md["sourceContactSeconds"]
+                contact_real = md["sourceContactSeconds"]
                 print(f"contact moved to the impact: frame {md['pipelineContactFrame']} -> {new_cf} "
                       f"({md['contactShiftMs']:+.0f} ms)")
         speed = np.degrees(np.linalg.norm(rec.gyro, axis=1))

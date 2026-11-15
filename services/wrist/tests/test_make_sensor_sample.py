@@ -95,9 +95,12 @@ def test_tap_check_rows_show_the_frame_and_the_zoom_before_it(mss, tmp_path):
     # The last tile is BEFORE_FRAMES earlier: tap 1 at frame 6 -> frame 3 (brightness 6 vs 12).
     zoom_at, zoom_before = img[200, full_w + 180].mean(), img[200, full_w + mss.TILE_H + 180].mean()
     assert zoom_at == pytest.approx(12, abs=4) and zoom_before == pytest.approx(6, abs=4)
-    # Without a zoom it is the old grid of whole frames, 3 per row.
+    # Without a zoom (find_hands_box found no player) every row still has the earlier frame, whole.
     mss.tap_check_image(clip, 0.2, [10.0, 10.28], 4.0, out)
-    assert cv2.imread(str(out)).shape[:2] == (mss.TILE_H, 3 * full_w)
+    img = cv2.imread(str(out))
+    assert img.shape[:2] == (2 * mss.TILE_H, 2 * full_w)  # per tap: the frame, then BEFORE_FRAMES earlier
+    assert img[200, full_w // 2].mean() == pytest.approx(12, abs=4)            # tap 1: frame 6
+    assert img[200, full_w + full_w // 2].mean() == pytest.approx(6, abs=4)    # frame 3, not a black tile
 
 
 def test_sheet_labels_frames_and_refuses_too_many(mss, tmp_path, monkeypatch):
@@ -385,3 +388,71 @@ def test_a_tap_past_the_clip_is_refused_and_no_tap_check_is_written(mss, tmp_pat
     assert mss.main(args) == 1
     assert "tap 3 at 2.600 playback s (f78)" in capsys.readouterr().err
     assert not check.exists() and not check.with_name("pipeline_taps_past_clip.log").exists()
+
+
+@pytest.mark.parametrize("box", [None, (40, 20, 100, 80)])
+def test_a_tap_within_before_frames_of_the_clip_start_is_refused_and_nothing_is_written(mss, tmp_path, box):
+    """Codex P1 on #93: tap 1 at frame 2 has no frame 3 earlier; that tile was black (or, with no hands
+    box, missing), so nobody could confirm tap 1 was the first contact."""
+    clip = mock_clip(tmp_path / "clip.avi")
+    out = tmp_path / "tapcheck.jpg"
+    with pytest.raises(mss.SampleError, match=r"tap 1's frame 3 frames before \(f-1, tap at 0.067 playback s, f2\)"):
+        mss.tap_check_image(clip, 2 / 30, [10.0, 10.28], 4.0, out, box=box)
+    assert not out.exists()
+
+
+def test_a_tap_near_the_clip_start_stops_the_cli_before_anything_is_written(mss, tmp_path, monkeypatch, capsys):
+    clip, truth, swings, _ = _cli_inputs(tmp_path)
+    monkeypatch.setattr(mss, "first_tap_event", lambda rec, spikes, from_s=None: [10.0, 10.28])
+    monkeypatch.setattr(mss, "find_hands_box", lambda *a: pytest.fail("ran past the tap frames"))
+    check = tmp_path / "check.jpg"
+    args = [str(clip), str(truth["export"]), "--tap", "f2", "--window", "1", "5", "--stroke", "backhand",
+            "--id", "tap_at_start", "--out-dir", str(swings), "--check-image", str(check)]
+    assert mss.main(args) == 1
+    assert "tap 1's frame 3 frames before (f-1" in capsys.readouterr().err
+    assert not check.exists() and not check.with_name("pipeline_tap_at_start.log").exists()
+
+
+def _window_md() -> dict:
+    """A pipeline swing's metadata for a cut window, as the 14 Nov dry run saved it (times from the cut)."""
+    return {"realStartSeconds": 0.3, "sourceStartSeconds": 0.3, "sourcePeakSeconds": 1.075,
+            "sourceContactSeconds": 0.9, "sourceStartFrame": 36, "sourceContactFrame": 108,
+            "sourceStartPlaybackSeconds": 1.2, "sourceContactPlaybackSeconds": 3.6,
+            "sourceTimeBase": "normalized-real-time", "slowdown": 4.0, "captureFps": 120.0,
+            "contactMethod": "audio-transient"}
+
+
+def test_source_times_are_rebased_to_the_original_clip(mss):
+    md = _window_md()
+    mss.rebase_to_clip(md, 10.0, 4.0, 120.0)  # --window starting at 10 playback s, 4x, 120 fps real
+    assert md["sourceContactSeconds"] == pytest.approx(0.9 + 10 / 4)
+    assert (md["realStartSeconds"], md["sourceStartSeconds"], md["sourcePeakSeconds"]) == pytest.approx((2.8, 2.8, 3.575))
+    assert (md["sourceStartPlaybackSeconds"], md["sourceContactPlaybackSeconds"]) == pytest.approx((11.2, 13.6))
+    assert (md["sourceStartFrame"], md["sourceContactFrame"]) == (36 + 300, 108 + 300)
+    assert md["sourceContactPlaybackSeconds"] == pytest.approx(md["sourceContactSeconds"] * 4)
+    assert md["sourceContactFrame"] == round(md["sourceContactSeconds"] * 120)
+    assert (md["slowdown"], md["captureFps"], md["sourceTimeBase"]) == (4.0, 120.0, "normalized-real-time")
+
+
+def test_a_window_starting_at_10_s_saves_contact_in_the_original_clip(mss, tmp_path, monkeypatch):
+    """Codex P2 on #93: sourceClip names the original movie, so its times must be the movie's."""
+    clip, truth, swings, _ = _cli_inputs(tmp_path)
+    seen = {}
+    fake = {"metadata": _window_md(), "fpsReal": 120.0, "frames": [], "contactFrame": 0}
+    monkeypatch.setattr(mss, "tap_frames", lambda *a: [])
+    monkeypatch.setattr(mss, "find_hands_box", lambda *a: None)
+    monkeypatch.setattr(mss, "tap_check_image", lambda clip_, tap_play, taps, *a: [tap_play])
+    monkeypatch.setattr(mss, "cut_window", lambda *a: None)
+    monkeypatch.setattr(mss, "run_pipeline", lambda *a: [fake])
+
+    def stop(shadow, method):  # called just after the metadata is set (--shadow)
+        seen["md"] = dict(fake["metadata"])
+        raise mss.SampleError("stop after the metadata")
+    monkeypatch.setattr(mss, "shadow_contact_warning", stop)
+    args = [str(clip), str(truth["export"]), "--tap", "0.2", "--window", "10", "14", "--stroke", "backhand",
+            "--shadow", "--id", "window_at_10", "--out-dir", str(swings), "--check-image", str(tmp_path / "c.jpg")]
+    assert mss.main(args) == 1
+    md = seen["md"]
+    assert md["sourceClip"] == clip.name and md["sourceWindowPlaybackSeconds"] == [10.0, 14.0]
+    assert md["sourceContactSeconds"] == pytest.approx(0.9 + 10 / 4)  # the window's value + 10 / slowdown
+    assert md["sourceContactFrame"] == 108 + 300 and md["sourceContactPlaybackSeconds"] == pytest.approx(13.6)
