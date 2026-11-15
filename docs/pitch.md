@@ -81,7 +81,7 @@ Same clicks as the runbook's beats 1–3, faster. The wrist sensor (beat 4) move
 - Stop the beat there and go to *How it works*.
 - Or click **Show the ghost** and say: "This is an example edit at demo size, not a coached fix." The panel says *"Demo size: the coach didn't flag this fault."* Never call it the fix.
 
-**If the coach named a fault but the panel says *"Demo size: the coach didn't flag this fault"*:** say "This is an example edit at demo size, not the coached fix." Never call it the fix, or stop and go on.
+**If the coach named a fault but the panel says *"Demo size: the coach didn't flag this fault"*:** say "This is an example edit at demo size, not the coached fix." Never call it the fix, or stop and go to *How it works*.
 
 **If tab 2 still shows the progress panel** (*Finding your swing… / Measuring… / Building your ghost…*) at 1:35, skip this beat and say: "That clip is still processing, so here's how it works." Then go to *How it works*.
 
