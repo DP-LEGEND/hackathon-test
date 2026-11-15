@@ -31,7 +31,7 @@ export function SiteShell({ children }: { children: ReactNode }) {
   return (
     <div className="dark ghost-theme site-shell">
       <a href="#site-content" className="site-skip">Skip to content</a>
-      <header className={active === "/demo" ? "site-header site-header-compact" : "site-header"}>
+      <header className="site-header">
         <Link href="/" aria-label="GHOST home" className="site-brand">
           {path === "/" ? <Image src="/ghost/brand.svg" width={44} height={32} alt="" priority /> : "GHOST"}
         </Link>
