@@ -58,10 +58,17 @@ def _finite(x: Any) -> bool:
     return isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x)
 
 
+# Every field coach.wrist_sensor.sensor_metrics needs (its FROM_WRIST): without all of them, finite,
+# the coach doesn't use the entry, so the face model mustn't either.
+COACH_WRIST_FIELDS = ("roll_change_abs_deg", "peak_roll_rate_abs_dps", "peak_angular_speed_dps")
+
+
 def sensor_roll(swing: dict) -> Optional[dict[str, Any]]:
-    """{"roll": deg, "mock": bool} from a usable swing["wrist"] entry, else None."""
+    """{"roll": deg, "mock": bool} from a usable swing["wrist"] entry the coach can use (every
+    COACH_WRIST_FIELDS value finite), else None."""
     wrist = swing.get("wrist")
-    if not isinstance(wrist, dict) or not wrist.get("usable") or not _finite(wrist.get("roll_change_abs_deg")):
+    if not isinstance(wrist, dict) or not wrist.get("usable") or not all(
+            _finite(wrist.get(k)) for k in COACH_WRIST_FIELDS):
         return None
     return {"roll": float(wrist["roll_change_abs_deg"]), "mock": bool(wrist.get("mock"))}
 

@@ -195,6 +195,14 @@ def test_until_the_app_lists_firm_wrist_there_is_no_ghost_and_the_note_says_why(
     assert without["ghost_fix"] is None and without["ghost_fault"] is None and without["ghost_fix_amount"] is None
     assert without["ghost_note"] == "ghost for wrist roll not in the app yet"
     assert without["ghost_fixes"] == [] and without["ghost_edits"] == {}   # as with no ghost-ready fault
+    # Codex P2: the top-level pair agrees, so pipeline/live.py ghost_choice can't apply firm_wrist.
+    shown = coach_swing(swing, stroke="backhand", app_fixes=list(FIXES))
+    assert shown["ghost_ready"] is True and without["ghost_ready"] is False
+    assert without["fault"] == shown["fault"] and without["fix"] == shown["fix"] == "firm_wrist"
+    assert without["fix_amount"] == shown["fix_amount"] and without["cue"] == shown["cue"]
+    from pipeline.live import ghost_choice
+    assert ghost_choice(shown)[0] == "firm_wrist"
+    assert ghost_choice(without) == (None, None)
     # By default the coach reads the app's catalogue: the fallback ends once firm_wrist is listed there.
     listed = "firm_wrist" in catalogue_fixes()
     default = coach_swing(swing, stroke="backhand")

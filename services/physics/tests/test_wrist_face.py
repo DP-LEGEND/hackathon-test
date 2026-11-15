@@ -27,6 +27,7 @@ def good():
 def with_roll(swing: dict, roll: float, mock: bool = False, contact_source: str | None = "gyro peak") -> dict:
     """A usable wrist entry, timed as the real medians were tuned (the gyro peak) unless told otherwise."""
     return {**swing, "wrist": {"usable": True, "mock": mock, "roll_change_abs_deg": roll, "roll_change_deg": roll,
+                               "peak_roll_rate_abs_dps": 900.0, "peak_angular_speed_dps": 1500.0,
                                "contact_source": contact_source}}
 
 
@@ -162,12 +163,28 @@ def test_a_gyro_peak_real_roll_and_any_mock_roll_still_aim_by_the_face(good) -> 
 
 @pytest.mark.parametrize("mock", [False, True])
 @pytest.mark.parametrize("contact_source", ["gyro peak", "impact spike", "double tap", None])
-def test_the_face_model_uses_a_roll_exactly_when_the_coach_judges_it(good, mock, contact_source) -> None:
+@pytest.mark.parametrize("partial, gap", [(None, None)] + [
+    (field, gap) for field in ("peak_roll_rate_abs_dps", "peak_angular_speed_dps", "roll_change_abs_deg")
+    for gap in ("missing", "nan")])
+def test_the_face_model_uses_a_roll_exactly_when_the_coach_judges_it(good, mock, contact_source, partial, gap) -> None:
+    """Codex P2s on #80: same timing rule, and the same complete entry (a partial or older entry the
+    coach rejects mustn't move the PREDICTED aim)."""
     from coach.faults import measure_swing
+    from coach.wrist_sensor import FROM_WRIST
+    from physics.wrist_face import COACH_WRIST_FIELDS
+    assert set(COACH_WRIST_FIELDS) == set(FROM_WRIST)
     swing = with_roll(good, 150.0, mock=mock, contact_source=contact_source)
-    swing["wrist"].update(peak_roll_rate_abs_dps=900.0, peak_angular_speed_dps=1500.0)
+    if gap == "missing":
+        del swing["wrist"][partial]
+    elif gap == "nan":
+        swing["wrist"][partial] = float("nan")
     coach_judges = measure_swing(swing, "forehand")["forearm_roll_deg"] is not None
     assert (aim_roll(swing)[0] is not None) == coach_judges
+    if partial is not None:
+        assert not coach_judges and aim_roll(swing) == (None, None)
+        r, cam = compare(swing, "straighten_elbow", 12), compare(good, "straighten_elbow", 12)
+        assert r["assumptions"]["launch"] == cam["assumptions"]["launch"] and "face" not in r["assumptions"]
+        assert r["you"]["ball"] == cam["you"]["ball"] and r["ghost"]["ball"] == cam["ghost"]["ball"]
 
 
 # ---- no sensor data: nothing changes ---------------------------------------------------

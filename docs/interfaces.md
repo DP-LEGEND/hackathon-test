@@ -89,9 +89,21 @@ a sensor:
 | `wrist_sensor_skipped` | why the sensor wasn't used, or null when it was |
 
 When `mock` is true, sensor fault labels end in "(MOCK sensor data)", and screens must
-show the data as mock. The `rolled_wrist` thresholds come from mock swings (source
-"mock wrist-sensor swings") until `python -m wrist.tune` is rerun on real ones. Its fix,
-`firm_wrist`, isn't animated, so it is never `ghost_ready`.
+show the data as mock. Mock entries are judged by the mock line (`MOCK_ROLLED_WRIST`).
+Real entries are judged by per-stroke lines from one real shadow session, and only when
+the roll is timed at the forearm's fastest turn (`contact_source: "gyro peak"`). A real
+entry timed any other way isn't checked: `rolled_wrist` is in `not_measured`, and
+`wrist_sensor_skipped` says why.
+
+Its fix, `firm_wrist`, is animated by physics (`physics/ghost.py`, the `wrist_roll` edit),
+so a sensor-backed `rolled_wrist` is `ghost_ready`. The page shows only fixes its
+catalogue lists. Until `public/swings/catalogue.json` lists `firm_wrist`, the coach
+returns:
+- `ghost_fix: null`;
+- `ghost_note: "ghost for wrist roll not in the app yet"`;
+- top-level `ghost_ready: false`.
+
+The call (`fault`), `fix` and `cue` stay `rolled_wrist` / `firm_wrist`.
 
 ## Swing label join
 

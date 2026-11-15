@@ -168,7 +168,8 @@ def test_bad_inputs_give_clear_errors(good):
 
 
 def test_every_fix_runs_through_compare(good):
-    sensor = {**good, "wrist": {"usable": True, "mock": True, "roll_change_abs_deg": 60.0}}
+    sensor = {**good, "wrist": {"usable": True, "mock": True, "roll_change_abs_deg": 60.0,   # a complete entry
+                                "peak_roll_rate_abs_dps": 480.0, "peak_angular_speed_dps": 1300.0}}
     for fix in FIXES:
         r = compare(sensor if fix == "firm_wrist" else good, fix, 10)  # firm_wrist needs wrist-sensor roll
         assert r["fix"]["id"] == fix and r["ghost"]["swing"]["synthetic"] is True

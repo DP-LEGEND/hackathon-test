@@ -83,7 +83,9 @@ def coach_swing(swing: dict, stroke: Optional[Stroke] = None, fps_real: Optional
 
     app_fixes: the fixes the page can show (default: the catalogue's, read only when the ghost
     would be a NOT_IN_APP fix). A NOT_IN_APP ghost fix the page can't show gives ghost_fix None
-    and that reason as ghost_note; the call, its fix and its cue stay the same.
+    and that reason as ghost_note, and the top-level ghost_ready is False when the call's fix is
+    that hidden fix (pipeline/live.py ghost_choice reads it first); the call (fault), its fix and
+    its cue stay the same.
 
     stroke: "forehand" or "backhand". If omitted we use swing["stroke"], else detect it
     (low confidence; see measure_extra.py). fps_real: real capture rate if slow-mo.
@@ -111,9 +113,10 @@ def coach_swing(swing: dict, stroke: Optional[Stroke] = None, fps_real: Optional
         note = None
     else:
         note = GHOST_SHOWS_NEXT if ghost else GHOST_SHOWS_NONE
+    hidden = None  # a ghost fix the page can't show yet: nothing may offer it as ready
     if ghost is not None and ghost["fix"] in NOT_IN_APP and ghost["fix"] not in (
             app_fixes if app_fixes is not None else catalogue_fixes()):
-        ghost, note = None, NOT_IN_APP[ghost["fix"]]
+        hidden, ghost, note = ghost["fix"], None, NOT_IN_APP[ghost["fix"]]
     shown = ghost_fixes(ghost, faults)
     return {
         "stroke": metrics["stroke"],
@@ -122,7 +125,7 @@ def coach_swing(swing: dict, stroke: Optional[Stroke] = None, fps_real: Optional
         "fault": top,
         "fix": top["fix"] if top else None,
         "fix_amount": top["fix_amount"] if top else None,
-        "ghost_ready": top["ghost_ready"] if top else False,
+        "ghost_ready": bool(top["ghost_ready"] and top["fix"] != hidden) if top else False,
         "cue": top["cue"] if top else NO_FAULT_CUE,
         "tip": top["tip"] if top else None,
         "other_faults": [f["id"] for f in faults[1:]],
