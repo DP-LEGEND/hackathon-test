@@ -4,8 +4,9 @@ plus the click/loading gaps written next to each beat. Total 2:59 with the longe
 version (2:51 spoken), so only 1 s to spare; rehearse with a stopwatch and cut, don't speed up. Voice and Claude in the live caption
 are on main ("Hear the coach"), so judge questions 3 and 4 claim them. Not on main, so not
 claimed: an Adaption fine-tune. If that changes, update the script and docs/devpost.md together.
-WRIST BEAT: the two medians and "every usable swing sorted correctly" aren't on main yet: the only wrist results
-there are mock (the mock run gives 62.1° vs 16.5° medians). Say them only from the morning sample's
+WRIST BEAT: the only wrist results on main are mock (the mock run gives 62.1° vs 16.5° medians).
+About 50 real shadow swings without a ball were recorded on 14 Nov and are tuned in PR #74 (not
+merged), so no number from them is said on stage. Say numbers only from the morning sample's
 `wrist.tune` output on screen, as printed. Without that sample, use the spoken version (no number).
 -->
 
@@ -35,15 +36,16 @@ Seconds are speaking time at 150 words a minute plus the click and loading gaps 
   - the **launch angle**, which you always call *assumed*
   - the **video-check height** (about 1.8 m on the forehand), which you always say was *checked by eye against the video*
 - Say **predicted** the first time a ball path appears.
-- **Wrist sensor:** say its numbers only when the morning sample's output is on screen, and call them a sensor **ESTIMATE**. Without the sample, say it's tested on mock data so far.
+- **Wrist sensor:** say its numbers only when the morning sample's output is on screen, and call them a sensor **ESTIMATE**. Without the sample, say it's been tried on real practice swings without a ball, and say no number.
 
 **Before you start** (the runbook has the full checks):
 - **Terminal tab 1:** `cd ~/hackathon-demo/services`, then `mkdir -p ~/ghost-stage` (it must be empty), then `GHOST_SWINGS_DIR=~/ghost-stage ~/ghost-env/bin/python -m uvicorn pipeline.server:app --port 8000`
 - **Terminal tab 2:** `cd ~/hackathon-demo`, then `npm run dev`
-- **Terminal tab 3 (only if the morning sensor sample is ready):** `cd ~/hackathon-demo/services`, then `~/ghost-env/bin/python -m wrist.tune <morning wrist_metrics.json> ../data/labels/labels.csv --run <run>`, already printed. Show this tab only if **all three** hold; otherwise use the spoken wrist beat:
+- **Terminal tab 3 (only if the morning sensor sample is ready):** `cd ~/hackathon-demo/services`, then `~/ghost-env/bin/python -m wrist.tune <morning wrist_metrics.json> ../data/labels/labels.csv --run <run>`, already printed. Show this tab only if **all four** hold; otherwise use the spoken wrist beat:
   1. The first line does **not** say *MOCK DATA*, and it shows **at least 5 normal and 5 rolled** usable swings (wrist.tune's own minimum).
   2. There's a `roll_change_abs_deg (deg)` block with a `normal median …` line, a `rolled median …` line and an `in-sample: …` line. If it says *"roll_change_abs_deg: not measured in both groups"*, there are no medians to read.
   3. The rolled median is larger than the normal median.
+  4. wrist.tune reports **no skipped swings**: the first line ends *"0 labelled swings skipped."*, with no `skipped …` lines under it.
 - **Browser tab 1:** http://localhost:3000/ghost, full screen on **Pick a swing**
 - **Browser tab 2:** http://localhost:3000/upload. **Choose a video**, pick `~/Downloads/fresh.mov` (one swing, 60 fps), and leave **Hitting hand**, **Stroke** and **Slowdown** on **Auto**. Don't click **Build my ghost** yet.
 
@@ -87,7 +89,7 @@ Same clicks as the runbook's beats 1–4, faster. The wrist sensor (runbook beat
 
 Mark it **ESTIMATE (sensor)**. The coach's call above already lists the wrist as not checked, so this beat follows straight on.
 
-**Only if terminal tab 3 passes all three checks** in *Before you start* (not *MOCK DATA* with at least 5 normal and 5 rolled usable swings; both `roll_change_abs_deg` medians and the in-sample line printed; rolled median larger), shown:
+**Only if terminal tab 3 passes all four checks** in *Before you start* (not *MOCK DATA* with at least 5 normal and 5 rolled usable swings; both `roll_change_abs_deg` medians and the in-sample line printed; rolled median larger; no skipped swings), shown:
 
 | OPERATOR clicks | On screen | PRESENTER says | s |
 |---|---|---|---|
@@ -95,7 +97,7 @@ Mark it **ESTIMATE (sensor)**. The coach's call above already lists the wrist as
 
 **Otherwise, spoken only (17 s, 1:34–1:51).** Switch nothing, and don't say a number: without usable sample output there's no real measurement to quote. Then go straight on to the fresh clip at 1:51; every later beat uses its second, earlier time.
 
-> The camera can't see wrist roll, which is why the coach couldn't check it. So we strapped a phone to the forearm to measure it. We've tried it on real practice swings, but the numbers aren't solid enough to quote yet.
+> The camera can't see wrist roll, which is why the coach couldn't check it. So we strapped a phone to the forearm. We've tried it on real practice swings without a ball, but the numbers aren't solid enough to quote yet.
 
 ### Fresh clip (1:59–2:21, 22 s; 1:51–2:13 if the wrist beat was spoken)
 
@@ -149,7 +151,7 @@ Measuring and picking the fix are plain code, so the coach gives the same answer
 Every sentence goes through a code checker: a number must be one we measured, quoted once inside its measured phrase word for word, and a sentence with the opposite direction word or a negation like "don't" is rejected. If anything fails, Claude's sentence is never spoken and the coach's own cue is used instead, and the wrist cues the checker can't test are always spoken word for word.
 
 **5. Is the wrist sensor real?**
-The code is merged: it reads a phone strapped to the forearm through Sensor Logger, measures forearm roll and estimates racket speed, and until this morning it had only been tested on mock data. If the morning recording was on screen, its numbers come from one session and a handful of swings, so the threshold is provisional; if it wasn't, all we claim is mock-tested code.
+The code is merged: it reads a phone strapped to the forearm through Sensor Logger, measures forearm roll and estimates racket speed, and before this morning it had been tested on mock data and on real practice swings without a ball. If the morning recording was on screen, its numbers come from one session and a handful of swings, so the threshold is provisional; if it wasn't, we claim no wrist number at all.
 
 **6. What's next?**
 First, track the racket so speed and launch angle are measured instead of estimated and assumed, and label more players to tune the other eight rules. Then player profiles: keep each player's swings over time, so the ghost compares you with your own best swing and shows whether the fix is sticking.
