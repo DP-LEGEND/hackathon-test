@@ -12,9 +12,11 @@ It prints one PASS (green) or FAIL (red) line per check and exits 1 if any check
 
   1. health    The service's GET /health and the web app's /api proxy (/api/health) both answer ok.
   2. hero      The saved forehand hero (catalogue.json's defaultSwing in public/swings): the coach
-               says over_rotation; the compare file for the coach's fix is in court coordinates,
-               with the PREDICTED front wall at 1.92 m (within 0.05) at the ASSUMED 12 deg.
-  3. backhand  The saved backhand: front wall at 0.78 m (within 0.05) at 3 deg, from anchor x = 2.0.
+               says over_rotation; the compare file for the coach's fix is in court coordinates at
+               the ASSUMED 12 deg, and shows exactly the PREDICTED numbers the runbook and pitch
+               quote: ball speed 133.2 -> 119.1 km/h, front wall 1.92 -> 1.88 m.
+  3. backhand  The saved backhand: the coach's fault is null (nothing to fix), and its ball shows
+               exactly 130.4 km/h and front wall 0.78 m, at 3 deg from anchor x = 2.0.
   4. pages     /ghost and /upload answer 200.
   5. process   An upload with no file answers exactly 422, both from the service (POST /process)
                and through the web app's proxy (POST /api/process), which is what /upload uses.
@@ -55,7 +57,15 @@ from pathlib import Path
 BUDGET_S = 30.0       # the whole run
 TIMEOUT_S = 5.0       # one request
 PAGE_TIMEOUT_S = 15.0  # a page: the Next dev server compiles it on the first request
-WALL_TOLERANCE_M = 0.05
+
+# The PREDICTED numbers docs/demo-runbook.md and docs/pitch.md quote, as (you, ghost). /ghost prints
+# them exactly as the files hold them (formatValue in app/ghost/compare.ts), so they must match
+# exactly: a changed saved file changes what's on screen. None isn't checked (beat 2 stops at the
+# coach's call, so the backhand's ghost numbers are never said).
+HERO_SPEED_KMH = (133.2, 119.1)
+HERO_WALL_M = (1.92, 1.88)
+BACKHAND_SPEED_KMH = (130.4, None)
+BACKHAND_WALL_M = (0.78, None)
 
 # Same limits as the browser (app/ghost/swing.ts JOINT_COUNT, compare.ts OUTCOMES and fileName).
 JOINT_COUNT = 33
@@ -433,13 +443,27 @@ def _swing_file(smoke: Smoke, entry: dict) -> dict:
     return swing
 
 
-def _court_problems(compare: dict, wall: float, elevation: float, anchor_x: float | None = None) -> list[str]:
+def _shown_problems(compare: dict, speed: tuple, wall: tuple) -> list[str]:
+    """The quoted (you, ghost) numbers against what /ghost prints: the court legend's ball speeds
+    (you.ball and ghost.ball speedKmh, scene-legend.tsx) and the "What the fix changes" panel's
+    ball speed and front wall height (delta.ball, delta-panel.tsx)."""
+    problems = []
+    for side, want in zip(("you", "ghost"), speed):
+        got = compare[side]["ball"].get("speedKmh")
+        if want is not None and got != want:
+            problems.append(f"{side}.ball.speedKmh is {got}, want exactly {want}")
+    for key, pair in (("speedKmh", speed), ("frontWallHeightM", wall)):
+        for side, want in zip(("you", "ghost"), pair):
+            got = compare["delta"]["ball"][key].get(side)
+            if want is not None and got != want:
+                problems.append(f"delta.ball.{key}.{side} is {got}, want exactly {want}")
+    return problems
+
+
+def _court_problems(compare: dict, elevation: float, anchor_x: float | None = None) -> list[str]:
     problems = []
     if compare.get("coordinateSystem") != "court":
         problems.append(f"coordinateSystem is {compare.get('coordinateSystem')!r}, want 'court'")
-    got = compare["you"]["ball"].get("frontWallHeightM")
-    if not _finite(got) or abs(got - wall) > WALL_TOLERANCE_M:
-        problems.append(f"you.ball.frontWallHeightM is {got}, want {wall} ± {WALL_TOLERANCE_M}")
     angle = compare["assumptions"]["launch"]["elevation"]["value"]
     if angle != elevation:
         problems.append(f"assumptions.launch.elevation is {angle}°, want {elevation:g}°")
@@ -471,14 +495,15 @@ def check_hero(smoke: Smoke) -> str:
     coach = smoke.saved(entry["coach"], parse_coach)
     _swing_file(smoke, entry)
     _, compare, why = _compare_for(smoke, entry, coach)
-    problems = _court_problems(compare, wall=1.92, elevation=12.0)
+    problems = _court_problems(compare, elevation=12.0) + _shown_problems(compare, HERO_SPEED_KMH, HERO_WALL_M)
     fault = (coach.get("fault") or {}).get("id")
     if fault != "over_rotation":
         problems.insert(0, f"{entry['coach']}: fault.id is {fault!r}, want 'over_rotation'")
     if problems:
         raise CheckFailed(f"{hero}: " + "; ".join(problems))
-    return (f"{hero}: over_rotation, court coordinates, front wall {compare['you']['ball']['frontWallHeightM']} m "
-            f"at 12°; {why}; its catalogue, coach, swing and compare files load as /ghost loads them")
+    return (f"{hero}: over_rotation, court coordinates at 12°, ball speed {HERO_SPEED_KMH[0]} → {HERO_SPEED_KMH[1]} "
+            f"km/h, front wall {HERO_WALL_M[0]} → {HERO_WALL_M[1]} m; {why}; "
+            "its catalogue, coach, swing and compare files load as /ghost loads them")
 
 
 def check_backhand(smoke: Smoke) -> str:
@@ -496,11 +521,15 @@ def check_backhand(smoke: Smoke) -> str:
     coach = smoke.saved(entry["coach"], parse_coach)
     _swing_file(smoke, entry)
     _, compare, why = _compare_for(smoke, entry, coach)
-    problems = _court_problems(compare, wall=0.78, elevation=3.0, anchor_x=2.0)
+    problems = (_court_problems(compare, elevation=3.0, anchor_x=2.0)
+                + _shown_problems(compare, BACKHAND_SPEED_KMH, BACKHAND_WALL_M))
+    if coach.get("fault") is not None:
+        fault = coach["fault"].get("id") if isinstance(coach["fault"], dict) else coach["fault"]
+        problems.insert(0, f"{entry['coach']}: fault is {fault!r}, want null (beat 2 says nothing to fix)")
     if problems:
         raise CheckFailed(f"{entry['id']}: " + "; ".join(problems))
-    return (f"{entry['id']}: front wall {compare['you']['ball']['frontWallHeightM']} m at 3° from x = 2.0; {why}; "
-            "its files load as /ghost loads them")
+    return (f"{entry['id']}: fault null, ball speed {BACKHAND_SPEED_KMH[0]} km/h, front wall {BACKHAND_WALL_M[0]} m "
+            f"at 3° from x = 2.0; {why}; its files load as /ghost loads them")
 
 
 def check_pages(smoke: Smoke) -> str:
