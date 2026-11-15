@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { AUTO_SETTINGS, checkOffset, checkSensorCsv, processClip } from "./process-clip.ts";
+import { AUTO_SETTINGS, checkOffset, checkSensorFile, processClip } from "./process-clip.ts";
 
 for (const { status, waited, body, failure } of [
   { status: 504, waited: 0, body: '{"error":"Ghost API is still processing; the proxy stopped waiting."}', failure: { kind: "proxy-timeout" } },
@@ -79,7 +79,7 @@ test("without extras the upload is the single /process request, unchanged", asyn
 
 test("a second angle sends every file to /process/multi and returns the warnings", async (t) => {
   const seen = fakeXHR(t, 201, '{"swingId":"live-2","warnings":["Clips synced from audio.", "", 3]}');
-  const extras = { secondClip: clip("side.mov"), sensorCsv: new File(["t,roll\n0,1"], "wrist.csv"), offset: " -0.25 " };
+  const extras = { secondClip: clip("side.mov"), sensorFile: new File(["t,roll\n0,1"], "wrist.csv"), offset: " -0.25 " };
   const job = processClip(clip("swing.mov"), { ...AUTO_SETTINGS, slowdown: "8" }, on, extras);
   assert.deepEqual(await job.result, { ok: true, swingId: "live-2", warnings: ["Clips synced from audio."] });
   assert.equal(seen.method, "POST");
@@ -94,15 +94,26 @@ test("a second angle sends every file to /process/multi and returns the warnings
 
 test("a sensor CSV alone goes to /process/multi without video_b, slowdown_b or offset_b_s", async (t) => {
   const seen = fakeXHR(t, 201, '{"swingId":"live-3"}');
-  const extras = { secondClip: null, sensorCsv: new File(["t,roll\n0,1"], "wrist.csv"), offset: "1.5" };
+  const extras = { secondClip: null, sensorFile: new File(["t,roll\n0,1"], "wrist.csv"), offset: "1.5" };
   await processClip(clip("swing.mov"), AUTO_SETTINGS, on, extras).result;
   assert.equal(seen.url, "/api/process/multi");
   assert.deepEqual([...seen.form.keys()], ["video_a", "sensor_csv"]);
 });
 
+test("a Sensor Logger .zip goes in the same sensor_csv field, under its own name", async (t) => {
+  const seen = fakeXHR(t, 201, '{"swingId":"live-4"}');
+  const zip = new File([new Uint8Array([0x50, 0x4b, 0x03, 0x04])], "Sensor Logger 2026-11-15.zip", { type: "application/zip" });
+  const extras = { secondClip: null, sensorFile: zip, offset: "" };
+  await processClip(clip("swing.mov"), AUTO_SETTINGS, on, extras).result;
+  assert.equal(seen.url, "/api/process/multi");
+  assert.deepEqual([...seen.form.keys()], ["video_a", "sensor_csv"]);
+  assert.equal(seen.form.get("sensor_csv").name, "Sensor Logger 2026-11-15.zip");
+  assert.equal(seen.form.get("sensor_csv").size, 4);
+});
+
 test("a 404 from /process/multi says the route is missing, not the upload API", async (t) => {
   fakeXHR(t, 404, '{"detail":"Not Found"}');
-  const extras = { secondClip: clip("side.mov"), sensorCsv: null, offset: "" };
+  const extras = { secondClip: clip("side.mov"), sensorFile: null, offset: "" };
   assert.deepEqual(await processClip(clip("swing.mov"), AUTO_SETTINGS, on, extras).result, {
     ok: false,
     failure: { kind: "no-multi-route" },
@@ -112,7 +123,26 @@ test("a 404 from /process/multi says the route is missing, not the upload API", 
 test("offsets and sensor files are checked before sending", () => {
   for (const ok of ["", "  ", "0", "0.5", "-1.2", "+2", ".25"]) assert.equal(checkOffset(ok), null, ok);
   for (const bad of ["abc", "1,5", "1.2.3", "-", "Infinity", "1e3"]) assert.notEqual(checkOffset(bad), null, bad);
-  assert.equal(checkSensorCsv(new File(["t\n0"], "wrist.CSV")), null);
-  assert.match(checkSensorCsv(new File(["x"], "wrist.txt")), /isn’t a CSV file/);
-  assert.match(checkSensorCsv(new File([], "wrist.csv")), /is empty/);
+  assert.equal(checkSensorFile(new File(["t\n0"], "wrist.CSV")), null);
+  assert.equal(checkSensorFile(new File(["PK"], "export.ZIP")), null);
+  assert.match(checkSensorFile(new File(["x"], "wrist.txt")), /isn’t a ZIP or CSV file/);
+  assert.match(checkSensorFile(new File([], "wrist.csv")), /is empty/);
+  assert.match(checkSensorFile(new File([], "export.zip")), /is empty/);
+});
+
+test("a .csv may be up to 20 MB and a .zip up to 50 MB", () => {
+  const MB = 1024 * 1024;
+  // checkSensorFile reads only the name and size, so plain objects stand in for big files.
+  assert.equal(checkSensorFile({ name: "wrist.csv", size: 20 * MB }), null);
+  assert.equal(
+    checkSensorFile({ name: "wrist.csv", size: 20 * MB + 1 }),
+    "Sensor export too large: 20.0 MB. The limit is 20 MB for a CSV.",
+  );
+  assert.match(checkSensorFile({ name: "wrist.csv", size: 30 * MB }), /The limit is 20 MB for a CSV/);
+  assert.equal(checkSensorFile({ name: "export.zip", size: 30 * MB }), null);
+  assert.equal(checkSensorFile({ name: "export.zip", size: 50 * MB }), null);
+  assert.equal(
+    checkSensorFile({ name: "export.zip", size: 50 * MB + 1 }),
+    "Sensor export too large: 50.0 MB. The limit is 50 MB for a ZIP.",
+  );
 });

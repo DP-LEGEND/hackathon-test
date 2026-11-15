@@ -1,10 +1,10 @@
 // Optional inputs under the clip: a second camera angle of the same swing (for measured depth),
-// with its time offset, and a wrist sensor CSV. Either file switches the upload to
+// with its time offset, and a wrist sensor export (.zip or .csv). Either file switches the upload to
 // POST /api/process/multi (process-clip.ts); with neither, the upload is the usual /process.
 // Each zone takes its own drops, so a file dropped here never replaces the main video.
 
 import { useEffect, useId, useRef, useState, type DragEvent, type ElementType } from "react";
-import { FileSpreadsheet, FileVideo, X } from "lucide-react";
+import { FileUp, FileVideo, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -12,11 +12,14 @@ import { YOU_COLOUR } from "../ghost/colours";
 import {
   CLIP_ACCEPT,
   MAX_CLIP_BYTES,
+  MAX_SENSOR_CSV_BYTES,
+  MAX_SENSOR_ZIP_BYTES,
   SENSOR_ACCEPT,
   checkClip,
   checkOffset,
-  checkSensorCsv,
+  checkSensorFile,
   formatBytes,
+  wholeMegabytes,
   type ExtraInputs,
 } from "./process-clip";
 
@@ -77,17 +80,17 @@ export function ExtraInputsPanel({
         </div>
       </details>
       <ExtraDrop
-        title="Wrist sensor CSV (optional)"
-        icon={FileSpreadsheet}
-        file={value.sensorCsv}
+        title="Wrist sensor export (.zip or .csv, optional)"
+        icon={FileUp}
+        file={value.sensorFile}
         accept={SENSOR_ACCEPT}
-        check={checkSensorCsv}
-        prompt="Drop the wrist sensor’s CSV export"
-        formats="CSV"
-        chooseLabel="Choose a CSV"
+        check={checkSensorFile}
+        prompt="Drop the Sensor Logger .zip or a .csv"
+        formats={`ZIP up to ${wholeMegabytes(MAX_SENSOR_ZIP_BYTES)} · CSV up to ${wholeMegabytes(MAX_SENSOR_CSV_BYTES)}`}
+        chooseLabel="Choose a ZIP or CSV"
         disabled={disabled}
-        onPick={(sensorCsv) => onChange({ ...value, sensorCsv })}
-        onClear={() => onChange({ ...value, sensorCsv: null })}
+        onPick={(sensorFile) => onChange({ ...value, sensorFile })}
+        onClear={() => onChange({ ...value, sensorFile: null })}
         onHover={onHover}
       />
     </section>

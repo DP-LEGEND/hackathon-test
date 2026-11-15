@@ -363,7 +363,7 @@ function describe(failure: ProcessFailure, slowdown: Slowdown): FailureCopy {
       return {
         title: "This service can’t take a second angle or sensor file yet",
         message: "The Python service answered that it has no POST /process/multi route.",
-        hint: "Remove the second angle and the sensor CSV to send just your video, or restart the service from a version with /process/multi.",
+        hint: "Remove the second angle and the sensor export to send just your video, or restart the service from a version with /process/multi.",
       };
     case "network":
       return {

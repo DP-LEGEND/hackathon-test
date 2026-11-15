@@ -1,6 +1,6 @@
 // Sends one clip to Dev's pipeline: POST /api/process, which the same-origin catch-all proxy
 // (app/api/[...path]/route.ts) forwards to POST /process in services/pipeline/server.py.
-// With a second camera angle or a wrist sensor CSV, the same answer comes from
+// With a second camera angle or a wrist sensor export, the same answer comes from
 // POST /api/process/multi instead (fields video_a, video_b, sensor_csv, slowdown_a, slowdown_b,
 // offset_b_s). XMLHttpRequest rather than fetch, so the page can show real upload progress. The
 // service answers once, after pose, coach and ghost are all saved; it doesn't report steps in between.
@@ -35,20 +35,24 @@ export const AUTO_SETTINGS: ClipSettings = { hand: "auto", stroke: "auto", slowd
 export type ExtraInputs = {
   /** A second camera angle of the same swing, for measured depth. */
   secondClip: File | null;
-  /** The wrist sensor's export. */
-  sensorCsv: File | null;
+  /** The wrist sensor's export: Sensor Logger's .zip, or a .csv. Sent as `sensor_csv` either way. */
+  sensorFile: File | null;
   /** "Second clip offset (s)" as typed; empty leaves offset_b_s out. */
   offset: string;
 };
 
-export const NO_EXTRAS: ExtraInputs = { secondClip: null, sensorCsv: null, offset: "" };
+export const NO_EXTRAS: ExtraInputs = { secondClip: null, sensorFile: null, offset: "" };
 
 export function usesMulti(extras: ExtraInputs): boolean {
-  return extras.secondClip !== null || extras.sensorCsv !== null;
+  return extras.secondClip !== null || extras.sensorFile !== null;
 }
 
-/** For the sensor file picker. */
-export const SENSOR_ACCEPT = ".csv,text/csv";
+/** For the sensor file picker: Sensor Logger's .zip export, or a .csv. */
+export const SENSOR_ACCEPT = ".zip,.csv,application/zip,text/csv";
+
+/** Size limits for the sensor export, checked here before uploading. */
+export const MAX_SENSOR_CSV_BYTES = 20 * 1024 * 1024;
+export const MAX_SENSOR_ZIP_BYTES = 50 * 1024 * 1024;
 
 export type ProcessFailure =
   /** 429: the service processes one clip at a time. */
@@ -89,11 +93,21 @@ export function checkClip(file: File): string | null {
   return null;
 }
 
-/** Why this sensor file can't be sent, or null. */
-export function checkSensorCsv(file: File): string | null {
-  if (!file.name.toLowerCase().endsWith(".csv")) return `“${file.name}” isn’t a CSV file.`;
+/** Why this sensor export can't be sent, or null: a .zip up to 50 MB or a .csv up to 20 MB. */
+export function checkSensorFile(file: Pick<File, "name" | "size">): string | null {
+  const name = file.name.toLowerCase();
+  const limit = name.endsWith(".zip") ? MAX_SENSOR_ZIP_BYTES : name.endsWith(".csv") ? MAX_SENSOR_CSV_BYTES : null;
+  if (limit === null) return `“${file.name}” isn’t a ZIP or CSV file.`;
   if (file.size === 0) return `“${file.name}” is empty.`;
+  if (file.size > limit) {
+    return `Sensor export too large: ${formatBytes(file.size)}. The limit is ${wholeMegabytes(limit)} for a ${name.endsWith(".zip") ? "ZIP" : "CSV"}.`;
+  }
   return null;
+}
+
+/** A limit in whole megabytes ("20 MB"), the unit formatBytes uses. */
+export function wholeMegabytes(bytes: number): string {
+  return `${Math.round(bytes / (1024 * 1024))} MB`;
 }
 
 /** The typed offset in seconds; null when it's empty or not a number. */
@@ -124,7 +138,7 @@ function multiForm(file: File, settings: ClipSettings, extras: ExtraInputs): For
   const form = new FormData();
   form.append("video_a", file, file.name);
   if (extras.secondClip) form.append("video_b", extras.secondClip, extras.secondClip.name);
-  if (extras.sensorCsv) form.append("sensor_csv", extras.sensorCsv, extras.sensorCsv.name);
+  if (extras.sensorFile) form.append("sensor_csv", extras.sensorFile, extras.sensorFile.name);
   // As for /process, Auto settings are left out. Both angles use the one Slowdown setting.
   if (settings.hand !== "auto") form.append("hand", settings.hand);
   if (settings.stroke !== "auto") form.append("stroke", settings.stroke);
