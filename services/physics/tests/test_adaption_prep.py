@@ -145,6 +145,22 @@ def test_a_run_field_in_the_swing_beats_its_folder(tmp_path):
     assert select_clean(d, labels, tmp_path / "clean")["runs"] == {f"{PAIR}.json": "fh-04"}
 
 
+def test_a_label_without_a_run_is_ignored(real_folder, tmp_path):
+    src, labels = real_folder
+    rows = list(csv.DictReader(open(labels)))
+    rows.insert(0, {"clip": "IMG_OLD", "swing": "fhsess-swing-0009", "side": "forehand", "intended_fault": "none",
+                    "pipeline_run": ""})  # unscoped: no pipeline_run, no "@run" suffix
+    rows.insert(0, {"clip": "IMG_OLD", "swing": "fhsess-swing-0001", "side": "forehand", "intended_fault": "elbow_bend",
+                    "pipeline_run": ""})  # would make a clean swing faulty if it weren't ignored
+    with open(labels, "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=LABEL_COLUMNS)
+        w.writeheader()
+        w.writerows(rows)
+    r = select_clean(src, labels, tmp_path / "clean")
+    assert sorted(r["selected"]) == sorted(f"{n}.json" for n in CLEAN)  # same clean swings as without them
+    assert ("", "fhsess-swing-0009") not in clean_swing_ids(labels)
+
+
 def test_a_suffix_that_disagrees_with_pipeline_run_is_refused(tmp_path):
     labels = tmp_path / "labels.csv"
     write_labels(labels, [(f"{PAIR}@fh-05", "forehand", "none", "fh-04")])

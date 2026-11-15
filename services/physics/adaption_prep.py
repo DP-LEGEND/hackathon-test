@@ -77,7 +77,7 @@ def _label_sets(labels_csv: str | Path) -> dict[tuple[str, str], set[tuple[str, 
                 raise ValueError(f"labels.csv line {n}: swing {raw!r} says run {suffix!r} but pipeline_run is {run!r}")
             run = run or suffix
             if not run:
-                raise ValueError(f"labels.csv line {n}: swing {raw!r} has no pipeline_run, so it can't be joined to a file")
+                continue  # labels without a run are ignored; no swing-id-only fallback (docs/interfaces.md)
             seen.setdefault((run, bare.strip()), set()).add((row["intended_fault"].strip(), row["side"].strip()))
     return seen
 
