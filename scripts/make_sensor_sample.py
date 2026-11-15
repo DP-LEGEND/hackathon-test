@@ -48,7 +48,19 @@ What it does, in order (nothing is written until every step has passed):
     wrist.metrics.wrist_report gives the roll, the turn rate and the camera alignment;
     wrist.fuse.attach_wrist_entries puts the entry on the swing as swing["wrist"]
     (docs/interfaces.md). --shadow (no ball) ignores spikes and times contact from the tap
-    alone, and says so ("contact_source": "double tap").
+    alone ("double tap").
+    Wrist timing (--wrist-timing, default gyro-peak). The real rolled_wrist lines were tuned on
+    shadow swings with the roll window centred on the swing's fastest forearm turn, and the
+    coach checks the wrist only on entries timed that way (contact_source "gyro peak"). So by
+    default the impact (or the tap's contact) only finds the swing: its fastest forearm turn
+    within 300 ms is found exactly as wrist.shadow finds a shadow swing's contact
+    (find_shadow_swings), and the wrist entry and series (roll, turn rate, tempo) are
+    wrist_report's on that gyro peak, as in a wrist.shadow run. The camera fill and the racket
+    speed (the ball's speed) stay on the impact, where the camera's contact frame is
+    (fuse.align_swing searches only +-60 ms around it). metadata.wristTiming and the entry's
+    "timing" give the gyro peak's offset from the impact. --wrist-timing impact keeps the
+    impact (or the double tap) for the roll too: contact_source "impact spike" / "double tap",
+    and the coach then lists rolled_wrist as not checked.
  5. Coach and ghosts. coach.agent.coach_swing plus every fault (coach.faults.detect_faults) on
     the swing WITH its wrist entry, so the coach judges rolled_wrist; physics.compare.compare
     for every fix, as the saved-sample script in app/ghost/README.md does.
@@ -98,6 +110,7 @@ from wrist.fuse import LEVER_M, attach_wrist_entries  # noqa: E402
 from wrist.impact import G  # noqa: E402
 from wrist.load import Recording, load_recording  # noqa: E402
 from wrist.metrics import wrist_report  # noqa: E402
+from wrist.shadow import find_shadow_swings  # noqa: E402
 from wrist.sync import (  # noqa: E402
     IMPACT_GUARD_S, MIN_SWING_DPS, SPIKE_K, TAP_GAP_S, TOLERANCE_MS, align, find_impacts, find_spikes,
     spike_signal,
@@ -107,9 +120,9 @@ import wrist.metrics as _wm  # noqa: E402
 # Roll = the gyro integrated about the forearm axis, on every path. main's wrist_report still
 # quotes the orientation's twist when the phone's own orientation is used; on the first real
 # recording (14 Nov, 50 swings) that twist scattered over +-180 deg (SD 86-156 deg per block)
-# while the gyro integral's SD was 5-10 deg. Commit af0b423 (feat/wrist-shadow, not merged yet)
-# makes the gyro integral the default; until then this script asks for it. Same signature, so
-# this is a no-op once that commit is in main.
+# while the gyro integral's SD was 5-10 deg. Commit af0b423 (feat/wrist-shadow, now in main via
+# #75) makes the gyro integral the default, so this is a no-op there; kept as a guard for older
+# trees. Same signature.
 GYRO_ROLL = "gyro integrated about the forearm axis"
 
 
@@ -183,6 +196,10 @@ DEFAULT_SLOWDOWN = 4.0  # these iPhone slow-motion exports: 30 fps frames of 1/1
 MAX_WINDOW_REAL_S = 30.0  # the live pipeline's limit
 IMPACT_SEARCH_S = 0.30  # the hit's impact is the nearest spike this close to the pipeline's contact
 SENSOR_CONTACT = "wrist-sensor impact spike (tap-synced)"
+# Wrist timing: the real rolled_wrist lines judge only rolls centred on the gyro peak.
+WRIST_TIMINGS = ("gyro-peak", "impact")
+GYRO_PEAK = "gyro peak"     # wrist.metrics contact_source, as wrist.shadow writes it
+GYRO_PEAK_SEARCH_S = 0.30   # the swing's fastest forearm turn is looked for this close to its impact
 ID_RE = re.compile(r"[A-Za-z0-9_-]+")
 MADE_BY = "scripts/make_sensor_sample.py"
 # Fix size when the coach didn't flag the fault: the catalogue's demoAmounts, else these
@@ -437,6 +454,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--shadow", action="store_true", help="a swing with no ball: contact from the tap, spikes ignored")
     ap.add_argument("--contact-from-impact", action="store_true",
                     help="move a wrist-speed contact to the sensor's impact (only after the tap check is right)")
+    ap.add_argument("--wrist-timing", choices=WRIST_TIMINGS, default="gyro-peak",
+                    help="gyro-peak (default): the roll window on the swing's fastest forearm turn near the impact, as "
+                         "the real rolled_wrist lines were tuned; impact: on the impact (or a shadow swing's double "
+                         "tap), and the coach then lists rolled_wrist as not checked")
     ap.add_argument("--hand", choices=["R", "L"], default="R")
     ap.add_argument("--slowdown", type=float, default=None,
                     help=f"real s per playback s is 1/slowdown (default {DEFAULT_SLOWDOWN:g} for a <=60 fps file)")
@@ -498,6 +519,64 @@ def shadow_contact_warning(shadow: bool, contact_method: str | None) -> str | No
         return ("the pipeline timed contact from a sound, but --shadow says there was no ball: the sound was "
                 "something else (a tap, a footstep, the racket), so contact sits on that sound, not on the swing")
     return None
+
+
+def gyro_peak_near(rec: Recording, contact_s: float, search_s: float = GYRO_PEAK_SEARCH_S) -> float:
+    """The swing's fastest forearm turn (sensor s) near its impact, found exactly as wrist.shadow
+    finds a shadow swing's contact: find_shadow_swings on the smoothed turn rate (a peak of at
+    least MIN_SWING_DPS; recovery bumps dropped), here within search_s of contact_s. With several
+    kept peaks (SWING_GAP_S apart, so at most one in a 600 ms window), the nearest."""
+    peaks = find_shadow_swings(rec, contact_s - search_s, contact_s + search_s)
+    if not peaks:
+        raise SampleError(f"no forearm-turn peak (at least {MIN_SWING_DPS:.0f} deg/s) within {search_s * 1000:.0f} ms "
+                          f"of the sensor's contact at {contact_s:.3f} s: check --tap and --window, or pass "
+                          "--wrist-timing impact (the coach then lists rolled_wrist as not checked)")
+    return min(peaks, key=lambda t: abs(t - contact_s))
+
+
+def gyro_peak_sync(sync: dict[str, Any], swing_id: str, peak_s: float) -> dict[str, Any]:
+    """`sync` re-timed the way wrist.shadow.shadow_sync times a shadow swing: no impact pairs, the
+    swing's contact is its gyro peak, so wrist_report writes contact_source "gyro peak"."""
+    alignment = {**sync["alignment"], "pairs": [], "unpaired_swings": [], "tap_only": [],
+                 "gyro_peak": [{"swing": swing_id, "contact_s": peak_s}]}
+    return {**sync, "impacts": {}, "tap_only": {}, "alignment": alignment, "warnings": []}
+
+
+def wrist_for_sample(rec: Recording, sync: dict[str, Any], axis: str, swing_id: str, camera: dict[str, Any] | None,
+                     timing: str = "gyro-peak") -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict | None]:
+    """(wrist metrics, wrist series, filled camera swings, timing info or None) for one swing.
+
+    timing "impact": wrist_report on `sync` as it is (impact spike, or the double tap on a shadow
+    swing). "gyro-peak" (module doc, Wrist timing): the camera fill and the racket speed come from
+    that pass; the wrist entry and series are wrist_report's on gyro_peak_sync (no camera), the
+    fill markers moved onto the gyro peak's time axis.
+    """
+    metrics, series, filled = wrist_report(rec, sync, axis, {swing_id: camera} if camera else None, LEVER_M)
+    entry = metrics["swings"].get(swing_id) or {}
+    if timing == "impact" or not entry.get("usable"):
+        return metrics, series, filled, None
+    contact = float(entry["contact_s"])
+    peak = gyro_peak_near(rec, contact)
+    gp_metrics, gp_series, _ = wrist_report(rec, gyro_peak_sync(sync, swing_id, peak), axis, None, LEVER_M)
+    gp = gp_metrics["swings"].get(swing_id) or {}
+    if not gp.get("usable"):
+        raise SampleError(f"the wrist entry at the gyro peak isn't usable: {gp.get('skip_reason')}")
+    info = {"contact_source": GYRO_PEAK, "gyro_peak_s": round(peak, 3), "found_from": entry["contact_source"],
+            "found_from_s": round(contact, 3), "gyro_peak_minus_found_from_ms": round((peak - contact) * 1000, 1),
+            "search_ms": round(GYRO_PEAK_SEARCH_S * 1000)}
+    # The camera's side stays on the impact: the skeleton fill that was applied, and the racket speed
+    # the ball's speed comes from (physics.compare), timed at the impact.
+    racket = {**entry["racket_speed_sensor"], "contact_source": entry["contact_source"]}
+    gp.update(occlusion_fill=entry["occlusion_fill"], racket_speed_sensor=racket,
+              align_error_ms=entry.get("align_error_ms"), timing=info)
+    gp_metrics["swings"][swing_id] = gp
+    gp_metrics["warnings"] = list(dict.fromkeys([*metrics.get("warnings", []), *gp_metrics.get("warnings", [])]))
+    s_imp, s_gp = series["swings"][swing_id], gp_series["swings"][swing_id]
+    s_gp["racket_speed_sensor"] = s_imp["racket_speed_sensor"]
+    fill = s_imp.get("forearm_fill")
+    shift_ms = (contact - peak) * 1000  # ms from the impact -> ms from the gyro peak
+    s_gp["forearm_fill"] = None if fill is None else {**fill, "t_ms": [round(t + shift_ms) for t in fill["t_ms"]]}
+    return gp_metrics, gp_series, filled, info
 
 
 def make_sample(args: argparse.Namespace) -> int:
@@ -667,7 +746,7 @@ def make_sample(args: argparse.Namespace) -> int:
                 "tap_only": {t["swing"]: t["contact_s"] for t in alignment["tap_only"]},
                 "rejected_spikes": rejected, "alignment": alignment, "warnings": warnings,
                 "tap_method": "first tap's onset, matched to the video frame where the hand lands"}
-        metrics, series, filled = wrist_report(rec, sync, args.axis, {sample_id: swing}, LEVER_M)
+        metrics, series, filled, timing = wrist_for_sample(rec, sync, args.axis, sample_id, swing, args.wrist_timing)
         entry = metrics["swings"].get(sample_id) or {}
         if not entry.get("usable"):
             raise SampleError(f"the wrist entry isn't usable: {entry.get('skip_reason')}")
@@ -676,6 +755,11 @@ def make_sample(args: argparse.Namespace) -> int:
         print(f"wrist: roll {entry['roll_change_deg']:+.1f} deg over {entry['window_ms']} ms, peak turn "
               f"{entry['peak_angular_speed_dps']:.0f} deg/s, contact from {entry['contact_source']}; camera agreement "
               f"{(fill.get('agreement_deg') or {}).get('median')} deg; fill applied {fill.get('applied')}")
+        if timing is not None:
+            md["wristTiming"] = {"contactSource": GYRO_PEAK, "foundFrom": timing["found_from"],
+                                 "gyroPeakMinusFoundFromMs": timing["gyro_peak_minus_found_from_ms"]}
+            print(f"wrist timing: roll window on the fastest forearm turn, {timing['gyro_peak_minus_found_from_ms']:+.0f} ms "
+                  f"from the {timing['found_from']} (as the real rolled_wrist lines were tuned)")
         for w in metrics.get("warnings", []):
             print(f"  warning: {w}")
 
@@ -686,6 +770,8 @@ def make_sample(args: argparse.Namespace) -> int:
         coach["faults"] = detect_faults(swing, metrics=measure_swing(swing, stroke, fps_real))
         for w in mock_rule_warnings(coach["faults"], rec.mock):
             print(f"  WARNING: {w}")
+        if "rolled_wrist" in coach.get("not_measured", []):
+            print(f"  WARNING: the coach did not check the wrist: {coach['metrics'].get('wrist_sensor_skipped')}")
         flagged = {f["fix"]: f for f in coach["faults"]}
         demo = {**DEMO_AMOUNT, **(catalogue.get("demoAmounts") or {})}
         fixes: dict[str, dict] = {}
