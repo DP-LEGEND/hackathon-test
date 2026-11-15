@@ -1,11 +1,9 @@
 <!--
 TODO (9 AM feature freeze): these are under "In progress / demoed from branch" because they
 aren't on main yet. When each one merges, move it into the built sections and delete its line.
-- Stricter voice checks: PR #65 (fix/voice-guard, Henoch). When it merges, move its checks into
-  "Voice coach" (negations, a measured number turned into an amount or target, 60 s retry)
 - Anam avatar lines (coach/avatar.py) are on main but only run from the command line
 - Adaption: physics/synth.py writes a local adaption.jsonl; no fine-tune has been run or used yet
-- Sponsor tracks: the Adaption section is a TODO (see its comment). Figma: add who designed the file.
+- Sponsor tracks: the Adaption section is a TODO (see its comment).
 Delete this comment before pasting into Devpost.
 -->
 
@@ -70,9 +68,9 @@ Each accepted swing is saved with the coach's call and the ghost comparison, and
 On a swing's caption, press **Hear the coach**. Claude words the coach's fix as one spoken sentence, and ElevenLabs reads it aloud, server-side.
 
 - **Claude only rewords.** The code has already chosen the fix. Claude gets the coach's fault, cue and tip, never the raw metrics. The caption says **worded by Claude** only when it was.
-- **A checker on every sentence.** Any number must match one the code measured exactly as written: same sign, digits and unit. Spelled-out numbers are rejected. A sentence that uses the opposite direction word is rejected: if the coach says "turn less", a sentence that says "more" fails. A sentence that fails is never used; the coach's own cue is shown instead.
+- **A checker on every sentence.** Any number must match one the code measured exactly as written: same sign, digits and unit. Spelled-out numbers are rejected. A sentence that uses the opposite direction word is rejected: if the coach says "turn less", a sentence that says "more" fails. So are negations ("don't", "never") and a measured number turned into an amount or a target ("bend your elbow to 109 degrees"). A sentence that fails is never used; the coach's own cue is shown instead.
 - **Wrist cues are spoken word for word.** "Keep your wrist cocked until the racket meets the ball" has no direction the checker can test, so Claude isn't asked to reword it.
-- **Safe without keys.** If there's no Claude key, or Claude takes over 10 s, the page shows the coach's plain cue. If there's no ElevenLabs key, or it takes over 12 s, there's no audio. The page never shows an error for either. Each swing is worded and voiced once, then cached.
+- **Safe without keys.** If there's no Claude key, or Claude takes over 10 s, the page shows the coach's plain cue. If there's no ElevenLabs key, or it takes over 12 s, there's no audio. The page never shows an error for either. A successful clip is cached per swing on disk, so replaying a swing costs nothing and plays offline. A failed call is retried after 60 s.
 
 ## Wrist sensor
 
@@ -87,8 +85,6 @@ The camera can't see a rolled wrist, and it can only estimate racket speed. A ph
 ## In progress / demoed from branch
 
 These work on their own branches or from the command line and are being merged into the live flow.
-
-**Stricter voice checks (Henoch, PR #65).** The checker also rejects negations ("don't", "never") and a measured number turned into an amount or a target ("bend your elbow to 109 degrees"). A failed Claude or ElevenLabs call is retried after 60 s.
 
 **Anam avatar.** The coach writes the two or three short lines a talking avatar would say (`coach/avatar.py`). It runs from the command line; the web app doesn't show an avatar.
 
@@ -142,7 +138,7 @@ Claude is the coach's voice, not its judge. Measuring the swing and choosing the
 
 ### Figma
 
-- **Designed in Figma.** The landing page (`/`) and the `/demo` entry follow the Figma frames: desktop and mobile landing, the three process panels, and the full-screen mobile menu (`components/ghost/DESIGN.md`).
+- **Designed in Figma by Henoch.** The landing page (`/`) and the `/demo` entry follow the Figma frames: desktop and mobile landing, the three process panels, and the full-screen mobile menu (`components/ghost/DESIGN.md`).
 - **Taken from the design.** The charcoal and mint palette, the wordmark hierarchy, and the ghost and trail artwork as separate SVGs, so the ghost moves as you scroll. There's a still version for reduced motion.
 - **Checked against the frames** at desktop, tablet and phone sizes. The landing links only to flows that work: **Demo** (the saved 3D replay) and **Your swing** (upload). The process panels are labelled illustrations, not footage.
 
