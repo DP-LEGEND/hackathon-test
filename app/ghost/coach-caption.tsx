@@ -3,6 +3,7 @@
 // fault), cyan = the fix (the cue). "No fault" never claims more than the coach checked.
 // Once the coach's voice (#60) loads, its cue replaces the plain one, with a play button when
 // there's audio and "worded by Claude" when Claude wrote it. The clip stops when the caption goes.
+// While it plays, the cue's words light up in step with it (display only; the words don't change).
 // With no fault but checks skipped, the cue says only what was checked and the voice is left out.
 
 import { useEffect, useRef, useState } from "react";
@@ -49,6 +50,27 @@ export function noFaultInWhatWasChecked(caption: CoachCaption): boolean {
 /** The cue when the coach found no fault but couldn't check everything: never an outright all-clear. */
 export const PARTIAL_CHECK_CUE = "Nothing to fix in what the coach could check.";
 
+/** How far "Hear the coach" has played the clip at `url`: 0 to 1 of the clip's duration. */
+type VoiceProgress = { url: string; fraction: number };
+
+/**
+ * The cue split into words and the spaces between them (joined, they are the cue unchanged), each
+ * word marked lit once the clip has played past its start. Words are weighted by character length,
+ * as we get no word timings from ElevenLabs. Display only: nothing is added, dropped or reworded.
+ */
+export function revealWords(text: string, fraction: number): { text: string; lit: boolean }[] {
+  const parts = text.split(/(\s+)/).filter((p) => p !== "");
+  const total = parts.reduce((n, p) => (/^\s+$/.test(p) ? n : n + p.length), 0);
+  const spoken = Math.min(1, Math.max(0, fraction)) * total;
+  let before = 0;
+  return parts.map((p) => {
+    if (/^\s+$/.test(p)) return { text: p, lit: before < spoken };
+    const lit = before < spoken;
+    before += p.length;
+    return { text: p, lit };
+  });
+}
+
 export function CoachCaptionBar({
   state,
   size,
@@ -69,6 +91,12 @@ export function CoachCaptionBar({
   // under "No fault found in what was checked". So say only what was checked, with no voice.
   const partial = state.kind === "ready" && noFaultInWhatWasChecked(state.caption);
   const voice = state.kind === "ready" && !partial ? (state.voice ?? null) : null;
+  // While "Hear the coach" plays, its words light up in step with the clip; unlit ones are dimmed,
+  // not hidden, so the layout never moves. Before play, after it ends, if it fails or with reduced
+  // motion there's no progress and the cue shows in full. Only the clip of this cue counts.
+  const [progress, setProgress] = useState<VoiceProgress | null>(null);
+  const cue = state.kind === "ready" ? (partial ? PARTIAL_CHECK_CUE : (voice?.cue ?? state.caption.cue)) : "";
+  const fraction = voice?.audioUrl && progress?.url === voice.audioUrl ? progress.fraction : null;
   return (
     <div className="flex justify-center">
       <figure
@@ -113,7 +141,15 @@ export function CoachCaptionBar({
               )}
               style={{ color: GHOST_COLOUR }}
             >
-              “{partial ? PARTIAL_CHECK_CUE : (voice?.cue ?? state.caption.cue)}”
+              “
+              {fraction === null
+                ? cue
+                : revealWords(cue, fraction).map((w, i) => (
+                    <span key={i} className={cn("transition-opacity duration-150", !w.lit && "opacity-60")}>
+                      {w.text}
+                    </span>
+                  ))}
+              ”
             </blockquote>
             {explain && !partial && (
               <details className="mt-1.5 text-muted-foreground">
@@ -127,7 +163,7 @@ export function CoachCaptionBar({
             )}
             {voice && (voice.audioUrl || voice.wordedByClaude) && (
               <div className="mt-2 flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
-                {voice.audioUrl && <PlayVoice url={voice.audioUrl} large={large} />}
+                {voice.audioUrl && <PlayVoice url={voice.audioUrl} large={large} onProgress={setProgress} />}
                 {voice.wordedByClaude && <span className="text-xs text-muted-foreground">worded by Claude</span>}
               </div>
             )}
@@ -155,32 +191,64 @@ function release(audio: HTMLAudioElement) {
   if (playing === audio) playing = null;
 }
 
-function PlayVoice({ url, large }: { url: string; large: boolean }) {
+function PlayVoice({
+  url,
+  large,
+  onProgress,
+}: {
+  url: string;
+  large: boolean;
+  /** How far the clip has played, every frame while it plays; null when it isn't playing. */
+  onProgress: (progress: VoiceProgress | null) => void;
+}) {
   const [busy, setBusy] = useState(false);
   /** This button's latest clip. */
   const clip = useRef<HTMLAudioElement | null>(null);
+  /** The pending frame that reads the clip's progress. */
+  const frame = useRef(0);
 
   // The button is going (back to the swing list, another swing, leaving /ghost): stop and release
   // its clip. Next can keep /ghost alive in the background, which runs this cleanup but keeps
   // state, hence the reset.
   useEffect(
     () => () => {
+      cancelAnimationFrame(frame.current);
       if (clip.current) release(clip.current);
       clip.current = null;
       setBusy(false);
+      onProgress(null);
     },
-    [],
+    // onProgress is the caption's state setter, which never changes: this runs on unmount only.
+    [onProgress],
   );
 
   function play() {
     if (playing) release(playing);
+    cancelAnimationFrame(frame.current);
     const audio = new Audio(url);
     playing = audio;
     clip.current = audio;
-    // An older clip stopping fires these too; only the latest one resets the button.
+    // An older clip stopping fires these too; only the latest one resets the button and the cue.
     const done = () => {
-      if (clip.current === audio) setBusy(false);
+      if (clip.current !== audio) return;
+      cancelAnimationFrame(frame.current);
+      setBusy(false);
+      onProgress(null);
     };
+    // Reduced motion: no word-by-word reveal, the cue stays whole while the clip plays.
+    const reveal = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const tick = () => {
+      if (clip.current !== audio || audio.paused || audio.ended) return;
+      const { currentTime, duration } = audio;
+      if (Number.isFinite(duration) && duration > 0) onProgress({ url, fraction: currentTime / duration });
+      frame.current = requestAnimationFrame(tick);
+    };
+    // "playing" fires again after a stall, so drop any pending frame before starting one.
+    if (reveal)
+      audio.addEventListener("playing", () => {
+        cancelAnimationFrame(frame.current);
+        tick();
+      });
     audio.addEventListener("ended", done);
     audio.addEventListener("pause", done);
     audio.addEventListener("error", done);
