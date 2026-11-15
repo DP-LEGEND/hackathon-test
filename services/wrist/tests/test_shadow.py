@@ -111,6 +111,21 @@ def test_an_excel_csv_with_a_byte_order_mark_parses(tmp_path: Path) -> None:
         ("bh-good", "backhand", 14.889), ("bh-rolled", "backhand", 74.149)]
 
 
+@pytest.mark.parametrize("bad", ["nan", "inf", "-inf"])
+def test_a_non_finite_segment_time_is_refused_naming_the_segment(tmp_path: Path, bad: str) -> None:
+    """Codex P2 on #74: float() takes "nan", every comparison with it is False, and the block finds no swings."""
+    path = tmp_path / "segments.csv"
+    path.write_text(f"segment,stroke,fault,start_s,end_s\nbh-good,backhand,none,10,40\n"
+                    f"bh-rolled,backhand,rolled_wrist,{bad},80\n")
+    with pytest.raises(ValueError, match=rf"segments.csv:3: segment 'bh-rolled': start_s must be a finite number, "
+                                         rf"got '{bad}'"):
+        read_segments(path)
+    rec = _rec(np.zeros((12001, 3)), np.zeros((12001, 3)))   # 0..120 s
+    segs = [{"segment": "fh-good", "stroke": "forehand", "fault": "none", "start_s": 10.0, "end_s": float(bad)}]
+    with pytest.raises(ValueError, match=r"segment 'fh-good': end_s must be a finite number"):
+        place_segments(segs, rec)   # built in code, not read from a CSV
+
+
 def test_a_block_starting_before_the_recording_is_refused() -> None:
     """Codex P2 on #80: it would be cut silently to the samples there are."""
     rec = _rec(np.zeros((12001, 3)), np.zeros((12001, 3)))   # 0..120 s at 100 Hz
