@@ -29,7 +29,7 @@ The ghost moves with scrolling and has a static reduced-motion alternative.
 - Three desktop panels, one mobile panel; no horizontal page overflow.
 - Keyboard stage selection, mobile menu dismissal/focus restoration, local font
   requests and live Demo wrapper verified by `node tests/ghost-ui.mjs`.
-- Saved forehand/backhand retain exact step names and stored coach cue, playback,
+- Saved forehand/backhand retain exact step names and current main coach wording, playback,
   ghost and court/PREDICTED paths. Source diff for `/ghost` and `/upload` is empty.
 - Upload validation, preserved input after failure, retry, processing, cancellation
   and navigation verified with explicit browser transport fixtures. These checks

@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 const baseURL = process.env.GHOST_TEST_URL || 'http://localhost:3000';
 const output = `build/browser-tests/design-review/ghost/${process.env.GHOST_REVIEW_ROUND || 'round-1'}`;
 await mkdir(output, { recursive: true });
-assert.equal(execFileSync('git', ['diff', 'main', '--', 'app/ghost', 'app/upload', 'public/swings'], { encoding: 'utf8' }).trim(), '', 'Existing journeys and saved numbers must be unchanged from main');
+assert.equal(execFileSync('git', ['diff', 'origin/main', '--', 'app/ghost', 'app/upload', 'public/swings'], { encoding: 'utf8' }).trim(), '', 'Existing journeys and saved numbers must be unchanged from main');
 const browser = await chromium.launch({ channel: 'msedge', headless: true });
 const results = [];
 async function capture(page, name) {
@@ -59,6 +59,22 @@ try {
       console.log(results.at(-1));
     } finally { await context.close(); }
   }
+  const motionContext=await browser.newContext({baseURL,viewport:{width:320,height:844},reducedMotion:'no-preference'});
+  try {
+    const page=await motionContext.newPage();
+    await page.goto('/');
+    await expect(page.getByRole('heading',{name:'See your swing. Find your edge.'})).toBeVisible();
+    const ghost=page.locator('.ghost-flyingGhost');
+    await expect.poll(()=>ghost.evaluate(el=>el.style.transform)).not.toBe('');
+    const initial=await ghost.evaluate(el=>el.style.transform);
+    await page.evaluate(()=>scrollTo(0,400));
+    await expect.poll(()=>ghost.evaluate(el=>el.style.transform)).not.toBe(initial);
+    await page.emulateMedia({reducedMotion:'reduce'});
+    await expect(ghost).toHaveCSS('transform','none');
+    await capture(page,'320-reduced-motion');
+    results.push('320px overflow, live scroll motion and reduced-motion alternative: PASS');
+    console.log(results.at(-1));
+  } finally { await motionContext.close(); }
   const context=await browser.newContext({baseURL,viewport:{width:1440,height:900},reducedMotion:'reduce'});
   try {
     const page=await context.newPage();
@@ -72,7 +88,9 @@ try {
       await expect(page.getByRole('button',{name:'Show the ghost',exact:true})).toBeVisible();
       await expect(page.locator('canvas')).toHaveCount(1);
       const coach=JSON.parse(await readFile(`public/swings/${entry.coach}`,'utf8'));
-      await expect(page.locator('blockquote')).toContainText(coach.cue);
+      // Main #68 deliberately scopes the backhand's no-fault cue to checks it could perform.
+      const expectedCue=entry.stroke==='backhand' ? 'Nothing to fix in what the coach could check.' : coach.cue;
+      await expect(page.locator('blockquote')).toContainText(expectedCue);
       const timeline=page.getByRole('slider',{name:'Swing time'});
       await timeline.focus(); await timeline.press('Home'); await timeline.press('ArrowRight');
       const tau=await timeline.inputValue();
@@ -84,10 +102,10 @@ try {
       await page.getByRole('button',{name:'Show the court',exact:true}).click();
       await expect(page.getByRole('button',{name:'Try another swing',exact:true})).toBeVisible();
       await expect(page.getByText('PREDICTED BALL PATHS',{exact:true}).or(page.getByText('PREDICTED BALL PATH',{exact:true}))).toBeVisible();
-      await expect(page.locator('blockquote')).toContainText(coach.cue);
+      await expect(page.locator('blockquote')).toContainText(expectedCue);
       await capture(page,`1440-ghost-${entry.stroke}`);
     }
-    results.push('Existing /ghost forehand + backhand: exact step names, saved coach cue, playback, ghost and court/PREDICTED paths: PASS');
+    results.push('Existing /ghost forehand + backhand: exact step names, current main coach wording, playback, ghost and court/PREDICTED paths: PASS');
     console.log(results.at(-1));
     let reply='failure'; let pending;
     await page.route('**/api/process',async route=>{ if(reply==='pending'){pending=route;return;} await route.fulfill({status:reply==='failure'?422:201,json:reply==='failure'?{detail:'Synthetic recoverable failure'}:{swingId:catalogue.defaultSwing}}); });
