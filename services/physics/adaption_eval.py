@@ -412,22 +412,27 @@ def run_mode(data: Path, mode: str, claude_sample: int = MAX_CLAUDE_SAMPLE, use_
         except ClaudeUnavailable as exc:
             columns.append({"name": claude_name, "skipped": str(exc)})
         else:
-            got = [(r, a) for r, a in zip(sample, answers) if a is not None]
-            preds_c = [a["fault"] for _, a in got]
-            columns.append({"name": claude_name, "score": score([r["output"] for r, _ in got], preds_c),
-                            "latencies": [a["latency_s"] for _, a in got], "predictions": preds_c,
-                            "rows": [r["name"] for r, _ in got]})
-            tin = sum(a["input_tokens"] for _, a in got)
-            tout = sum(a["output_tokens"] for _, a in got)
-            notes.append(f"Claude: {answerer.new_calls} new calls, {sum(a['cached'] for _, a in got)} rows from cache; "
-                         f"served by {dict(Counter(a['served_by'] for _, a in got))}; {tin:,} input + {tout:,} "
+            # A failed call stays in Claude's score as a wrong answer, so Claude and the rule's
+            # "same rows" column always share one denominator.
+            preds_c = [a["fault"] if a is not None else "error" for a in answers]
+            got = [a for a in answers if a is not None]
+            columns.append({"name": claude_name, "score": score([r["output"] for r in sample], preds_c),
+                            "latencies": [a["latency_s"] for a in got], "predictions": preds_c,
+                            "rows": [r["name"] for r in sample]})
+            tin = sum(a["input_tokens"] for a in got)
+            tout = sum(a["output_tokens"] for a in got)
+            notes.append(f"Claude: {answerer.new_calls} new calls, {sum(a['cached'] for a in got)} rows from cache; "
+                         f"served by {dict(Counter(a['served_by'] for a in got))}; {tin:,} input + {tout:,} "
                          f"output tokens (about ${(tin * PRICE_IN + tout * PRICE_OUT) / 1e6:.2f} at list price).")
-            odd = Counter(a["fault"] for _, a in got if a["fault"] not in LABELS)
+            odd = Counter(a["fault"] for a in got if a["fault"] not in LABELS)
             if odd:
                 notes.append(f"Claude gave no label for {dict(odd)} rows (counted wrong).")
-            if answerer.errors:
-                notes.append(f"Claude calls that failed and were left out ({len(answerer.errors)}): "
-                             + "; ".join(answerer.errors[:5]) + (" …" if len(answerer.errors) > 5 else ""))
+            failed = len(answers) - len(got)
+            if failed:
+                notes.append(f"{failed} Claude call{'s' if failed != 1 else ''} failed and "
+                             f"{'are' if failed != 1 else 'is'} scored as wrong"
+                             + (": " + "; ".join(answerer.errors[:5]) + (" …" if len(answerer.errors) > 5 else "")
+                                if answerer.errors else "") + ".")
 
     meta = {"mode": mode, "title": files["title"], "example_input": test[0]["input"],
             "test_rows": len(test), "test_sources": len({r["source"] for r in test}),

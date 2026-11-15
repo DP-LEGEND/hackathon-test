@@ -79,6 +79,8 @@ def select_clean(swings_dir: str | Path, labels_csv: str | Path, out: str | Path
     swings_dir, out = Path(swings_dir).resolve(), Path(out).resolve()
     if out == swings_dir:
         raise ValueError("--out must be a different folder from --swings (the source is never changed)")
+    if out.exists() and (not out.is_dir() or any(out.iterdir())):
+        raise ValueError("--out must be empty or new; stale swings from an earlier run would leak into synth")
     files = sorted(swings_dir.glob("*.json"))
     if not files:
         raise ValueError(f"no .json swings found in {swings_dir}")

@@ -114,6 +114,24 @@ def test_both_formats_run_and_claude_answers_are_cached(data_dir):
     assert md.count("(SIMULATED)") >= 2 and "Raw numbers" in md and "baseline-relative" in md
 
 
+def test_failed_claude_call_is_scored_wrong_not_dropped(data_dir, monkeypatch):
+    before = ev.evaluate(data_dir, claude_sample=20, client=FakeClient(), workers=2)
+    real = ev.ClaudeAnswerer.answer_all
+
+    def first_call_fails(self, rows):
+        out = real(self, rows)
+        out[0] = None  # what answer_all returns for a call that errored
+        return out
+    monkeypatch.setattr(ev.ClaudeAnswerer, "answer_all", first_call_fails)
+    after = ev.evaluate(data_dir, claude_sample=20, client=FakeClient(), workers=2)
+    rule_same, claude = after["results"]["sections"]["raw"]["columns"][1:3]
+    assert claude["score"]["rows"] == rule_same["score"]["rows"] == 20  # same denominator as the rule
+    assert claude["predictions"][0] == "error"
+    old = before["results"]["sections"]["raw"]["columns"][2]["score"]["correct"]
+    assert claude["score"]["correct"] == old - 1  # the first sampled row was answered right before
+    assert "1 Claude call failed and is scored as wrong." in after["markdown"]
+
+
 def test_claude_is_skipped_cleanly_without_a_key(data_dir):
     out = ev.evaluate(data_dir, claude_sample=5)
     for mode in ("raw", "relative"):

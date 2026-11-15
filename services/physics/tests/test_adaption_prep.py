@@ -72,6 +72,19 @@ def test_select_refuses_to_write_into_the_source(real_folder):
         select_clean(src, labels, src)
 
 
+def test_select_refuses_a_non_empty_out_folder(real_folder, tmp_path):
+    src, labels = real_folder
+    out = tmp_path / "clean"
+    out.mkdir()
+    select_clean(src, labels, out / "fresh")  # a new folder is fine
+    (out / "old-swing.json").write_text("{}")  # left over from an earlier run
+    with pytest.raises(ValueError, match="--out must be empty or new; stale swings"):
+        select_clean(src, labels, out)
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert len(select_clean(src, labels, empty)["selected"]) == len(CLEAN)  # an existing empty folder is fine
+
+
 def test_side_mismatch_is_skipped(tmp_path):
     d = tmp_path / "real"
     d.mkdir()
