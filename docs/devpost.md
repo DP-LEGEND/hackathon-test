@@ -54,7 +54,7 @@ We label every number on screen with where it came from.
 
 Film a new swing on **one phone**, drop it on the **Try your own swing** page (`/upload`), and Ghost does the rest. The API (`POST /process`) and the command line (`python -m pipeline clip.mov`) do the same.
 
-- **Upload page.** Drag or pick a clip. Hitting hand, stroke and slow-motion speed default to Auto. Upload progress is real; the processing steps after it run on a timer, and the page says so. When it's done, `/ghost` opens on your new swing at the coach's call. The web app's proxy streams the video to the Python API (up to 250 MB) without holding the whole file in memory.
+- **Upload page.** Drag or pick a clip. Hitting hand, stroke and slow-motion speed default to Auto. Upload progress is real; the processing steps after it run on a timer, and the page says so. When it's done, `/ghost` opens on your new swing at the coach's call; if the coach named a fault, the caption has the **Hear the coach** button (see *Voice coach*). The web app's proxy streams the video to the Python API (up to 250 MB) without holding the whole file in memory.
 
 - **Slow motion, detected automatically.** An AirDropped iPhone slow-mo arrives as a 30 fps video playing 4× slow. We read the QuickTime timing data (edit lists and capture-rate tags) and Apple's playback-intent flag. If that information has been stripped, we retry at 2×, 4× and 8× and keep the speed that gives a believable wrist speed (12–35 m/s).
 - **Hitting hand, detected.** We track both wrists and take the faster one inside each swing.
@@ -65,7 +65,9 @@ Each accepted swing is saved with the coach's call and the ghost comparison, and
 
 ## Voice coach
 
-On a swing's caption, press **Hear the coach**. Claude words the coach's fix as one spoken sentence, and ElevenLabs reads it aloud, server-side.
+Claude words the coach's fix as one spoken sentence, and ElevenLabs reads it aloud, server-side, from the **Hear the coach** button on the coach's call.
+
+**How to reach it:** upload a swing at `/upload`. When `/ghost` opens on it at the coach's call and the coach has named a fault, the caption has a **Hear the coach** button. It's on uploaded (**Live**) swings only: the saved samples on `/ghost` and `/demo` never call Claude or ElevenLabs, and a caption that says *"No fault found in what was checked"* has no voice.
 
 - **Claude only rewords.** The code has already chosen the fix. Claude gets the coach's fault, cue and tip, never the raw metrics. The caption says **worded by Claude** only when it was.
 - **A checker on every sentence.** Any number must match one the code measured exactly as written: same sign, digits and unit. Spelled-out numbers are rejected. A sentence that uses the opposite direction word is rejected: if the coach says "turn less", a sentence that says "more" fails. So are negations ("don't", "never") and a measured number turned into an amount or a target ("bend your elbow to 109 degrees"). A sentence that fails is never used; the coach's own cue is shown instead.
@@ -101,8 +103,8 @@ These work on their own branches or from the command line and are being merged i
 | **Next.js 16**, **React 19**, **TypeScript**, **Tailwind CSS 4** | The web app, plus a same-origin proxy so the browser never talks to Python directly |
 | **three.js** | The 3D replay of you and your ghost, and the court with both PREDICTED ball paths |
 | **Sensor Logger** (phone app) | Records the forearm phone's accelerometer, gyroscope and orientation for the wrist sensor |
-| **Anthropic Claude** (Opus 5.5) | Words the coach's fix as one spoken sentence in `/ghost`, checked against the measured numbers and the fix direction |
-| **ElevenLabs** | Reads that sentence aloud: the **Hear the coach** button |
+| **Anthropic Claude** (Opus 5.5) | Words the coach's fix as one spoken sentence on swings you upload, checked against the measured numbers and the fix direction |
+| **ElevenLabs** | Reads that sentence aloud: the **Hear the coach** button on uploaded (Live) swings |
 | **Claude Code** and **Codex** | How four people built it in parallel in one weekend |
 | **Figma** | Designing the landing page; the build follows its desktop and mobile frames |
 
@@ -114,7 +116,7 @@ In progress: **Anam** (avatar), see *Anam avatar* above, and **Adaption** (train
 
 Claude is the coach's voice, not its judge. Measuring the swing and choosing the fix are plain code. Claude does the one thing code does badly: it turns the chosen fix into one natural spoken sentence.
 
-- **Where.** The **Hear the coach** button on `/ghost` (`services/coach/live_voice.py`). Claude Opus 5.5 (`claude-opus-5-5`) gets the coach's fault, cue and tip, never the raw metrics, and returns one sentence.
+- **Where.** The **Hear the coach** button on a swing you upload at `/upload` (a **Live** swing), once the coach has named a fault (`services/coach/live_voice.py`). The saved samples on `/ghost` and `/demo` don't have it. Claude Opus 5.5 (`claude-opus-5-5`) gets the coach's fault, cue and tip, never the raw metrics, and returns one sentence.
 - **How we call it.**
   - The Anthropic Python SDK with structured outputs: `messages.parse` against a one-field schema.
   - Low effort, since it's a one-sentence rewording.
@@ -128,7 +130,7 @@ Claude is the coach's voice, not its judge. Measuring the swing and choosing the
 
 ### ElevenLabs
 
-- **Where.** The same **Hear the coach** button: ElevenLabs reads Claude's sentence, or the coach's own cue, aloud (`services/coach/voice.py`). It runs server-side only. The key never reaches the browser, which gets the MP3 inside the response.
+- **Where.** The same **Hear the coach** button, on swings uploaded at `/upload`: ElevenLabs reads Claude's sentence, or the coach's own cue, aloud (`services/coach/voice.py`). It runs server-side only. The key never reaches the browser, which gets the MP3 inside the response.
 - **Model and voice.** `eleven_turbo_v2_5` for low latency, and the "George" voice, which works on the free plan. MP3 at 44.1 kHz.
 - **Cheap and demo-safe.**
   - A successful clip is cached per swing on disk, so replaying a swing costs nothing and plays offline. A failed call is retried after 60 s.
