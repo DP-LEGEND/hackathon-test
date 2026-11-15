@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from coach import ask_agent
 from coach.agent import coach_swing
 from coach.live_voice import voice_for_swing
 from physics.compare import GuessedFixError, compare
@@ -214,6 +215,23 @@ def coach(identifier: str) -> dict:
     return {**result, "fix": fix, "amount": amount,
             "ghost_ready": fix is not None, "contactFrame": swing["contactFrame"],
             "contactMethod": swing.get("metadata", {}).get("contactMethod", "provided-contact-estimate")}
+
+
+@app.get("/coach/agent")
+def coach_agent() -> dict:
+    """Whether "Ask the coach" is configured (coach/ask_agent.py). Never returns a key or id."""
+    return {"available": ask_agent.configured()}
+
+
+@app.post("/coach/agent/session")
+def coach_agent_session() -> dict:
+    """A short-lived signed URL for one "Ask the coach" conversation; the key stays here."""
+    if not ask_agent.configured():
+        raise HTTPException(404, "Ask the coach is not configured")
+    try:
+        return {"signedUrl": ask_agent.signed_url()}
+    except ask_agent.AgentError as exc:
+        raise HTTPException(502, str(exc)) from None
 
 
 @app.get("/coach/{identifier}/voice")

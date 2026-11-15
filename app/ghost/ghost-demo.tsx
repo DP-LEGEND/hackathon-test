@@ -10,8 +10,10 @@ import { useSearchParams } from "next/navigation";
 import { ArrowLeft, ArrowRight, CircleAlert, RotateCcw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { AskCoach } from "@/lib/integrations/voice/ask-coach";
 import { cn } from "@/lib/utils";
 import "./swing-view.css";
+import { askCoachTools, type AskCoachData } from "./ask-coach-tools";
 import { CoachCaptionBar, noFaultInWhatWasChecked, type CaptionState } from "./coach-caption";
 import { CoachDetails } from "./coach-details";
 import {
@@ -202,6 +204,20 @@ export function GhostDemo({ requestedSwing }: { requestedSwing: string | null })
   );
   const compareState = useAsync(comparePromise);
   const compare = compareState.status === "ready" ? compareState.value : null;
+
+  // "Ask the coach" tools read the latest loaded data for this swing, as the screen shows it.
+  const askData = useRef<AskCoachData | null>(null);
+  useEffect(() => {
+    askData.current = entry ? { entry, caption: coachCaption, fixes, activeFix, compare } : null;
+  });
+  const askTools = useMemo(
+    () =>
+      askCoachTools(() => {
+        if (!askData.current) throw new Error("No swing is loaded.");
+        return askData.current;
+      }),
+    [],
+  );
 
   const showGhost = step === "ghost" || step === "court";
   const onCourt = step === "court";
@@ -459,6 +475,9 @@ export function GhostDemo({ requestedSwing }: { requestedSwing: string | null })
           )}
 
           {step === "coach" && <CoachDetails state={caption} />}
+          {/* After the coach's call (this block is every step but Pick a swing); hidden unless the
+              agent is configured. Stays mounted across steps, so the conversation carries on. */}
+          <AskCoach sessionKey={entry.key} tools={askTools} recheck={apiAttempt} />
           {step === "coach" && (
             <WristSensorPanel
               state={wrist}
