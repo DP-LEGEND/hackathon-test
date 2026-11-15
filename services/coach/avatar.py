@@ -50,6 +50,7 @@ FIX_PHRASES = {
     "turn_shoulders_less": "turning the shoulders a little less",
     "hold_wrist_cock": "holding the wrist cock longer",
     "close_stance": "closing the stance",
+    "firm_wrist": "keeping the wrist firm through contact",
 }
 
 # Units as they should be said aloud.
