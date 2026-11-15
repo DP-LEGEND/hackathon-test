@@ -206,7 +206,7 @@ for (const overflow of [false, true]) {
   });
 }
 
-test("processing gets a 600-second timeout and propagates client cancellation", async (t) => {
+test("processing keeps a 600-second local timeout with a 300-second platform cap and client cancellation", async (t) => {
   const abort = new AbortController();
   const timeout = new AbortController();
   let timeoutMilliseconds;
@@ -225,9 +225,34 @@ test("processing gets a 600-second timeout and propagates client cancellation", 
   }), context(["process"]));
   assert.equal(timeoutMilliseconds, 10 * 60_000);
   assert.equal(forwardedSignal.aborted, true);
-  assert.equal(maxDuration, 600);
-  assert.equal(response.status, 502);
+  assert.equal(maxDuration, 300);
+  assert.equal(response.status, 499);
+  assert.deepEqual(await response.json(), { error: "Request cancelled." });
 });
+
+for (const first of ["timeout", "client"]) {
+  test(`processing reports the first abort when ${first} fires before the other signal`, async (t) => {
+    const client = new AbortController();
+    const timeout = new AbortController();
+    t.mock.method(AbortSignal, "timeout", (milliseconds) => {
+      assert.equal(milliseconds, 600_000);
+      return timeout.signal;
+    });
+    globalThis.fetch = async (_url, init) => {
+      const deadline = () => timeout.abort(new DOMException("private timeout details", "TimeoutError"));
+      if (first === "timeout") { deadline(); client.abort(); }
+      else { client.abort(); deadline(); }
+      throw init.signal.reason;
+    };
+    const response = await POST(new Request("http://localhost:3000/api/process", {
+      method: "POST", body: multipart, headers: { "Content-Type": contentType }, signal: client.signal,
+    }), context(["process"]));
+    assert.equal(response.status, first === "timeout" ? 504 : 499);
+    assert.deepEqual(await response.json(), {
+      error: first === "timeout" ? "Ghost API is still processing; the proxy stopped waiting." : "Request cancelled.",
+    });
+  });
+}
 
 for (const path of [["swings"], ["coach", "sample"], ["compare", "sample"], ["processing"]]) {
   test(`${path.join("/")} keeps a 30-second upstream timeout`, async (t) => {
@@ -246,6 +271,7 @@ for (const path of [["swings"], ["coach", "sample"], ["compare", "sample"], ["pr
     const response = await GET(new Request(`http://localhost:3000/api/${path.join("/")}`), context(path));
     assert.equal(timeoutMilliseconds, 30_000);
     assert.equal(forwardedSignal.aborted, true);
-    assert.equal(response.status, 502);
+    assert.equal(response.status, 504);
+    assert.deepEqual(await response.json(), { error: "Ghost API is still processing; the proxy stopped waiting." });
   });
 }

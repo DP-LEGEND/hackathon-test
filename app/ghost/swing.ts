@@ -3,6 +3,7 @@
 // Shapes come from lib/ghost/types.ts.
 
 import type { Swing, SwingFrame, Vec3 } from "@/lib/ghost/types";
+import { readGuessedJoints, type GuessedJoints } from "./provenance";
 
 export const JOINT_COUNT = 33;
 const NOSE = 0;
@@ -27,10 +28,17 @@ export type LoadedSwing = {
   floorY: number;
   /** True when the file was y-down (raw MediaPipe) and was turned y-up for display. */
   flippedFromYDown: boolean;
-  /** The pipeline's `source` ("stereo" or "mono"), if the file says. Mono depth is estimated, not measured. */
+  /**
+   * How the 3D pose was made: the pipeline's `source`, else `metadata.reconstruction` ("stereo" =
+   * two cameras, "mono" = one, depth estimated), or null if the file doesn't say.
+   */
   source: string | null;
+  /** Why a stereo clip fell back to one camera (`metadata.fallbackReason`), if the file says. */
+  fallbackReason: string | null;
   /** The hitting hand the pipeline recorded (`metadata.hand`, else `hand`), or null if neither is set. */
   hand: Hand | null;
+  /** Which joints were guessed rather than measured, frame by frame (provenance.ts). */
+  guessed: GuessedJoints;
 };
 
 export type Hand = "R" | "L";
@@ -62,7 +70,11 @@ export type SkeletonPose = {
   joints: Vec3[];
   /** [throat, tip] when the file tracks the racket, otherwise null. */
   racket: readonly [Vec3, Vec3] | null;
+  /** One flag per joint, true = guessed on the nearest frame (drawn faded). */
+  guessed: readonly boolean[];
 };
+
+const NONE_GUESSED: readonly boolean[] = new Array<boolean>(JOINT_COUNT).fill(false);
 
 /** Shared playback clock, in seconds relative to contact (0 = contact for both swings). */
 export type Timeline = {
@@ -200,6 +212,8 @@ export function loadSwing(value: unknown, fileContactFrame?: number): LoadedSwin
   for (const frame of swing.frames) {
     for (const j of FOOT_JOINTS) floorY = Math.min(floorY, frame.joints[j][1]);
   }
+  const metadata = isRecord(value) && isRecord(value.metadata) ? value.metadata : {};
+  const text = (v: unknown) => (typeof v === "string" && v !== "" ? v : null);
   return {
     swing: { ...swing, contactFrame },
     contactFrame,
@@ -207,8 +221,10 @@ export function loadSwing(value: unknown, fileContactFrame?: number): LoadedSwin
     contactT: swing.frames[contactFrame].t,
     floorY,
     flippedFromYDown,
-    source: isRecord(value) && typeof value.source === "string" ? value.source : null,
+    source: text(isRecord(value) ? value.source : null) ?? text(metadata.reconstruction),
+    fallbackReason: text(metadata.fallbackReason),
     hand: recordedHand(value),
+    guessed: readGuessedJoints(value),
   };
 }
 
@@ -286,8 +302,10 @@ export function samplePose(s: LoadedSwing, tau: number): SkeletonPose {
     const q = b.joints[j];
     return [p[0] + (q[0] - p[0]) * alpha, p[1] + (q[1] - p[1]) * alpha, p[2] + (q[2] - p[2]) * alpha];
   });
-  const nearest = alpha < 0.5 ? a : b;
+  // The racket and the guessed flags come from the nearest frame, the one frameIndexAt reports.
+  const nearestIndex = alpha < 0.5 ? i : i + 1;
+  const nearest = frames[nearestIndex];
   const racket =
     nearest.racketThroat && nearest.racketTip ? ([nearest.racketThroat, nearest.racketTip] as const) : null;
-  return { joints, racket };
+  return { joints, racket, guessed: s.guessed.frames[nearestIndex] ?? NONE_GUESSED };
 }

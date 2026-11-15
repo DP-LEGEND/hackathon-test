@@ -17,8 +17,15 @@ import numpy as np
 from scipy.signal import butter, find_peaks, sosfiltfilt
 
 from pipeline.pose import smooth
+from pipeline.kinematics import runs
 
 L_WRIST, R_WRIST, L_HIP, R_HIP, L_SH, R_SH = 15, 16, 23, 24, 11, 12
+BACKSWING_LOOKBACK_S = .6
+REVERSAL_SUPPORT_S = .05
+PEAK_MATCH_S = .12
+# Real seconds between this branch's admission peak and main's candidate peak
+# within which main's sound-matched contact frame is kept.
+CONTACT_MATCH_S = .25
 
 
 def torso_px(img: np.ndarray) -> float:
@@ -34,6 +41,9 @@ def _wrist_track(raw: dict, wrist: int, slowdown: float, win: int | None = None)
     if win is None:
         win = max(3, int(round(.06 * float(raw["fps"]) * slowdown)) | 1)
     img = raw["img"]
+    if 'vis' in raw:
+        img = img.copy()
+        img[~(np.asarray(raw['vis']) > .1)] = np.nan
     hip = (img[:, L_HIP, :2] + img[:, R_HIP, :2]) / 2
     return smooth(img[:, wrist, :2] - hip, win) / torso_px(img)
 
@@ -44,6 +54,88 @@ def wrist_speed(raw: dict, wrist: int = R_WRIST, slowdown: float = 1.0, win: int
     fps_real = float(raw["fps"]) * slowdown
     sp = np.linalg.norm(np.diff(x, axis=0), axis=1) * fps_real
     return np.concatenate([[0.0], sp])
+
+
+def _contact_reference_track(raw: dict, wrist: int, slowdown: float) -> np.ndarray:
+    """Main's raw-camera moving average, used only to retain its sound match.
+
+    Do not visibility-mask, reproject or repair these pixels: those changes can
+    move a candidate to a different nearby transient. This historical NaN-aware
+    average is not used as reconstruction or metric admission evidence.
+    """
+    img = raw['img']
+    track = img[:, wrist, :2] - (img[:, L_HIP, :2] + img[:, R_HIP, :2]) / 2
+    win = min(len(track), max(3, int(round(.06 * float(raw['fps']) * slowdown)) | 1))
+    kernel = np.ones(win)
+    valid = ~np.isnan(track)
+    numerator = np.apply_along_axis(lambda x: np.convolve(x, kernel, 'same'), 0,
+                                    np.where(valid, track, 0.))
+    denominator = np.apply_along_axis(lambda x: np.convolve(x, kernel, 'same'), 0,
+                                      valid.astype(float))
+    with np.errstate(invalid='ignore', divide='ignore'):
+        return numerator / denominator / torso_px(img)
+
+
+def swing_evidence(world: np.ndarray, times: np.ndarray, wrist: int, peak: int,
+                   torso_m: float = .5, max_gap_s: float = .25) -> dict:
+    """Admit a metric wrist peak only with a preceding track reversal.
+
+    This final 3D gate also applies to image-space speed-fallback candidates;
+    neither a hit sound nor an isolated fast feed bypasses it.
+    """
+    if len(times) < 2 or not 0 <= peak < len(times):
+        raise ValueError('Not a swing: candidate peak is outside tracked evidence')
+    track = world[:, wrist] - (world[:, 23] + world[:, 24]) / 2
+    # Repair only this admission track, not the exported skeleton. Use the same
+    # real-time gap budget as reconstruction, including across rate boundaries.
+    for start, end in runs(~np.isfinite(track).all(axis=1)):
+        if start == 0 or end == len(track) or times[end] - times[start] > max_gap_s + 1e-9:
+            continue
+        weight = ((times[start:end] - times[start - 1]) / (times[end] - times[start - 1]))[:, None]
+        track[start:end] = (1 - weight) * track[start - 1] + weight * track[end]
+    if not np.isfinite(track[peak]).all():
+        raise ValueError(f'Not a swing: wrist gap around candidate peak exceeds max_gap_s={max_gap_s}')
+    speed = np.linalg.norm(np.gradient(track, times, axis=0), axis=1)
+    peaks, properties = find_peaks(speed, height=6., prominence=3., width=(1., None))
+    # Evidence may precede a playback-rate switch. Convert peak widths through
+    # actual real timestamps instead of assuming one FPS across the history.
+    indices = np.arange(len(times))
+    widths_s = (np.interp(properties['right_ips'], indices, times)
+                - np.interp(properties['left_ips'], indices, times))
+    peaks = peaks[(widths_s >= .008 - 1e-9) & (widths_s <= .3 + 1e-9)]
+    for candidate in sorted(peaks, key=lambda index: abs(index - peak)):
+        if abs(times[candidate] - times[peak]) > PEAK_MATCH_S + 1e-9:
+            continue
+        if _backswing_reversal(track / torso_m, times, int(candidate)):
+            return {'peakWristSpeedMs': float(speed[candidate]), 'backswingVerified': True}
+    raise ValueError('Not a swing: needs a sharp wrist-speed peak of at least 6 m/s and a preceding backswing')
+
+
+def _backswing_reversal(track: np.ndarray, times: np.ndarray, peak: int) -> bool:
+    """Find a pullback then forward sweep within .6 real seconds of the peak.
+
+    Project onto the local sweep direction, so hand/camera orientation does not
+    prescribe the sign. A .04-torso-length turn (2 cm at the default scale)
+    excludes tiny jitter; no fixed sweep distance or follow-through shape is
+    required. Extra left context only confirms turns at the lookback boundary.
+    """
+    when = times[peak]
+    left = max(0, int(np.searchsorted(times, when - .025)))
+    right = min(len(track) - 1, int(np.searchsorted(times, when + .025)))
+    if not np.isfinite(track[left:right + 1]).all():
+        return False
+    direction = track[right] - track[left]
+    length = np.linalg.norm(direction)
+    if length < 1e-9:
+        return False
+    start = int(np.searchsorted(times, when - BACKSWING_LOOKBACK_S - REVERSAL_SUPPORT_S - 1e-9))
+    missing = np.flatnonzero(~np.isfinite(track[start:peak + 1]).all(axis=1))
+    if len(missing):
+        start += int(missing[-1]) + 1  # only use this contiguous observed run
+    projected = track[start:peak + 1] @ (direction / length)
+    turns, _ = find_peaks(-projected, prominence=.04)
+    return any(when - BACKSWING_LOOKBACK_S - 1e-9 <= times[start + turn] < when
+               for turn in turns)
 
 
 def _swing_pattern(track: np.ndarray, peak: int, fps_real: float) -> bool:
@@ -121,12 +213,14 @@ def find_swings(
     wrist: int = R_WRIST,
     speed_fallback: bool = False,
     require_audio: bool = False,
+    contact_reference: bool = False,
 ) -> list[dict]:
-    """Return [{"peak": frame, "start": frame, "end": frame, "speed": .., "hit": t|None}]."""
+    """Return candidates with a fixed sound match; reference mode mirrors main."""
     if len(raw["t"]) < 2:
         return []
     fps = float(raw["fps"])
-    track = _wrist_track(raw, wrist, slowdown)
+    track = (_contact_reference_track(raw, wrist, slowdown) if contact_reference else
+             _wrist_track(raw, wrist, slowdown))
     sp = np.concatenate([[0.0], np.linalg.norm(np.diff(track, axis=0), axis=1) * fps * slowdown])
     gap = max(1, int(min_gap_real_s * fps * slowdown))
     pk, _ = find_peaks(np.nan_to_num(sp, nan=0., posinf=0., neginf=0.),
@@ -150,7 +244,8 @@ def find_swings(
             selected.append(p)
     t = raw["t"]
     out = []
-    pre, post = max(1, int(0.45 * fps * slowdown)), max(1, int(0.35 * fps * slowdown))
+    pre = max(1, int((.45 if contact_reference else .6) * fps * slowdown))
+    post = max(1, int(.35 * fps * slowdown))
     for p in sorted(selected):
         hit = matched.get(p)
         out.append({

@@ -11,7 +11,7 @@ import { ArrowLeft, ArrowRight, RotateCcw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { CoachCaptionBar, type CaptionState } from "./coach-caption";
+import { CoachCaptionBar, noFaultInWhatWasChecked, type CaptionState } from "./coach-caption";
 import { CoachDetails } from "./coach-details";
 import {
   fixName,
@@ -25,6 +25,7 @@ import {
 import { BallChanges, BodyChanges } from "./delta-panel";
 import { FixPicker } from "./fix-picker";
 import { GhostStage, type StageStatus } from "./ghost-stage";
+import { PredictionPanel } from "./prediction-panel";
 import { SceneLegend } from "./scene-legend";
 import type { BallPathView, CameraView } from "./skeleton-scene";
 import {
@@ -35,6 +36,7 @@ import {
   resolveSelection,
   loadCatalogue,
   loadCoachFor,
+  loadVoiceFor,
   loadCompareFor,
   loadSwingFor,
   loadWristFor,
@@ -209,15 +211,30 @@ export function GhostDemo({ requestedSwing }: { requestedSwing: string | null })
   );
   const balls = useMemo(() => {
     if (!onCourt || !compare) return null;
-    // Identical paths: draw one, and the legend says the fix changes the body, not the ball.
+    // Identical paths: draw one, and the legend says why (the fix moved only the body, or no correction).
     return samePath
       ? { you: ballView(compare.you.ball, "you and ghost"), ghost: null }
       : { you: ballView(compare.you.ball, "you"), ghost: ballView(compare.ghost.ball, "ghost") };
   }, [onCourt, compare, samePath]);
 
+  // The coach's cue as speech (#60), for live swings only: saved samples never call the voice
+  // route. Asked for only on a step that shows the caption (the coach's call onwards), once the
+  // coach has answered and the live service is online. It can take seconds; the plain caption
+  // shows meanwhile, and stays if there's no voice (null). Only a voice with audio is kept, so
+  // coming back without one asks again. No fault found in what was checked: never asked for,
+  // because the caption shows only what was checked there, with no voice.
+  const voiceWanted =
+    entry?.origin === "api" &&
+    step !== "swing" &&
+    coachCaption !== null &&
+    !noFaultInWhatWasChecked(coachCaption) &&
+    api.status === "online";
+  const voicePromise = useMemo(() => (entry && voiceWanted ? loadVoiceFor(entry) : null), [entry, voiceWanted]);
+  const voice = useAsync(voicePromise);
+
   const caption: CaptionState =
     coach.status === "ready"
-      ? { kind: "ready", caption: coach.value }
+      ? { kind: "ready", caption: coach.value, voice: voice.status === "ready" ? voice.value : null }
       : coach.status === "error"
         ? { kind: "error", message: coach.message, onRetry: () => setCoachAttempt((n) => n + 1) }
         : { kind: "loading" };
@@ -369,12 +386,18 @@ export function GhostDemo({ requestedSwing }: { requestedSwing: string | null })
               ghost={
                 showGhost && compare
                   ? {
-                      label: `${fixName(compare.fix.id).toLowerCase()} ${formatValue(compare.fix.amount, compare.fix.unit)}`,
+                      label: compare.noCorrection
+                        ? "no correction: your swing unchanged"
+                        : `${fixName(compare.fix.id).toLowerCase()} ${formatValue(compare.fix.amount, compare.fix.unit)}`,
                       mock: !compare.ghostIsReal,
                     }
                   : null
               }
-              balls={onCourt && compare ? { you: compare.you.ball, ghost: compare.ghost.ball, same: samePath } : null}
+              balls={
+                onCourt && compare
+                  ? { you: compare.you.ball, ghost: compare.ghost.ball, same: samePath, noCorrection: compare.noCorrection }
+                  : null
+              }
               monoDepth={you?.source === "mono"}
             />
             {onCourt && (
@@ -384,7 +407,8 @@ export function GhostDemo({ requestedSwing }: { requestedSwing: string | null })
                   : "Court 6.40 × 9.75 m · player placed with the hitting hand over the ball's assumed start (display only)"}
               </p>
             )}
-            <CoachCaptionBar state={caption} size={step === "coach" ? "large" : "compact"} />
+            {/* Keyed by swing, so a new swing never keeps the last one's clip playing. */}
+            <CoachCaptionBar key={entry.key} state={caption} size={step === "coach" ? "large" : "compact"} />
           </GhostStage>
 
           {step === "coach" && <CoachDetails state={caption} />}
@@ -403,9 +427,11 @@ export function GhostDemo({ requestedSwing }: { requestedSwing: string | null })
                 compare={compare}
                 flagged={faults.some((f) => f.fix === compare.fix.id)}
                 coached={coachCaption !== null}
+                notJudged={coachCaption?.notJudged ?? []}
               />
             </div>
           )}
+          {you && <PredictionPanel you={you} compare={compare} />}
         </>
       )}
     </div>

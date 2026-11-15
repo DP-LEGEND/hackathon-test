@@ -12,13 +12,16 @@ reading the body. Unknown-length uploads are counted incrementally with
 backpressure and stopped at the same limit. Requests whose first path segment is
 `process` have a 600-second (10-minute) upstream timeout covering upload and
 processing. Every other API path keeps a 30-second timeout; client cancellation
-propagates upstream. The catch-all route declares `maxDuration = 600` for hosting
-platforms, with the shorter per-request timeout enforced for all other paths.
+propagates upstream. The catch-all route declares `maxDuration = 300` to fit
+Vercel's Hobby plan: Vercel caps execution at 300 seconds (5 minutes). Local and
+self-hosted runs retain the 600,000 ms `AbortSignal` timeout for `process`, so the
+local demo is unchanged. All other paths retain their 30-second upstream timeout.
 
 Upstream status codes and response bytes are preserved, including 400, 413, 422
-and 429 JSON errors. Content-Type and Retry-After are passed through. Connection
-failures/timeouts return the existing sanitized 502 JSON error. Other API methods
-and JSON requests use the same streaming forwarding path.
+and 429 JSON errors. Content-Type and Retry-After are passed through. Unreachable
+upstreams return sanitized 502 JSON; the proxy's own deadline returns 504, and
+client cancellation returns 499. The first abort determines the response if both
+signals fire. Other API methods and JSON requests use the same streaming path.
 
 ## Deployment constraint
 

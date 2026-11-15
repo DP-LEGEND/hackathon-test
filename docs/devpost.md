@@ -1,11 +1,9 @@
 <!--
 TODO (9 AM feature freeze): these are under "In progress / demoed from branch" because they
 aren't on main yet. When each one merges, move it into the built sections and delete its line.
-- Wrist sensor: PR #44 (feat/wrist-sensor, Henoch)
-- Upload page: PR #48 (feat/upload-page, Sammy) and the upload proxy, PR #47 (feat/upload-proxy, Dev)
-- Voice in the live flow: Claude-worded cue (coach/cue.py), ElevenLabs (coach/voice.py) and the
-  Anam avatar lines (coach/avatar.py) are on main but only run from the command line
+- Anam avatar lines (coach/avatar.py) are on main but only run from the command line
 - Adaption: physics/synth.py writes a local adaption.jsonl; no fine-tune has been run or used yet
+- Sponsor tracks: the Adaption section is a TODO (see its comment).
 Delete this comment before pasting into Devpost.
 -->
 
@@ -46,15 +44,17 @@ We label every number on screen with where it came from.
 
 | | Examples | How we get it |
 |---|---|---|
-| **Measured** | 3D joints, shoulder and hip turn, elbow angles, wrist uncock (degrees and ms), stance, contact frame | From the pose, by our code. Contact comes from the hit sound when there is one |
-| **Estimated** | Racket-head speed, racket-head position, shot direction, depth in single-phone clips, stroke when it isn't labelled | Racket speed is wrist speed scaled by the lever out to the racket's sweet spot. Shot direction comes from the wrist's motion and is assumed straight when that's unclear. Labelled ESTIMATE |
+| **Measured** | 3D joints, shoulder and hip turn, elbow angles, wrist uncock (degrees and ms), stance, contact frame, forearm roll (wrist sensor) | From the pose, by our code. Contact comes from the hit sound when there is one. Forearm roll comes from the forearm phone's orientation sensor (its gyroscope if that's missing) |
+| **Estimated** | Racket-head speed, racket-head position, shot direction, depth in single-phone clips, stroke when it isn't labelled | Racket speed is wrist speed scaled by the lever out to the racket's sweet spot; with the wrist sensor, it adds the gyro's spin. Shot direction comes from the wrist's motion and is assumed straight when that's unclear. Labelled ESTIMATE |
 | **Assumed** | Launch angle (elevation): 12° forehand, 3° backhand. Where on court the ball is struck | Fixed defaults, labelled ASSUMED. We don't track the racket face or the ball yet |
 | **Predicted** | Both ball paths, landing spot, front-wall height | Physics from the numbers above, labelled PREDICTED |
 | **Simulated** | Synthetic training swings (faults added to real swings) | Labelled SIMULATED wherever they appear |
 
 ## Live clips
 
-Film a new swing on **one phone**, send the file, and Ghost does the rest: `POST /process` on the API, or `python -m pipeline clip.mov`.
+Film a new swing on **one phone**, drop it on the **Try your own swing** page (`/upload`), and Ghost does the rest. The API (`POST /process`) and the command line (`python -m pipeline clip.mov`) do the same.
+
+- **Upload page.** Drag or pick a clip. Hitting hand, stroke and slow-motion speed default to Auto. Upload progress is real; the processing steps after it run on a timer, and the page says so. When it's done, `/ghost` opens on your new swing at the coach's call; if the coach named a fault, the caption has the **Hear the coach** button (see *Voice coach*). The web app's proxy streams the video to the Python API (up to 250 MB) without holding the whole file in memory.
 
 - **Slow motion, detected automatically.** An AirDropped iPhone slow-mo arrives as a 30 fps video playing 4× slow. We read the QuickTime timing data (edit lists and capture-rate tags) and Apple's playback-intent flag. If that information has been stripped, we retry at 2×, 4× and 8× and keep the speed that gives a believable wrist speed (12–35 m/s).
 - **Hitting hand, detected.** We track both wrists and take the faster one inside each swing.
@@ -63,22 +63,32 @@ Film a new swing on **one phone**, send the file, and Ghost does the rest: `POST
 
 Each accepted swing is saved with the coach's call and the ghost comparison, and appears in the `/ghost` page's swing list after a refresh.
 
+## Voice coach
+
+Claude words the coach's fix as one spoken sentence, and ElevenLabs reads it aloud, server-side, from the **Hear the coach** button on the coach's call.
+
+**How to reach it:** upload a swing at `/upload`. When `/ghost` opens on it at the coach's call and the coach has named a fault, the caption has a **Hear the coach** button. It's on uploaded (**Live**) swings only: the saved samples on `/ghost` and `/demo` never call Claude or ElevenLabs, and a caption that says *"No fault found in what was checked"* has no voice.
+
+- **Claude only rewords.** The code has already chosen the fix. Claude gets the coach's fault, cue and tip, never the raw metrics. The caption says **worded by Claude** only when it was.
+- **A checker on every sentence.** Any number must match one the code measured exactly as written: same sign, digits and unit. Spelled-out numbers are rejected. A sentence that uses the opposite direction word is rejected: if the coach says "turn less", a sentence that says "more" fails. So are negations ("don't", "never") and a measured number turned into an amount or a target ("bend your elbow to 109 degrees"). A sentence that fails is never used; the coach's own cue is shown instead.
+- **Wrist cues are spoken word for word.** "Keep your wrist cocked until the racket meets the ball" has no direction the checker can test, so Claude isn't asked to reword it.
+- **Safe without keys.** If there's no Claude key, or Claude takes over 10 s, the page shows the coach's plain cue. If there's no ElevenLabs key, or it takes over 12 s, there's no audio. The page never shows an error for either. A successful clip is cached per swing on disk, so replaying a swing costs nothing and plays offline. A failed call is retried after 60 s.
+
+## Wrist sensor
+
+The camera can't see a rolled wrist, and it can only estimate racket speed. A phone strapped to the forearm can measure both.
+
+- Reads a Sensor Logger recording (accelerometer, gyroscope and orientation at 100 Hz) and syncs it to the video. The sync uses two taps on the phone and the racket-impact spikes, and reports the alignment error for each swing.
+- Measures the forearm roll from −150 to +100 ms around contact, which feeds the coach's `rolled_wrist` fault. A swing without usable sensor data lists `rolled_wrist` as "not measured".
+- Estimates racket speed from the camera's wrist speed plus the gyro's spin, and the predicted ball uses it when a swing has one. It also fills in wrist and elbow positions the camera lost behind the body, and gives a swing tempo and the impact's peak g and ring-down (reported, not judged). All of these are labelled ESTIMATE.
+- The web app has a **Wrist sensor** panel for the coach's call: roll through contact, wrist speed at contact, and two small charts, labelled MEASURED (sensor). Neither demo swing has sensor data yet, so it doesn't appear on `/ghost` today. The API doesn't serve wrist data for live swings yet either.
+- So far it's tested on **mock data only**, and labelled MOCK where it appears: rebuilt joints within 1 cm and racket speed within 4% of the mock truth. The `rolled_wrist` threshold comes from mock swings and has to be retuned on real ones.
+
 ## In progress / demoed from branch
 
 These work on their own branches or from the command line and are being merged into the live flow.
 
-**Wrist sensor (Henoch, PR #44).** The camera can't see a rolled wrist, and it can only estimate racket speed. A phone strapped to the forearm can measure both.
-- Reads a Sensor Logger recording (accelerometer, gyroscope and orientation at 100 Hz) and syncs it to the video. The sync uses two start taps and the racket-impact spikes, and reports the alignment error for each swing.
-- Measures the forearm roll from −150 to +100 ms around contact, which feeds a new `rolled_wrist` fault.
-- Estimates racket speed from the camera's wrist speed plus the gyro's spin, and fills in wrist and elbow positions the camera lost behind the body. It also gives a swing tempo and an impact-quality score. All of these are labelled ESTIMATE.
-- So far it's tested on **mock data only**: rebuilt joints within 1 cm and racket speed within 4% of the mock truth.
-
-**Upload page (Sammy, PR #48, with Dev's upload proxy, PR #47).** A "Try your own swing" page: drop a clip from your phone, watch it process, and `/ghost` opens on your new swing. The proxy streams the video through the web app to the Python API.
-
-**Voice coach.** The code for each part is on main and tested, but it only runs from the command line so far. The live `/ghost` flow shows the coach's plain cue.
-- **Claude** (Opus 5.5) words the cue from the measured numbers. A checker rejects any cue that quotes a number the code didn't measure. The demo command runs on MOCK metrics.
-- **ElevenLabs** reads the cue aloud, server-side.
-- **Anam:** the coach writes the two or three short lines a talking avatar would say.
+**Anam avatar.** The coach writes the two or three short lines a talking avatar would say (`coach/avatar.py`). It runs from the command line; the web app doesn't show an avatar.
 
 **Adaption.** Training-data export ready for Adaption fine-tuning. `physics/synth.py` adds faults of known size to real swings, re-measures them, and writes labelled rows to a local `adaption.jsonl`, all marked SIMULATED. We haven't run a fine-tune yet, and nothing in Ghost uses a fine-tuned model.
 
@@ -92,10 +102,56 @@ These work on their own branches or from the command line and are being merged i
 | **FastAPI** | The local Python API: process a clip, list swings, coach, compare |
 | **Next.js 16**, **React 19**, **TypeScript**, **Tailwind CSS 4** | The web app, plus a same-origin proxy so the browser never talks to Python directly |
 | **three.js** | The 3D replay of you and your ghost, and the court with both PREDICTED ball paths |
-| **Anthropic Claude** (Opus 5.5) | Words the coaching cue from measured numbers only (command line for now, see above) |
+| **Sensor Logger** (phone app) | Records the forearm phone's accelerometer, gyroscope and orientation for the wrist sensor |
+| **Anthropic Claude** (Opus 5.5) | Words the coach's fix as one spoken sentence on swings you upload, checked against the measured numbers and the fix direction |
+| **ElevenLabs** | Reads that sentence aloud: the **Hear the coach** button on uploaded (Live) swings |
 | **Claude Code** and **Codex** | How four people built it in parallel in one weekend |
+| **Figma** | Designing the landing page; the build follows its desktop and mobile frames |
 
-In progress: **ElevenLabs** (voice) and **Anam** (avatar), see *Voice coach* above, and **Adaption** (training-data export), see *Adaption* above.
+In progress: **Anam** (avatar), see *Anam avatar* above, and **Adaption** (training-data export), see *Adaption* above.
+
+## Sponsor tracks
+
+### Anthropic
+
+Claude is the coach's voice, not its judge. Measuring the swing and choosing the fix are plain code. Claude does the one thing code does badly: it turns the chosen fix into one natural spoken sentence.
+
+- **Where.** The **Hear the coach** button on a swing you upload at `/upload` (a **Live** swing), once the coach has named a fault (`services/coach/live_voice.py`). The saved samples on `/ghost` and `/demo` don't have it. Claude Opus 5.5 (`claude-opus-5-5`) gets the coach's fault, cue and tip, never the raw metrics, and returns one sentence.
+- **How we call it.**
+  - The Anthropic Python SDK with structured outputs: `messages.parse` against a one-field schema.
+  - Low effort, since it's a one-sentence rewording.
+  - Server-side fallback: if the model declines, the API retries on a fallback model in the same call.
+  - A 10 s timeout and no client retries, so a slow call never holds up the page.
+- **Checked by code before it's spoken.**
+  - Every number must be one the code measured, written exactly (same sign, digits and unit) and quoted once inside its measured phrase.
+  - Spelled-out numbers, negations ("don't", "never"), a measured number turned into an amount or a target, and the opposite direction word are rejected.
+  - A sentence that fails is never spoken: the coach's own cue is used instead. The caption says **worded by Claude** only when it was.
+- **Built with Claude Code.** Four people and several AI agents worked in one repo under a shared `CLAUDE.md`: folder ownership, git safety rules and the product's honesty rules (code measures, Claude explains; every ball path is PREDICTED).
+
+### ElevenLabs
+
+- **Where.** The same **Hear the coach** button, on swings uploaded at `/upload`: ElevenLabs reads Claude's sentence, or the coach's own cue, aloud (`services/coach/voice.py`). It runs server-side only. The key never reaches the browser, which gets the MP3 inside the response.
+- **Model and voice.** `eleven_turbo_v2_5` for low latency, and the "George" voice, which works on the free plan. MP3 at 44.1 kHz.
+- **Cheap and demo-safe.**
+  - A successful clip is cached per swing on disk, so replaying a swing costs nothing and plays offline. A failed call is retried after 60 s.
+  - A 12 s timeout keeps it inside the web proxy's 30 s limit.
+  - With no key, or after a timeout, the caption still shows, with no audio and no error.
+- **Also.** The coach's avatar lines (`coach/avatar.py`) can be voiced with ElevenLabs from the command line (`--speak`).
+
+### Figma
+
+- **Designed in Figma by Henoch.** The landing page (`/`) and the `/demo` entry follow the Figma frames: desktop and mobile landing, the three process panels, and the full-screen mobile menu (`components/ghost/DESIGN.md`).
+- **Taken from the design.** The charcoal and mint palette, the wordmark hierarchy, and the ghost and trail artwork as separate SVGs, so the ghost moves as you scroll. There's a still version for reduced motion.
+- **Checked against the frames** at desktop, tablet and phone sizes. The landing links only to flows that work: **Demo** (the saved 3D replay) and **Your swing** (upload). The process panels are labelled illustrations, not footage.
+
+### Adaption
+
+<!--
+TODO (Adaption): write this once a fine-tune has actually run and Ghost uses it: which model,
+trained on which rows, and what it does in the app. Until then, keep the one line below (or
+delete this heading). Never claim a fine-tune that hasn't happened.
+-->
+Training-data export is ready; no fine-tune has been run yet. See *Adaption* under *In progress* above.
 
 ## Team
 
@@ -112,8 +168,8 @@ In progress: **ElevenLabs** (voice) and **Anam** (avatar), see *Voice coach* abo
 - **Two cameras and no calibration rig.** We calibrated from the player's own joints and synced on the sound of the ball, which also gave us a better contact frame.
 - **The wrist peaks after the hit.** On our forehand the hit sound is at frame 48, but the wrist is fastest at frame 54, in the follow-through. Using that peak would have overstated racket speed, so the hit sound wins when there is one.
 - **Forehand or backhand?** Measuring along the shoulder line called our backhand a forehand, because the player is side-on at contact. Checking which side of the hips the racket head is on, in court axes, gets it right.
-- **Racket speed without a racket tracker.** Scaling up wrist speed works on our two samples, but on some real backhands it's far too high or too low. We kept the estimate, labelled it, and are moving racket speed to the wrist sensor rather than adding a fudge factor.
-- **Keeping Claude honest.** It's easy for a language model to sound precise. We kept all measuring and ranking in code and gave Claude only the words, with a checker on every number.
+- **Racket speed without a racket tracker.** Scaling up wrist speed works on our two samples, but on some real backhands it's far too high or too low. We kept the estimate and labelled it. Rather than add a fudge factor, we built the wrist sensor: when a swing has one, its racket speed is used instead (tested on mock data so far).
+- **Keeping Claude honest.** It's easy for a language model to sound precise. We kept all measuring and ranking in code and gave Claude only the words, with a checker on every number and on the direction of the fix. Automated code review kept finding new phrasings that slipped past the checker, so each one became a test.
 - **Four people and several AI agents in one repo for 24 hours.** Folder ownership, typed contracts (`lib/ghost/types.ts`, `docs/interfaces.md`), git worktrees and small pull requests (more than 40) kept us from overwriting each other.
 
 ## What's next
