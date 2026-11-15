@@ -26,6 +26,7 @@ from coach.live_voice import voice_for_swing
 from physics.compare import GuessedFixError, compare
 from physics.ghost import FIXES
 from pipeline.live import LiveOptions, process_live_clip, ghost_choice
+from pipeline.multi import MultiOptions, process_multi_clips
 
 MAX_UPLOAD_BYTES = 250 * 1024 * 1024
 PROCESS_SEMAPHORE = threading.Semaphore(1)
@@ -38,7 +39,7 @@ class ProcessUploadGuard:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if (scope['type'] != 'http' or scope.get('method') != 'POST'
-                or scope.get('path', '').rstrip('/') != '/process'):
+                or scope.get('path', '').rstrip('/') not in ('/process', '/process/multi')):
             await self.app(scope, receive, send)
             return
         try:
@@ -285,3 +286,79 @@ def process_video(
         raise HTTPException(503, 'Live processing output is unavailable') from None
     finally:
         file.file.close()
+
+
+@app.post("/process/multi", status_code=201)
+def process_multi_video(
+    video_a: Annotated[UploadFile, File(description="Primary MOV, MP4, AVI or M4V clip")],
+    video_b: Annotated[UploadFile | None, File(description="Optional second camera clip")] = None,
+    sensor_csv: Annotated[UploadFile | None, File(description="Optional combined wrist-sensor CSV")] = None,
+    slowdown_a: Annotated[float, Form(gt=0, le=16, allow_inf_nan=False)] = 1,
+    slowdown_b: Annotated[float, Form(gt=0, le=16, allow_inf_nan=False)] = 1,
+    offset_b_s: Annotated[float | None, Form(allow_inf_nan=False,
+        description="Camera B playback seconds at camera A's start; omit to sync by hit audio")] = None,
+) -> dict:
+    """Optional stereo/wrist inputs; the original /process worker stays unchanged."""
+    uploads = [part for part in (video_a, video_b, sensor_csv) if part is not None]
+    try:
+        suffix_a = Path(video_a.filename or '').suffix.lower()
+        video_suffixes = ('.mov', '.mp4', '.m4v', '.avi')
+        if suffix_a not in video_suffixes:
+            raise HTTPException(422, 'Upload a MOV, MP4, M4V or AVI video')
+        root = Path(os.environ.get('GHOST_SWINGS_DIR', str(
+            Path(__file__).resolve().parents[2] / 'data' / 'processed'))).resolve()
+        options = MultiOptions(slowdown_a=slowdown_a, slowdown_b=slowdown_b,
+                               offset_b_s=offset_b_s,
+                               model_path=os.environ.get('GHOST_POSE_MODEL', MultiOptions.model_path))
+        notices = []
+        with tempfile.TemporaryDirectory(prefix='ghost-multi-upload-') as temporary:
+            directory = Path(temporary)
+            total = 0
+
+            def save(part: UploadFile, name: str) -> tuple[Path, int]:
+                nonlocal total
+                destination = directory / name
+                size = 0
+                with destination.open('wb') as stream:
+                    while chunk := part.file.read(1024 * 1024):
+                        size += len(chunk)
+                        total += len(chunk)
+                        if total > MAX_UPLOAD_BYTES:
+                            raise HTTPException(413, 'Video exceeds the 250 MB upload limit')
+                        stream.write(chunk)
+                return destination, size
+
+            primary, size = save(video_a, f'a{suffix_a}')
+            if not size:
+                raise HTTPException(422, 'Video upload is empty')
+            secondary, sensor = None, None
+            if video_b is not None:
+                suffix_b = Path(video_b.filename or '').suffix.lower()
+                candidate, size = save(video_b, f'b{suffix_b if suffix_b in video_suffixes else ".invalid"}')
+                if size and suffix_b in video_suffixes:
+                    secondary = candidate
+                else:
+                    notices.append('Second video is empty or unsupported; using video_a with estimated (1 camera) depth.')
+            if sensor_csv is not None:
+                candidate, size = save(sensor_csv, 'wrist.csv')
+                if size and size <= 10 * 1024 * 1024 and Path(sensor_csv.filename or '').suffix.lower() == '.csv':
+                    sensor = candidate
+                else:
+                    notices.append('Wrist CSV is empty, unsupported or over 10 MB; ignored the sensor data.')
+            # Share the live worker's admission lock, only after every part is saved.
+            if not PROCESS_SEMAPHORE.acquire(blocking=False):
+                raise HTTPException(429, 'A clip is already processing')
+            try:
+                return process_multi_clips(primary, root / f'live-{uuid.uuid4().hex}', options,
+                                           video_b=secondary, sensor_csv=sensor, warnings=notices)
+            finally:
+                PROCESS_SEMAPHORE.release()
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from None
+    except RuntimeError:
+        raise HTTPException(503, 'Live pipeline unavailable; configure the pose model and ffmpeg/ffprobe') from None
+    except OSError:
+        raise HTTPException(503, 'Live processing output is unavailable') from None
+    finally:
+        for part in uploads:
+            part.file.close()
