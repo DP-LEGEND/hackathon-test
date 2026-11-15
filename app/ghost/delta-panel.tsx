@@ -120,8 +120,8 @@ export function BallChanges({
 }) {
   const { ball, you, ghost } = compare;
   // Physics keeps ball and racket speed when they read a guessed joint, but flags them
-  // (notMeasured). The front wall height follows from that same launch, so it carries the
-  // ball-speed flag too.
+  // (notMeasured). The front wall height and where the ball lands follow from that same launch,
+  // so they carry the ball-speed flag too.
   const rows: Row[] = [
     {
       key: "outcome",
@@ -136,7 +136,10 @@ export function BallChanges({
       changeRow("wall", "Front wall height", ball.frontWallHeightM, "m"),
       guessedWhy("ball_speed", compare.notMeasured),
     ),
-    changeRow("depth", "Lands from front wall", ball.landingDepthM, "m"),
+    withCaveat(
+      changeRow("depth", "Lands from front wall", ball.landingDepthM, "m"),
+      guessedWhy("ball_speed", compare.notMeasured),
+    ),
     withCaveat(
       {
         key: "racket",

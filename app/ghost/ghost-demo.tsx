@@ -11,7 +11,7 @@ import { ArrowLeft, ArrowRight, RotateCcw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { CoachCaptionBar, type CaptionState } from "./coach-caption";
+import { CoachCaptionBar, noFaultInWhatWasChecked, type CaptionState } from "./coach-caption";
 import { CoachDetails } from "./coach-details";
 import {
   fixName,
@@ -221,9 +221,14 @@ export function GhostDemo({ requestedSwing }: { requestedSwing: string | null })
   // route. Asked for only on a step that shows the caption (the coach's call onwards), once the
   // coach has answered and the live service is online. It can take seconds; the plain caption
   // shows meanwhile, and stays if there's no voice (null). Only a voice with audio is kept, so
-  // coming back without one asks again.
+  // coming back without one asks again. No fault found in what was checked: never asked for,
+  // because the caption shows only what was checked there, with no voice.
   const voiceWanted =
-    entry?.origin === "api" && step !== "swing" && coach.status === "ready" && api.status === "online";
+    entry?.origin === "api" &&
+    step !== "swing" &&
+    coachCaption !== null &&
+    !noFaultInWhatWasChecked(coachCaption) &&
+    api.status === "online";
   const voicePromise = useMemo(() => (entry && voiceWanted ? loadVoiceFor(entry) : null), [entry, voiceWanted]);
   const voice = useAsync(voicePromise);
 

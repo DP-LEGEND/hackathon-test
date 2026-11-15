@@ -36,6 +36,15 @@ export function checkedEverything(caption: CoachCaption): boolean {
   return caption.notJudged.length === 0 && caption.notMeasured.length === 0;
 }
 
+/**
+ * No fault, but the coach skipped checks or couldn't check some faults: the caption says "No fault
+ * found in what was checked", its cue says only what was checked, and there's no voice (the page
+ * doesn't ask for one).
+ */
+export function noFaultInWhatWasChecked(caption: CoachCaption): boolean {
+  return !caption.fault && !checkedEverything(caption);
+}
+
 /** The cue when the coach found no fault but couldn't check everything: never an outright all-clear. */
 const PARTIAL_CHECK_CUE = "Nothing to fix in what the coach could check.";
 
@@ -44,7 +53,7 @@ export function CoachCaptionBar({ state, size }: { state: CaptionState; size: "l
   // No fault, but the coach skipped checks or couldn't check some faults: its own cue ("Nothing to
   // fix on this swing") and any voice, which words or speaks that cue, would read as an all-clear
   // under "No fault found in what was checked". So say only what was checked, with no voice.
-  const partial = state.kind === "ready" && !state.caption.fault && !checkedEverything(state.caption);
+  const partial = state.kind === "ready" && noFaultInWhatWasChecked(state.caption);
   const voice = state.kind === "ready" && !partial ? (state.voice ?? null) : null;
   return (
     <div className="pointer-events-none absolute inset-x-3 bottom-3 flex justify-center">
