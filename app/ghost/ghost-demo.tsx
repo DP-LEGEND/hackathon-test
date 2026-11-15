@@ -456,7 +456,7 @@ export function GhostDemo({ requestedSwing }: { requestedSwing: string | null })
           {step === "coach" && <CoachDetails state={caption} />}
           {/* After the coach's call (this block is every step but Pick a swing); hidden unless the
               agent is configured. Stays mounted across steps, so the conversation carries on. */}
-          <AskCoach sessionKey={entry.key} tools={askTools} />
+          <AskCoach sessionKey={entry.key} tools={askTools} recheck={apiAttempt} />
           {step === "coach" && (
             <WristSensorPanel
               state={wrist}

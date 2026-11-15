@@ -14,20 +14,49 @@ import { Input } from "@/components/ui/input";
 export type CoachTool = (parameters: Record<string, unknown>) => Promise<unknown>;
 type Line = { who: "You" | "Coach"; text: string };
 
-export function AskCoach({ sessionKey, tools }: { sessionKey: string; tools: Record<string, CoachTool> }) {
+// stripAudioTags misses hyphenated tags such as "[matter-of-fact]"; drop those from the transcript too.
+const withoutTags = (text: string) => text.replace(/\[[\p{L}\p{M}\p{N}_\s'-]+\](?!\()/gu, "").replace(/\s{2,}/g, " ").trim();
+
+// Waits before re-asking when the availability check failed (service down or starting).
+const RECHECK_MS = [2_000, 5_000, 10_000, 30_000];
+
+export function AskCoach({
+  sessionKey,
+  tools,
+  recheck = 0,
+}: {
+  sessionKey: string;
+  tools: Record<string, CoachTool>;
+  /** Change it (e.g. the page's API "Try again" counter) to ask the service again now. */
+  recheck?: number;
+}) {
   const [available, setAvailable] = useState(false);
   useEffect(() => {
     let live = true;
-    fetch("/api/coach/agent", { cache: "no-store" })
-      .then((response) => (response.ok ? response.json() : null))
-      .then((data: unknown) => {
-        if (live) setAvailable(typeof data === "object" && data !== null && (data as { available?: unknown }).available === true);
-      })
-      .catch(() => undefined);
+    let failures = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // Only the service's answer settles it: {"available": false} keeps the panel hidden for good.
+    // A failed request (network error, proxy 502) retries quietly, so the panel can appear
+    // once the service is up, without a page reload.
+    const check = () => {
+      fetch("/api/coach/agent", { cache: "no-store" })
+        .then((response) => {
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          return response.json() as Promise<unknown>;
+        })
+        .then((data) => {
+          if (live) setAvailable(typeof data === "object" && data !== null && (data as { available?: unknown }).available === true);
+        })
+        .catch(() => {
+          if (live) timer = setTimeout(check, RECHECK_MS[Math.min(failures++, RECHECK_MS.length - 1)]);
+        });
+    };
+    check();
     return () => {
       live = false;
+      clearTimeout(timer);
     };
-  }, []);
+  }, [recheck]);
   if (!available) return null;
   // Keyed by swing: a new swing starts a new conversation.
   return <AskCoachSession key={sessionKey} tools={tools} />;
@@ -62,7 +91,7 @@ function AskCoachSession({ tools }: { tools: Record<string, CoachTool> }) {
   return (
     <ConversationProvider
       clientTools={clientTools}
-      onMessage={({ message, role }) => add({ who: role === "user" ? "You" : "Coach", text: message })}
+      onMessage={({ message, role }) => add({ who: role === "user" ? "You" : "Coach", text: role === "user" ? message : withoutTags(message) })}
       onError={(message: unknown) => setError(typeof message === "string" ? message : "The coach couldn't connect.")}
     >
       <AskCoachPanel lines={lines} error={error} setError={setError} onTyped={(text) => add({ who: "You", text })} />
@@ -95,8 +124,20 @@ function AskCoachPanel({
       const data: unknown = response.ok ? await response.json() : null;
       const signedUrl = typeof data === "object" && data !== null ? (data as { signedUrl?: unknown }).signedUrl : null;
       if (typeof signedUrl !== "string") throw new Error("The coach isn't available right now.");
-      // stripAudioTags: keep expressive tags like "[curious]" out of the transcript.
-      conversation.startSession({ signedUrl, stripAudioTags: true });
+      // The SDK's startSession returns nothing and reports a failed start (microphone denied,
+      // handshake failed) through onError, so wait for this attempt to connect or fail; the button
+      // stays on "Connecting…" until then. These callbacks run alongside the provider's own.
+      await new Promise<void>((resolve, reject) => {
+        conversation.startSession({
+          signedUrl,
+          // Keep expressive tags like "[curious]" out of the transcript.
+          stripAudioTags: true,
+          onConnect: () => resolve(),
+          onDisconnect: () => resolve(),
+          onError: (message: string) =>
+            reject(new Error(`The coach couldn't start${message ? ` (${message})` : ""}. Allow the microphone and try again.`)),
+        });
+      });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "The coach isn't available right now.");
     } finally {
