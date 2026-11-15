@@ -439,7 +439,7 @@ def ghost_azimuth(you_aim: dict, Pc_you: np.ndarray, Pc_ghost: np.ndarray, hand:
 
 def contact_turn_for_intent(P: np.ndarray, Pc: np.ndarray, hand: str, contact: int, you_aim: dict,
                             intent: str, fix_name: str, amount: float, *, fix_turn_deg: float | None = 0.0,
-                            stated: bool = True) -> tuple[dict, float]:
+                            stated: bool = True, arm_guessed: str | None = None) -> tuple[dict, float]:
     """(assumptions.aim, contact_turn_deg for apply_fix): the smallest shoulder turn held at contact
     that puts the ghost's aim on the intended line (INTENT_AIMS).
 
@@ -449,12 +449,16 @@ def contact_turn_for_intent(P: np.ndarray, Pc: np.ndarray, hand: str, contact: i
     turn of the racket line: 0 for the shoulder and stance fixes, which leave contact alone): no
     search, and nothing about the result is set by hand (the ghost's aim is still measured from
     its pose). Capped at the fix's size for a shoulder fix (AIM_FIXES), else AIM_HOLD_LIMIT_DEG.
-    For a zero amount, an aim that is only ASSUMED (no measured aim to turn), a racket line that
-    can't be measured (fix_turn_deg None too) or shoulders that don't turn, nothing is held
+    For a zero amount, an aim that is only ASSUMED (no measured aim to turn), a guessed hitting arm
+    (arm_guessed), a racket line that can't be measured (fix_turn_deg None too) or shoulders that
+    don't turn, nothing is held
     (contact_turn_deg 0) and `why` says so.
 
     stated: the player said this is the shot they meant (label STATED); False when it is the
     target every ghost aims (TARGET_INTENT, label TARGET).
+
+    arm_guessed: why the hitting elbow or wrist at contact is guessed (guessed_arm_at_contact),
+        else None. The racket line runs through them, so a guessed arm holds nothing.
 
     contactTurnDeg is in the shoulders' sense (- = turned less far through at contact, i.e. less
     open), as apply_fix takes it; headingTurnDeg is the same turn on the court (+ = towards the
@@ -469,6 +473,8 @@ def contact_turn_for_intent(P: np.ndarray, Pc: np.ndarray, hand: str, contact: i
         why = "the fix's amount is 0"
     elif not you_aim.get("estimate"):
         why = "your aim is assumed, not measured, so there is no measured aim to turn onto the line"
+    elif arm_guessed:
+        why = f"the hitting arm at contact is guessed ({arm_guessed}), so its racket line can't be aimed"
     elif racket_line_heading(Pc, hand, contact) is None or fix_turn_deg is None:
         why = "the racket line at contact can't be measured, so a turn of it can't be aimed"
     else:
@@ -583,6 +589,25 @@ def guessed_metrics(swing: dict, hand: str, contact: int, fps: float) -> dict[st
             out["ball_speed"] = reason
     return out
 
+
+
+def guessed_arm_at_contact(swing: dict, hand: str, contact: int) -> str | None:
+    """Why the hitting elbow or wrist is guessed at the contact frame, else None.
+
+    guessed_metrics' rule (coach.measure_extra): listed in metadata.approximatedJoints, marked
+    true in frames[contact].filled, or below 0.5 visibility at contact. The racket line that an
+    aiming hold turns runs from the elbow through the wrist, so neither may be guessed.
+    """
+    from coach.measure_extra import _guessed_why, _per_joint
+
+    frames = swing.get("frames") or []
+    if not frames:
+        return None
+    c = int(np.clip(contact, 0, len(frames) - 1))
+    listed = set((swing.get("metadata") or {}).get("approximatedJoints") or [])
+    vis = _per_joint(frames[c], "visibility")
+    a = ARM[hand]
+    return next((w for j in (a["el"], a["wr"]) if (w := _guessed_why(j, listed, frames, range(c, c + 1), vis))), None)
 
 # Fix -> the measurement it edits, and the joint that measurement needs around contact.
 FIX_TARGETS = {
@@ -831,6 +856,7 @@ def compare(swing: dict, fix_name: str, amount: float, fps_real: float | None = 
     if intent is not None:
         aim, contact_turn = contact_turn_for_intent(
             P, Pc, hand, contact, you_aim, intent, fix_name, amount, stated=stated,
+            arm_guessed=guessed_arm_at_contact(played, hand, contact),
             fix_turn_deg=_line_turn(Pc, court_axes(to_array(ghost_swing)), hand, contact))
     if contact_turn:
         ghost_swing = apply_fix(played, fix_name, amount, fps_real, hand, contact_turn_deg=contact_turn)
