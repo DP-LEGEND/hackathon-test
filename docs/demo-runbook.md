@@ -76,7 +76,16 @@ For rehearsal, start terminal tab 1 (below) with the same `cd ~/hackathon-demo/s
 GHOST_SWINGS_DIR=~/ghost-rehearsal ~/ghost-env/bin/python -m uvicorn pipeline.server:app --port 8000
 ```
 
-Stop it with Ctrl+C when you're done, then start terminal tab 1 for the show as below.
+In a second terminal tab, start the web app so /upload works:
+
+```
+cd ~/hackathon-demo
+```
+```
+npm run dev
+```
+
+Stop both with Ctrl+C when you're done, then start terminal tabs 1 and 2 for the show as below.
 
 **5. Optional: make the mock wrist-sensor data (once).**
 
@@ -86,6 +95,8 @@ cd ~/hackathon-demo/services
 ```
 ~/ghost-env/bin/python -m wrist.synth ~/wrist-mock --camera --mishit 3
 ```
+
+**6. Run the smoke check** (`~/ghost-env/bin/python scripts/demo_smoke.py`) once terminal tabs 1 and 2 are up: see tab 3 below.
 
 ## Start Ghost (three terminal tabs)
 
@@ -135,7 +146,18 @@ npm run dev
 
 Wait for "Ready". The first page load compiles the page, so open it before you go on.
 
-**Tab 3: wrist-sensor command for beat 4** (big font)
+**Tab 3: smoke check, then the wrist-sensor command for beat 4** (big font)
+
+With tabs 1 and 2 running, check the service, the web app and the saved swings:
+
+```
+cd ~/hackathon-demo
+```
+```
+~/ghost-env/bin/python scripts/demo_smoke.py
+```
+
+Every line should say PASS, ending *"5/5 checks passed"*. A FAIL line says what's wrong: fix it before you go on. Then:
 
 ```
 cd ~/hackathon-demo/services
@@ -171,7 +193,7 @@ The page has four steps: **Pick a swing → Coach's call → The ghost → On co
 
 | Click | Screen shows | PRESENTER says |
 |---|---|---|
-| **Try another swing**, then **"Backhand · two-camera stereo · 120 fps"** | **The coach's call:** *"No fault found in what was checked"*, cue *"Nothing to fix on this swing. Hit the next one the same way."* | A backhand, filmed on two cameras at once. Nothing to fix in what the camera could see. It also says what it couldn't check: the wrist (no sensor on this swing) and checks that need the right elbow, which the camera couldn't see. That's exactly why we strapped a sensor to the arm. |
+| **Try another swing**, then **"Backhand · two-camera stereo · 120 fps"** | **The coach's call:** *"No fault found in what was checked"*, cue *"Nothing to fix on this swing. Hit the next one the same way."* | A backhand, filmed on two cameras at once. Nothing to fix in what the coach could check. It also says what it couldn't check: the wrist (no sensor on this swing) and checks that need the right elbow, which the camera couldn't see. That's exactly why we strapped a sensor to the arm. |
 | **Pick a swing** (the step bar at the top) | The swing list | |
 
 Don't click **Show the ghost** here. With nothing flagged, the page would show an uncoached example edit.
@@ -202,7 +224,7 @@ Merged (#44), but **MOCK data only** and **terminal only**: there's no wrist scr
 ~/ghost-env/bin/python -m wrist.run ~/wrist-mock/export --contacts ~/wrist-mock/contacts.csv --swings ~/wrist-mock/swings --video-tap 3.304 --out ~/wrist-mock/wrist_metrics.json --series-out ~/wrist-mock/wrist_series.json --filled-out ~/wrist-mock/filled
 ```
 
-It shows **"MOCK DATA. 100 Hz, 73 s recorded."** and *"10/10 pairs within 100 ms"*. Forearm roll is about +9° to +21° on the normal swings and +58° to +70° on the rolled ones, and synth-04 is flagged *mishit*. Say **"mock"** out loud: the camera can't see a rolled wrist, but a phone on the forearm can. A real recording comes next.
+It shows **"MOCK DATA. 100 Hz, 73 s recorded."** and *"10/10 pairs within 100 ms"*. Forearm roll is about +9° to +21° on the normal swings and +58° to +70° on the rolled ones, and synth-04 shows impact 12.63 g, ring-down 75 ms (not judged). Say **"mock"** out loud: the camera can't see a rolled wrist, but a phone on the forearm can. A real recording comes next.
 
 ## What each screen should show
 
@@ -236,7 +258,7 @@ The launch angle isn't shown as a number. The court panel's footnote says the la
 | **Speed wildly wrong** | Browser tab 2 opened the fresh swing in `/ghost`, but its speed is wildly wrong | There's no **Try again** here: a finished upload jumps to `/ghost`, and `/upload` resets. In browser tab 2, go back to http://localhost:3000/upload, click **Choose a video** and pick `~/Downloads/fresh.mov` again. Set **Slowdown** (**1×** for a normal 60 fps video, **4×** or **8×** for slow motion), and **Hitting hand** or **Stroke** if those were misread. Then click **Build my ghost**. |
 | **Pipeline missing** | `/upload` (browser tab 2): *"Couldn't build your ghost"* with *"Live pipeline unavailable; configure the pose model and ffmpeg/ffprobe"* | Pre-flight step 3 failed. Skip beat 3 and use the saved swings. |
 | **Wi-Fi dies** | Nothing, as long as the app is already running | Keep going: the service, the coach and the ghost all run on this Mac. Don't restart the app or run a build while offline (the fonts come from Google Fonts). If anything misbehaves, **use the saved swings** (beats 1 and 2) and skip beat 3. |
-| **A ghost won't load** | *"Couldn't make this ghost: …"* | Click **Try again**. If it fails again, click **Try another swing** and pick a saved sample. |
+| **A ghost won't load** | *"Couldn't make this ghost: …"* | Click **Try again**. If it fails again, click **1 Pick a swing** in the steps at the top and pick a saved sample. |
 | **Everything is broken** | | Play the backup video from the same moment. Never debug in front of the judges. |
 
 ## Rules on stage
