@@ -9,7 +9,8 @@ To tune: change THRESHOLDS only. Each rule has
 - severe_at:   severity reaches 1.0 here (rises linearly from 0 at threshold)
 - target:      where the ghost aims; fix_amount = how far past target on the faulty
                side (0 if already on the good side, which makes it not ghost_ready)
-- source:      "labelled clips" (from real data) or "guess" (coaching rule of thumb)
+- source:      "labelled clips" (from real data), "guess" (coaching rule of thumb), or for
+               rolled_wrist the wrist-sensor session it was tuned on (shown on screen)
 - amount_from: optional {measurement, target} when the ghost edit needs a different
                unit than the detection measurement (e.g. degrees detected, ms edited)
 The direction (too high or too low) follows from severe_at vs threshold.
@@ -54,6 +55,15 @@ GUESS = "guess"
 # Thresholds picked by python -m wrist.tune from labelled wrist-sensor swings.
 WRIST_SENSOR = "wrist-sensor swings"
 WRIST_MOCK = "mock wrist-sensor swings"  # synthetic data: replace with real swings
+# rolled_wrist on real swings: one shadow session (no ball, 14 Nov 2026), phone on the
+# forearm. Roll = the gyro integrated about the forearm over -150..+100 ms around the
+# forearm's fastest turn (the stand-in for contact). Per stroke, threshold = the midpoint
+# of the gap between the largest good roll and the smallest rolled one (every swing sorts,
+# leave-one-out too); target / severe_at = the good / rolled medians. The per-swing
+# numbers are in coach/tests/test_rolled_wrist_real.py. The margin is thin (BH 4.0 deg,
+# FH 0.95 deg) and contact 25 ms earlier makes both strokes overlap: retune on real hits.
+WRIST_SESSION_BH = "ESTIMATE, tuned on one session (n=29 shadow backhands: 15 good, 14 rolled)"
+WRIST_SESSION_FH = "ESTIMATE, tuned on one session (n=21 shadow forehands: 10 good, 11 rolled)"
 
 # ---- Tune here ---------------------------------------------------------------------
 THRESHOLDS: dict[str, dict[str, dict[str, Any]]] = {
@@ -84,11 +94,12 @@ THRESHOLDS: dict[str, dict[str, dict[str, Any]]] = {
                             "severe_at": 0.85, "target": 1.7, "source": LABELLED,
                             "amount_from": {"measurement": "stance_open_deg", "target": 25.0,
                                             "fix_lowers": True}},
-        # Wrist sensor only (coach/wrist_sensor.py): forearm roll -150..+100 ms around
-        # contact; skipped when the swing has no sensor data. From MOCK 5 normal (16.5 deg)
-        # vs 5 rolled (62.1 deg) swings via python -m wrist.tune: retune on real swings.
-        "rolled_wrist": {"measurement": "forearm_roll_deg", "threshold": 39.3,
-                         "severe_at": 62.1, "target": 16.5, "source": WRIST_MOCK},
+        # Wrist sensor only (coach/wrist_sensor.py): size of the forearm roll -150..+100 ms
+        # around contact; skipped when the swing has no sensor data. Real shadow forehands:
+        # good 119.8-144.8 deg (median 136.75, target 136.8), rolled 146.7-165.0 (median 158.8).
+        # Was the MOCK 39.3 / 62.1 / 16.5 rule; real forearms roll far more than the mock.
+        "rolled_wrist": {"measurement": "forearm_roll_deg", "threshold": 145.75,
+                         "severe_at": 158.8, "target": 136.8, "source": WRIST_SESSION_FH},
     },
     "backhand": {
         # Fastest wrist OPENING before contact; a fast cocking move never counts.
@@ -103,9 +114,11 @@ THRESHOLDS: dict[str, dict[str, dict[str, Any]]] = {
                          "severe_at": 109.0, "target": 77.0, "source": LABELLED},
         "stance_too_open": {"measurement": "stance_open_deg", "threshold": 40.0,
                             "severe_at": 70.0, "target": 15.0, "source": GUESS},
-        # Wrist sensor only; the same MOCK rule as the forehand until real backhands.
-        "rolled_wrist": {"measurement": "forearm_roll_deg", "threshold": 39.3,
-                         "severe_at": 62.1, "target": 16.5, "source": WRIST_MOCK},
+        # Wrist sensor only. Real shadow backhands: good 95.6-120.3 deg (median 99.3),
+        # rolled 128.3-149.7 (median 137.3). A good forehand rolls more than a rolled
+        # backhand, so each stroke needs its own line.
+        "rolled_wrist": {"measurement": "forearm_roll_deg", "threshold": 124.3,
+                         "severe_at": 137.3, "target": 99.3, "source": WRIST_SESSION_BH},
     },
 }
 # ------------------------------------------------------------------------------------

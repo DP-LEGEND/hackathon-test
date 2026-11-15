@@ -13,12 +13,13 @@ from pathlib import Path
 import pytest
 
 from coach.agent import coach_swing, main as agent_main
-from coach.faults import MOCK_SENSOR_NOTE, THRESHOLDS, detect_faults, measure_swing, severity
+from coach.faults import MOCK_SENSOR_NOTE, THRESHOLDS, WRIST_MOCK, detect_faults, measure_swing, severity
 from coach.wrist_sensor import NO_SENSOR, attach_wrist, sensor_metrics
 from wrist.load import load_recording
 from wrist.metrics import wrist_metrics
 from wrist.sync import read_contacts, synchronise
 from wrist.synth import make_session
+from wrist.tune import tune
 
 SAMPLE = Path(__file__).resolve().parents[3] / "data" / "samples" / "swing_sample.json"
 RULE = THRESHOLDS["backhand"]["rolled_wrist"]
@@ -118,12 +119,19 @@ def test_agent_cli_attaches_the_wrist_file(sample: dict, tmp_path: Path, monkeyp
     assert "rolled_wrist" in [result["fault"]["id"], *result["other_faults"]]
 
 
-def test_end_to_end_from_a_mock_sensor_export(sample: dict, tmp_path: Path) -> None:
-    """Synthetic export -> wrist metrics -> coach: rolled swings fire, normal ones don't."""
+def test_end_to_end_from_a_mock_sensor_export(sample: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Synthetic export -> wrist metrics -> coach: rolled swings fire, normal ones don't.
+
+    The synthetic forearm rolls far less than a real one (rolled ~62 deg vs real 128-165), so
+    it's judged by the rule wrist.tune picks on this same mock session, not the real-tuned one.
+    """
     truth = make_session(tmp_path)
     rec = load_recording(truth["export"])
     sync = synchronise(rec, read_contacts(truth["contacts"]), video_tap_s=truth["video_tap_s"])
     metrics, _ = wrist_metrics(rec, sync)
+    mock_rule = tune(metrics, {sid: t["label"] for sid, t in truth["swings"].items()})["verdict"]["rule"]
+    assert mock_rule["source"] == WRIST_MOCK
+    monkeypatch.setitem(THRESHOLDS["backhand"], "rolled_wrist", mock_rule)
     for swing_id, t in truth["swings"].items():
         swing = attach_wrist({**sample, "id": swing_id}, metrics)
         f = rolled(swing)
