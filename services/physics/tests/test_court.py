@@ -14,12 +14,13 @@ import pytest
 
 from physics.ball import COURT_WIDTH_M, DEFAULT_CONTACT
 from physics.compare import (
-    AZIMUTH_LIMIT_DEG, compare, decide_stroke, drive_spot, estimate_azimuth, main, swing_stroke,
+    AZIMUTH_LIMIT_DEG, compare, decide_stroke, drive_spot, estimate_azimuth, ghost_azimuth, main,
+    racket_line_heading, swing_stroke,
 )
 from physics.ghost import apply_fix
 from physics.skeleton import (
-    ARM, FEET, L_HIP, L_SH, N_POINTS, NOSE, R_SH, bone_lengths, court_axes, court_shift, mid, racket_head,
-    swing_hand, to_array, to_court, up_vector,
+    ARM, FEET, L_HIP, L_SH, N_POINTS, NOSE, R_HIP, R_SH, bone_lengths, court_axes, court_shift, mid, racket_head,
+    rotate, swing_hand, to_array, to_court, up_vector,
 )
 from physics.tests.swing_factory import make_swing
 
@@ -208,9 +209,12 @@ def test_backhand_sample_matches_the_video(backhand):
         assert start[0] < 3.2  # left half
         assert start == pytest.approx(_head(r, side), abs=5e-4)
         az = a["launch"][side]["azimuth"]
-        assert abs(az["value"]) <= 5 and az["label"] == "ASSUMED" and az["estimate"] is False
-        assert az["rawValue"] > 25  # the wrist moves ~53 deg off straight: sideways, so it isn't used
+        assert az["label"] == "ASSUMED" and az["estimate"] is False  # the ghost inherits your aim's label
         assert _facing_z(to_array(r[side]["swing"]), r["contactFrame"]) < 0
+    you_az, ghost_az = a["launch"]["you"]["azimuth"], a["launch"]["ghost"]["azimuth"]
+    assert you_az["value"] == 0.0 and you_az["rawValue"] > 25  # the wrist moves ~53 deg off straight: sideways
+    # The ghost's aim is yours turned by the elbow fix's turn of the racket line at contact.
+    assert ghost_az["value"] == pytest.approx(you_az["value"] + ghost_az["racketLineTurnDeg"], abs=0.051)
 
 
 def test_elevation_can_be_set_for_one_swing(backhand):
@@ -262,6 +266,64 @@ def test_unmeasurable_aim_is_assumed_straight():
     Pc = np.full((3, N_POINTS, 3), np.nan)
     az = estimate_azimuth(Pc, "R", 1)
     assert (az["value"], az["label"], az["rawValue"]) == (0.0, "ASSUMED", None)
+
+
+# ---- The ghost's aim: yours, turned with the racket line at contact ----
+
+def _arm_pose() -> np.ndarray:
+    """MOCK court-axes pose at frame 0: right elbow and wrist out to the right, hips at x = 5."""
+    Pc = np.full((1, N_POINTS, 3), np.nan)
+    Pc[0, L_HIP], Pc[0, R_HIP] = (4.85, 0.9, 7.3), (5.15, 0.9, 7.3)
+    Pc[0, ARM["R"]["el"]], Pc[0, ARM["R"]["wr"]] = (5.35, 0.9, 7.1), (5.55, 0.7, 6.9)
+    return Pc
+
+
+@pytest.mark.parametrize("trunk_deg,turn,value,clamped", [
+    (0.0, 0.0, -13.5, False),
+    (10.0, -10.0, -20.0, True),   # opens 10 deg further: -23.5, clamped to the limit
+    (-10.0, 10.0, -3.5, False),   # 10 deg less open: 10 deg towards the line
+])
+def test_ghost_aim_turns_with_the_trunk_at_contact(trunk_deg, turn, value, clamped):
+    # Turning the upper body counter-clockwise seen from above (the way a right-hander's forehand
+    # unwinds) opens it: the racket line, and so the ball, swings towards the left wall.
+    you = _arm_pose()
+    ghost = you.copy()
+    centre = mid(you, L_HIP, R_HIP)[0]
+    ghost[0, :23] = rotate(you[0, :23], centre, np.array([0.0, 1.0, 0.0]), np.radians(trunk_deg))
+    you_aim = {"value": -13.5, "estimate": True, "label": "ESTIMATE"}
+    az = ghost_azimuth(you_aim, you, ghost, "R", 0)
+    assert az["racketLineTurnDeg"] == pytest.approx(turn, abs=0.05)
+    assert racket_line_heading(ghost, "R", 0) - racket_line_heading(you, "R", 0) == pytest.approx(turn, abs=1e-9)
+    assert (az["value"], az["clamped"], az["label"], az["estimate"]) == (pytest.approx(value), clamped, "ESTIMATE", True)
+    assert az["rawValue"] == pytest.approx(-13.5 + turn, abs=0.05) and az["youDeg"] == -13.5
+
+
+def test_hero_ghost_keeps_your_line_because_its_contact_is_yours(forehand):
+    # turn_shoulders_less only shrinks the backswing and fades to zero at contact, so the ghost's
+    # trunk, forearm and racket head at contact are yours: same racket face, same aim. The ghost's
+    # own wrist direction said -15.1 deg, from where the edit blends back into your swing.
+    r = compare(forehand, "turn_shoulders_less", 52.6)
+    c, launch = r["contactFrame"], r["assumptions"]["launch"]
+    you, ghost = to_array(r["you"]["swing"]), to_array(r["ghost"]["swing"])
+    np.testing.assert_array_equal(ghost[c], you[c])
+    assert launch["ghost"]["azimuth"]["racketLineTurnDeg"] == 0.0
+    assert launch["ghost"]["azimuth"]["value"] == launch["you"]["azimuth"]["value"] == -13.5
+    assert _front_wall_x(r["ghost"]["ball"]) == _front_wall_x(r["you"]["ball"])  # one line, less pace
+    # The numbers docs/demo-runbook.md, docs/pitch.md and scripts/demo_smoke.py quote.
+    d = r["delta"]["ball"]
+    assert (d["speedKmh"]["you"], d["speedKmh"]["ghost"]) == (133.2, 119.1)
+    assert (d["frontWallHeightM"]["you"], d["frontWallHeightM"]["ghost"]) == (1.92, 1.87)
+    assert (d["landingDepthM"]["you"], d["landingDepthM"]["ghost"]) == (8.97, 7.6)
+
+
+def test_elbow_fix_turns_the_aim_with_the_forearm(fh_elbow):
+    c, launch = fh_elbow["contactFrame"], fh_elbow["assumptions"]["launch"]
+    you, ghost = (to_array(fh_elbow[side]["swing"]) for side in ("you", "ghost"))
+    turn = racket_line_heading(ghost, "R", c) - racket_line_heading(you, "R", c)
+    az = launch["ghost"]["azimuth"]
+    assert abs(turn) > 3  # straightening the elbow swings the forearm, and the racket with it
+    assert az["racketLineTurnDeg"] == pytest.approx(turn, abs=0.05)
+    assert az["value"] == pytest.approx(launch["you"]["azimuth"]["value"] + turn, abs=0.06)
 
 
 @pytest.mark.parametrize("hand,side,x", [("R", "forehand", 5.4), ("R", "backhand", 2.0),

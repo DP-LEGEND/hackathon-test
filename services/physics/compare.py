@@ -13,7 +13,8 @@ spot for the stroke. The ghost gets exactly the same turn and slide, so the two 
 overlap and only the fixed part differs. Each PREDICTED ball starts at its own swing's racket
 head at contact, so the ball leaves the racket you see: yours on the anchor, the ghost's
 wherever the fix moved its racket (about 10 cm away for the elbow fixes). The same placement
-and launch rule apply to both swings, so only the fix changes the ball.
+and launch rule apply to both swings, so only the fix changes the ball: the ghost's aim is
+yours turned by however much the fix turns its racket line at contact (ghost_azimuth).
 
 Where the ball model's inputs come from (physics/ball.py):
 - Contact: the swing's contactFrame. It is the hit sound when the pipeline's contactMethod is
@@ -39,10 +40,13 @@ Where the ball model's inputs come from (physics/ball.py):
     It ignores the wrist snap, so the hold_wrist_cock fix doesn't change it.
   RACKET_LEVER_M = RACKET_HEAD_M (0.45 m, the launch point) + GRIP_OFFSET_M, for both.
   assumptions.racketSpeed says which source was used, and why.
-- Azimuth (aim across the court) is an ESTIMATE: the floor-plane direction of the hitting
-  wrist's velocity at contact, in court axes, clamped to +-AZIMUTH_LIMIT_DEG. Only within
-  AZIMUTH_TRUST_DEG of straight, as on a drive; further off (a backhand's wrist moves
-  sideways) the aim is ASSUMED straight.
+- Azimuth (aim across the court). Yours is an ESTIMATE: the floor-plane direction of the
+  hitting wrist's velocity at contact, in court axes, clamped to +-AZIMUTH_LIMIT_DEG. Only
+  within AZIMUTH_TRUST_DEG of straight, as on a drive; further off (a backhand's wrist moves
+  sideways) the aim is ASSUMED straight. The ghost's is yours plus the fix's change in the
+  racket line's floor heading at contact (elbow -> racket head, ghost minus you), with your
+  label: the racket face turns with the trunk and forearm that carry it. A fix that leaves the
+  trunk and forearm at contact where they were leaves the aim where it was.
 - Elevation (launch angle) is ASSUMED: DEFAULT_ELEVATION_DEG for the stroke (12 forehand,
   3 backhand) unless you pass one for the swing. A swing's path at contact is too noisy to
   give the launch angle, and the face angle needs racket tracking.
@@ -349,6 +353,49 @@ def estimate_azimuth(Pc: np.ndarray, hand: str, contact: int) -> dict:
     }
 
 
+def racket_line_heading(Pc: np.ndarray, hand: str, contact: int) -> float:
+    """Floor-plane heading of the racket line at contact, degrees: 0 = at the front wall, + = towards the right wall.
+
+    The racket line runs from the hitting elbow to the racket head (skeleton.racket_head: the
+    racket continues the forearm until racket tracking exists), in court axes (Pc). A turn of
+    the trunk about the vertical turns it by exactly that angle; an elbow fix turns the forearm.
+    """
+    d = racket_head(Pc, hand)[contact] - Pc[contact, ARM[hand]["el"]]
+    if not np.isfinite(d).all() or math.hypot(d[0], d[2]) < 1e-9:
+        raise ValueError("can't measure the racket line at contact: the hitting elbow or wrist is missing")
+    return math.degrees(math.atan2(d[0], -d[2]))  # towards the front wall is -z
+
+
+def ghost_azimuth(you_aim: dict, Pc_you: np.ndarray, Pc_ghost: np.ndarray, hand: str, contact: int) -> dict:
+    """The ghost's aim: yours (estimate_azimuth), turned by the fix's turn of the racket line at contact.
+
+    The ball leaves square to the racket face, and the face turns with the trunk and forearm
+    that carry it. So the ghost's aim is your aim (measured from your wrist; it matches the
+    video) plus racket_line_heading(ghost) - racket_line_heading(you), clamped to
+    +-AZIMUTH_LIMIT_DEG, with your aim's label. A trunk less open at contact sends the ball
+    more down the line; a more open one sends it more across the court.
+
+    Today's turn_shoulders edits shrink or grow the backswing and fade to zero at contact,
+    close_stance turns only the legs, and hold_wrist_cock bends the hand (the racket line
+    ignores the wrist, as the racket speed estimate does): all leave the aim as yours. The
+    elbow fixes turn the forearm, so they turn the aim. This replaces the ghost's own wrist
+    direction, which picked up where the edit blends back into your swing at contact.
+    """
+    turn = racket_line_heading(Pc_ghost, hand, contact) - racket_line_heading(Pc_you, hand, contact)
+    turn = (turn + 180.0) % 360.0 - 180.0
+    raw = you_aim["value"] + turn
+    shown = round(turn, 1) + 0.0  # + 0.0 so a rounding speck never reads "-0.0"
+    lim = AZIMUTH_LIMIT_DEG
+    return {
+        "value": round(min(max(raw, -lim), lim), 1), "unit": "deg",
+        "estimate": you_aim["estimate"], "label": you_aim["label"],
+        "method": f"your aim ({you_aim['value']:g} deg, {you_aim['label']}) turned by the fix's change in the "
+                  f"racket line (elbow -> racket head) at contact, {shown:+.1f} deg",
+        "clamped": not -lim <= raw <= lim, "rawValue": round(raw, 1),
+        "youDeg": you_aim["value"], "racketLineTurnDeg": shown,
+    }
+
+
 def _court_swing(swing: dict, Pc: np.ndarray) -> dict:
     """Copy of `swing` with its points in court coordinates, labelled as such."""
     out = from_array(swing, Pc)
@@ -366,10 +413,12 @@ def _in_court_frame(swing: dict) -> bool:
 
 
 def _on_court(swing: dict, fps_real, hand: str, contact: int, shift: np.ndarray,
-              elevation_deg: float, racket: dict) -> tuple[dict, dict]:
+              elevation_deg: float, racket: dict, azimuth: dict | None = None) -> tuple[dict, dict]:
     """One swing: metrics, the swing on the court, its PREDICTED ball (from `racket`), and its launch.
 
     `shift` is the player's court_shift, so you and the ghost stand in exactly the same place.
+    `azimuth` is the aim to use (the ghost's, from ghost_azimuth); None measures it from this
+    swing's wrist (estimate_azimuth), as for yours.
     Metrics are measured on the swing as given; they don't depend on where it stands.
     """
     m = measure(swing, fps_real, hand)
@@ -379,7 +428,8 @@ def _on_court(swing: dict, fps_real, hand: str, contact: int, shift: np.ndarray,
     if not 0 < point[1] < 3:
         raise ValueError(f"the racket head at contact is {point[1]:.2f} m above the floor; "
                          "the ball model needs 0 to 3 m")
-    azimuth = estimate_azimuth(Pc, hand, contact)
+    if azimuth is None:
+        azimuth = estimate_azimuth(Pc, hand, contact)
     ball = predict_ball_path(racket["value"], elevation_deg, azimuth["value"], tuple(point))
     side = {"swing": _court_swing(swing, Pc), "metrics": metrics, "racketSpeed": racket, "ball": ball}
     return side, {"point": point, "azimuth": azimuth}
@@ -527,7 +577,9 @@ def compare(swing: dict, fix_name: str, amount: float, fps_real: float | None = 
     you_racket, ghost_racket, racket_note = racket_speeds(
         swing, estimate_racket_speed(played, fps_real, hand), estimate_racket_speed(ghost_swing, fps_real, hand))
     you, you_launch = _on_court(played, fps_real, hand, contact, shift, elevation, you_racket)
-    ghost, ghost_launch = _on_court(ghost_swing, fps_real, hand, contact, shift, elevation, ghost_racket)
+    ghost_aim = ghost_azimuth(you_launch["azimuth"], court_axes(to_array(played)),
+                              court_axes(to_array(ghost_swing)), hand, contact)
+    ghost, ghost_launch = _on_court(ghost_swing, fps_real, hand, contact, shift, elevation, ghost_racket, ghost_aim)
     # The ghost inherits your frames' flags, so the same metrics are left out on both sides.
     _drop_guessed(you, guessed)
     _drop_guessed(ghost, guessed)

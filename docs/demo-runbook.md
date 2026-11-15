@@ -187,7 +187,7 @@ The page has four steps: **Pick a swing → Coach's call → The ghost → On co
 |---|---|---|
 | The top card, **"Forehand · over-rotation (acted and flagged) · iPhone 120 fps (IMG_2115 16:55)"** (badges *Saved sample*, *Demo swing*) | **The coach's call:** *"Over-rotation: hips turn 157°"*, cue *"Turn a little less and stay balanced through the ball."* | Code measured the swing; the coach names one fix and only quotes numbers the code measured. |
 | **Show the ghost** | **Your ghost makes the fix.** Fix *Turn shoulders less*, badge *Coach's pick*. *What the fix changes:* Shoulder turn 137.6° → 85°. It's already playing: click **0.25× slow-mo** only | Orange is the swing they played, cyan is the same body with one fix. |
-| **Show the court** | **Where the ball goes:** two paths, each labelled *PREDICTED · … · in*. Panel: ball speed 133.2 → 119.1 km/h, **front wall height 1.92 → 1.88 m** | These are **PREDICTED**; there's no real ball. Launch angle is **assumed, 12° for a forehand**. Checked by eye against the video, the real ball hit about 1.8 m. We set the 12° from this clip, so it's a sanity check, not a test. |
+| **Show the court** | **Where the ball goes:** two paths, each labelled *PREDICTED · … · in*. Panel: ball speed 133.2 → 119.1 km/h, **front wall height 1.92 → 1.87 m** | These are **PREDICTED**; there's no real ball. Launch angle is **assumed, 12° for a forehand**. Checked by eye against the video, the real ball hit about 1.8 m. We set the 12° from this clip, so it's a sanity check, not a test. |
 
 ### Beat 2: backhand, nothing to fix (1:10–1:30)
 
@@ -237,8 +237,8 @@ All of these come from the saved samples in `public/swings/` and are the same on
 | Ghost fix (Coach's pick) | Turn shoulders less, 52.6° | None: the coach flagged nothing, so beat 2 stops at the coach's call |
 | Body change | Shoulder turn 137.6° → 85° | Not shown |
 | Ball speed (PREDICTED) | 133.2 → 119.1 km/h | Not shown |
-| **Front wall height (PREDICTED)** | **1.92 → 1.88 m** | 0.78 m, not shown in beat 2 |
-| Lands from front wall | 8.97 → 7.32 m | Not shown |
+| **Front wall height (PREDICTED)** | **1.92 → 1.87 m** | 0.78 m, not shown in beat 2 |
+| Lands from front wall | 8.97 → 7.6 m | Not shown |
 | Racket speed (ESTIMATE) | 28.3 → 25.3 m/s | Not shown |
 | **Launch angle (ASSUMED)** | **12°**, not on screen | 3°, not said in beat 2 |
 | Court | Two paths | Not shown |
