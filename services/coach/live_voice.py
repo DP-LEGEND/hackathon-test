@@ -19,7 +19,7 @@ never raise here; they fall back to the caption and/or audio None.
 Cached so each swing calls each API at most once. Successes are kept in memory and on
 disk (GHOST_VOICE_CACHE, default services/coach/.voice_cache/, which git-ignores itself),
 keyed by swing id plus the coach facts, so a swing re-measured with different numbers
-is worded afresh. A failed call is remembered until the server restarts, so a bad key
+is worded afresh. A failed call is remembered for FAILURE_RETRY_S (60 s), so a bad key
 or a network outage isn't retried on every request.
 
 Keys come only from .env.local (coach.env); nothing here prints them.
@@ -34,6 +34,7 @@ import logging
 import os
 import re
 import threading
+import time
 from pathlib import Path
 from typing import Any, Literal, Optional, TypedDict
 
@@ -120,7 +121,8 @@ _QUOTED = re.compile(
 # any of these words is rejected whatever follows it ("two inches", "half a foot").
 _NUMBER_WORD = (r"(?:zero|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|"
                 r"fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|"
-                r"sixty|seventy|eighty|ninety|hundreds?|thousands?|half|halves|quarters?|dozens?)")
+                r"sixty|seventy|eighty|ninety|hundreds?|thousands?|half|halves|quarters?|dozens?|"
+                r"twice|double|triple|thirds?|couple)")
 _SPELLED = re.compile(rf"\b{_NUMBER_WORD}\b", re.IGNORECASE)
 # "one" is everyday English ("one more swing", "one smooth turn"), so it only counts as a
 # number before a unit-like noun, allowing one word between ("one inch", "one more inch").
@@ -205,12 +207,119 @@ def guarded(facts: dict[str, str]) -> bool:
     return any(coach & (a | b) for a, b in OPPOSITES)
 
 
+# A cue must say the coach's fix, never countermand it.
+_NEGATION = re.compile(r"\b(?:don[\'\u2019]?t|do\s+not|never|stop|avoid|no\s+longer)\b", re.IGNORECASE)
+# Words that turn a quoted number into an amount to change by ("Turn 95 degrees less",
+# "close it by 80") or a target to reach ("Bend your elbow to 109 degrees", "until it
+# reaches 109"): the coach only measured the number, it never set an amount or a target.
+TARGET_WORDS = frozenset({"to", "until", "reach", "reaches", "reaching"})
+_CHANGE_FAMILIES: list[frozenset[str]] = [*(side for pair in OPPOSITES[:3] for side in pair),
+                                          frozenset({"by"}), TARGET_WORDS]
+CHANGE_WINDOW = 5  # words either side of a quoted number
+_CLAUSE_BREAK = {",", ";", ":"}
+
+
+def _tokens(text: str) -> list[str]:
+    """Lower-case words, numbers and clause breaks (, ; :) in order."""
+    return re.findall(r"[a-z]+|\d+(?:\.\d+)?(?:e[-+]?\d+)?|[,;:]", text.lower())
+
+
+def _change_words_near(tokens: list[str], number: str) -> set[frozenset[str]]:
+    """The change-word families near each `number` in tokens.
+
+    Before the number: up to CHANGE_WINDOW words, across clause breaks, so the verb and a
+    target word count ("Bend your elbow, to 109 degrees"). After it: up to CHANGE_WINDOW
+    words, stopping at a clause break, so a fix in the next clause doesn't count ("80
+    degrees open, so close it"). Target words count only before the number, where a
+    target sits ("to 109"); after it they're ordinary words ("80 degrees open to the shot").
+    """
+    near: set[frozenset[str]] = set()
+    for i, tok in enumerate(tokens):
+        if tok != number:
+            continue
+        before = [w for w in reversed(tokens[:i]) if w not in _CLAUSE_BREAK][:CHANGE_WINDOW]
+        after: list[str] = []
+        for w in tokens[i + 1:]:
+            if w in _CLAUSE_BREAK or len(after) == CHANGE_WINDOW:
+                break
+            after.append(w)
+        for word in before:
+            near.update(f for f in _CHANGE_FAMILIES if word in f)
+        for word in after:
+            near.update(f for f in _CHANGE_FAMILIES if word in f and f is not TARGET_WORDS)
+    return near
+
+
+def check_number_context(cue: str, facts: dict[str, str]) -> None:
+    """Raise CoachError if a quoted number sits near a change or target word.
+
+    Change words: more/less/further, open/close, bend/straighten (any form) and "by";
+    target words: to, until, reach (see _change_words_near for the window). Allowed only
+    when the measured label has the same kind of word that close to the same number,
+    i.e. the cue restates the measurement ("80 degrees open" from "stance 80 degrees
+    open to the shot"), so the live cue stays valid.
+    """
+    cue_tokens, label_tokens = _tokens(cue), _tokens(facts.get("measured", ""))
+    for _, number, _ in quoted_numbers(cue):
+        extra = _change_words_near(cue_tokens, number.lower()) - _change_words_near(label_tokens, number.lower())
+        if extra:
+            words = sorted({w for w in cue_tokens if any(w in f for f in extra)})
+            raise CoachError(f"Cue puts {number} next to a change {words}: the coach only measured it")
+
+
+# A quoted number must stay in its measured phrase: it shares a neighbouring word with the
+# label ("stance 80 degrees open" -> "80 degrees open"). Keyword lists kept missing new
+# ways to turn a measurement into a target ("at 109 degrees", "aim for ... 109 degrees").
+_UNIT_TOKENS = sorted((tuple(re.findall(r"[a-z]+", u)) for u in UNIT_ALIASES if re.search(r"[a-z]", u)),
+                      key=len, reverse=True)
+
+
+def _neighbours(tokens: list[str], number: str) -> list[tuple[Optional[str], Optional[str]]]:
+    """(word before, word after its unit) for each `number` in tokens (words and numbers only).
+
+    The word after skips the number's unit ("80 degrees open" -> "open"; "80 open" when
+    the unit was a symbol like ° that isn't a word). None at the start or end.
+    """
+    out = []
+    for i, tok in enumerate(tokens):
+        if tok != number:
+            continue
+        j = i + 1
+        for unit in _UNIT_TOKENS:
+            if tuple(tokens[j:j + len(unit)]) == unit:
+                j += len(unit)
+                break
+        out.append((tokens[i - 1] if i > 0 else None, tokens[j] if j < len(tokens) else None))
+    return out
+
+
+def check_number_anchor(cue: str, facts: dict[str, str]) -> None:
+    """Raise CoachError if a quoted number has left the measured phrase it came from.
+
+    For every number in the cue, some occurrence must share a neighbour with some
+    occurrence in facts["measured"]: the word right before the number, or the word right
+    after its unit. "80 degrees open" passes for "stance 80 degrees open to the shot";
+    "at 109 degrees" or "of 109 degrees" fail for "never bends past 109 degrees before contact".
+    """
+    words = lambda text: [t for t in _tokens(text) if t not in _CLAUSE_BREAK]  # noqa: E731
+    cue_words, label_words = words(cue), words(facts.get("measured", ""))
+    for _, number, _ in quoted_numbers(cue):
+        label = _neighbours(label_words, number.lower())
+        ok = any((b is not None and b == lb) or (a is not None and a == la)
+                 for b, a in _neighbours(cue_words, number.lower()) for lb, la in label)
+        if not ok:
+            raise CoachError(f"Cue moves {number} out of its measured phrase")
+
+
 def check_worded_cue(cue: str, facts: dict[str, str]) -> str:
     """The cleaned cue if it's one short sentence quoting only numbers in the facts.
 
     Every number must match one in the coach facts EXACTLY: same sign, same digits as
     written and same unit (80 degrees is fine; -80 degrees, 80.0 degrees, 80 percent or
-    a bare 80 aren't). It must also keep the coach's fix direction (check_direction).
+    a bare 80 aren't). No number words, no negations (don't, never, stop...), no number
+    next to a change word (check_number_context), every number kept in its measured
+    phrase (check_number_anchor), and the coach's fix direction kept
+    (check_direction).
     Raises CoachError otherwise (the caller then uses the plain caption).
     """
     cue = " ".join(cue.split())
@@ -228,6 +337,11 @@ def check_worded_cue(cue: str, facts: dict[str, str]) -> str:
     spelled = _SPELLED.search(cue) or _ONE_UNIT.search(cue)
     if spelled:
         raise CoachError(f"Cue spelled out a number: {spelled.group(0)!r}")
+    negation = _NEGATION.search(cue)
+    if negation:
+        raise CoachError(f"Cue negates an instruction: {negation.group(0)!r}")
+    check_number_context(cue, facts)
+    check_number_anchor(cue, facts)
     check_direction(cue, facts)
     return cue
 
@@ -274,7 +388,17 @@ def has_key(name: str) -> bool:
 # ---- Cache ----------------------------------------------------------------------------
 
 _memory: dict[str, Any] = {}  # cache key -> cue entry, or audio bytes
-_failed: set[str] = set()  # cache keys whose API call failed in this process
+_failed: dict[str, float] = {}  # cache key -> when its API call last failed (_now())
+FAILURE_RETRY_S = 60.0  # a failed call is tried again once its failure is this old
+
+
+def _now() -> float:
+    return time.monotonic()
+
+
+def _recently_failed(name: str) -> bool:
+    at = _failed.get(name)
+    return at is not None and _now() - at < FAILURE_RETRY_S
 _locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
 
@@ -367,12 +491,12 @@ def _cue_for(swing_id: str, facts: Optional[dict[str, str]], caption: str,
                     return check_worded_cue(cue, facts), "claude"
                 except CoachError as exc:
                     _discard(name, swing_id, f"fails the current checks ({exc})")  # treat as a miss
-        if name in _failed or not has_key("ANTHROPIC_API_KEY"):
+        if _recently_failed(name) or not has_key("ANTHROPIC_API_KEY"):
             return caption, "caption"  # no entry written: adding a key later still works
         try:
             cue = word_cue(facts, client)
         except Exception as exc:  # optional feature: any failure falls back to the caption
-            _failed.add(name)
+            _failed[name] = _now()
             log.warning("Claude cue unavailable for %s, using the caption: %s", swing_id,
                         exc if isinstance(exc, CoachError) else type(exc).__name__)
             return caption, "caption"
@@ -386,17 +510,17 @@ def _audio_for(swing_id: str, cue: str) -> Optional[str]:
     with _lock(name):
         audio = _read(name)
         if audio is None:
-            if name in _failed or not has_key("ELEVENLABS_API_KEY"):
+            if _recently_failed(name) or not has_key("ELEVENLABS_API_KEY"):
                 return None
             try:
                 audio = synthesize(cue)
             except Exception as exc:  # optional feature: the cue still shows as a caption
-                _failed.add(name)
+                _failed[name] = _now()
                 log.warning("ElevenLabs audio unavailable for %s: %s", swing_id,
                             exc if isinstance(exc, voice.VoiceError) else type(exc).__name__)
                 return None
             if not audio:
-                _failed.add(name)
+                _failed[name] = _now()
                 return None
             _write(name, audio)
     return "data:audio/mpeg;base64," + base64.b64encode(audio).decode("ascii")

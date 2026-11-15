@@ -151,7 +151,10 @@ def test_a_refusal_falls_back_to_the_caption(env, result: dict) -> None:
 
 def test_check_worded_cue_only_allows_numbers_from_the_facts() -> None:
     facts = {"measured": "Straight arm: elbow never bends past 109 degrees before contact"}
-    assert check_worded_cue("  Bend   the elbow below 109 degrees. ", facts) == "Bend the elbow below 109 degrees."
+    # 109 keeps its measured phrase ("bends past 109 degrees"); "below 109 degrees" would make it a
+    # target, which check_number_anchor rejects.
+    assert (check_worded_cue("  Bend   the elbow, it bends past 109 degrees. ", facts)
+            == "Bend the elbow, it bends past 109 degrees.")
     with pytest.raises(CoachError, match="didn't measure"):
         check_worded_cue("Bend it to 90 degrees.", facts)
 
@@ -323,7 +326,7 @@ def test_a_unit_change_or_reformatted_number_falls_back(cue: str) -> None:
 @pytest.mark.parametrize("cue", [
     "Your stance is 80 degrees open, so close it and hold the turn.",
     "Your stance is 80 deg open, so close it and hold the turn.",
-    "Your stance is 80° open, so close it and hold the turn.",
+    "Your stance is 80° open to the shot, so close it.",  # "close" kept >3 words from 80
     "An 80-degree open stance lets the hips fly, so close it.",
 ])
 def test_the_same_number_and_unit_in_another_spelling_passes(cue: str) -> None:
@@ -548,3 +551,184 @@ def test_voice_synthesize_default_timeout_is_unchanged() -> None:
     from coach import voice
 
     assert inspect.signature(voice.synthesize).parameters["timeout_s"].default == voice.TIMEOUT_S == 20
+
+
+# ---- Retry after a failure once it is 60 s old -------------------------------------------
+
+def test_a_failed_call_is_retried_after_60_seconds(env, result: dict, monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(live_voice, "_now", lambda: clock["t"])
+    env.keys("ANTHROPIC_API_KEY", "ELEVENLABS_API_KEY")
+    env.claude.error = anthropic.APITimeoutError(request=None)  # type: ignore[arg-type]
+    env.voice_error = VoiceError("Could not reach ElevenLabs.")
+    assert voice_for_swing("sample", result)["source"] == "caption"
+    assert len(env.claude.calls) == 1 and len(env.spoken) == 1
+
+    clock["t"] += 59  # still inside the window: no retry
+    voice_for_swing("sample", result)
+    assert len(env.claude.calls) == 1 and len(env.spoken) == 1
+
+    clock["t"] += 2  # 61 s after the failure: both APIs are tried again
+    env.claude.error, env.voice_error = None, None
+    out = voice_for_swing("sample", result)
+    assert out["source"] == "claude" and _audio(out["audioUrl"]) == MP3
+    assert len(env.claude.calls) == 2  # the cue retried
+    assert env.spoken[-1] == out["cue"]  # the audio retried, for the new cue
+
+
+def test_a_failed_audio_alone_is_retried_after_60_seconds(env, result: dict, monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = {"t": 0.0}
+    monkeypatch.setattr(live_voice, "_now", lambda: clock["t"])
+    env.keys("ELEVENLABS_API_KEY")
+    env.voice_error = VoiceError("quota")
+    assert voice_for_swing("sample", result)["audioUrl"] is None
+    clock["t"] = 61.0
+    env.voice_error = None
+    assert _audio(voice_for_swing("sample", result)["audioUrl"]) == MP3
+    assert env.spoken == [result["cue"], result["cue"]]
+
+
+# ---- Stricter cue check: no number as an amount, no negations, more number words ---------
+
+OVER95_FACTS = {"measured": "Over-rotation: hips turn 95 degrees",
+                "coach_cue": "Turn a little less and stay balanced through the ball."}
+UNDER_FACTS = {"measured": "Under-rotation: shoulders turn 40 degrees",
+               "coach_cue": "Turn your shoulders further before you swing."}
+
+
+def test_a_number_next_to_a_change_word_is_rejected() -> None:
+    with pytest.raises(CoachError, match="next to a change"):
+        check_worded_cue("Turn 95 degrees less", OVER95_FACTS)
+    with pytest.raises(CoachError, match="next to a change"):
+        check_worded_cue("Close your stance by 80 degrees.", STANCE_LIVE_FACTS)
+
+
+def test_restating_the_measurement_is_not_a_change() -> None:
+    assert check_worded_cue(LIVE_CUE, STANCE_LIVE_FACTS) == LIVE_CUE  # "80 degrees open" is the label's own phrase
+    ok = "Your hips turn 95 degrees, so turn a little less."  # "less" is more than 3 words from 95
+    assert check_worded_cue(ok, OVER95_FACTS) == ok
+
+
+@pytest.mark.parametrize("facts, cue", [
+    (UNDER_FACTS, "Don't turn your shoulders further"),
+    (STANCE_LIVE_FACTS, "Stop closing your stance so much"),
+    (UNDER_FACTS, "Don’t rush, turn your shoulders further."),  # curly apostrophe
+    (UNDER_FACTS, "Do not stop the turn early, go further."),
+    (OVER95_FACTS, "Never turn more than you need."),
+    (STANCE_LIVE_FACTS, "Avoid opening your stance, close it."),
+    (STANCE_LIVE_FACTS, "No longer leave your stance open, close it."),
+])
+def test_negations_are_rejected(facts: dict, cue: str) -> None:
+    with pytest.raises(CoachError, match="negates"):
+        check_worded_cue(cue, facts)
+
+
+@pytest.mark.parametrize("cue", [
+    "Close your stance twice as much.",
+    "Double the turn in your stance.",
+    "Triple your stance width.",
+    "Close your stance by a third.",
+    "Close it by thirds.",
+    "Close it a couple of inches.",
+])
+def test_the_new_number_words_are_rejected(cue: str) -> None:
+    with pytest.raises(CoachError, match="spelled out a number"):
+        check_worded_cue(cue, STANCE_LIVE_FACTS)
+
+
+def test_opposite_side_near_number_rejected() -> None:
+    # The label has "80 degrees open"; "close" near 80 is the OTHER side of the pair, so it
+    # isn't a restatement: open and close are separate change families.
+    with pytest.raises(CoachError, match="next to a change"):
+        check_worded_cue("Close your stance 80 degrees.", STANCE_FACTS)
+
+
+# ---- Review fix on #65: target words (to / until / reach) and a 5-word window ------------
+# A measured number must not become a target: "Bend your elbow to 109 degrees" put "bend"
+# 4 words from 109, just outside the old 3-word window, and "to" wasn't a change word.
+
+ARM_FACTS = coach_facts({"stroke": "backhand", "fault": {
+    "label": "Straight arm, no elbow lead: elbow never bends past 109 deg before contact",
+    "cue": FAULTS["straight_arm"]["cue"]}})
+
+
+def test_target_words_and_window_size() -> None:
+    assert live_voice.CHANGE_WINDOW == 5
+    assert {"to", "until", "reach"} <= live_voice.TARGET_WORDS
+    assert live_voice.TARGET_WORDS in live_voice._CHANGE_FAMILIES
+
+
+@pytest.mark.parametrize("cue", [
+    "Raise your elbow to shoulder height.",  # to
+    "Keep the elbow bent until it is level with your shoulder.",  # until
+    "Reach higher with a bent elbow.",  # reach
+])
+def test_each_target_word_passes_when_no_number_is_the_target(cue: str) -> None:
+    assert check_worded_cue(cue, ARM_FACTS) == cue
+
+
+@pytest.mark.parametrize("facts, cue", [
+    (ARM_FACTS, "Bend your elbow to 109 degrees."),  # Codex's case: "bend" was 4 words away
+    (ARM_FACTS, "Bend your elbow, to 109 degrees."),  # a comma before the number doesn't hide it
+    (ARM_FACTS, "Bend your elbow until it reaches 109 degrees."),
+    (ARM_FACTS, "Reach 109 degrees with your elbow bent."),
+    (STANCE_FACTS, "Close your stance to 80 degrees."),
+    (STANCE_FACTS, "Get your stance to 80 degrees."),  # the label's "open to the shot" doesn't excuse it
+])
+def test_a_measured_number_as_a_target_is_rejected(facts: dict, cue: str) -> None:
+    with pytest.raises(CoachError, match="next to a change"):
+        check_worded_cue(cue, facts)
+
+
+@pytest.mark.parametrize("cue", [
+    "Your stance is 80 degrees open to the shot, so close it.",  # "to" after the number restates the label
+    "Your stance is 80 degrees open, so close it and hold the turn.",  # the fix is in the next clause
+    LIVE_CUE,
+])
+def test_restating_the_measurement_still_passes_with_the_wider_window(cue: str) -> None:
+    assert check_worded_cue(cue, STANCE_LIVE_FACTS) == cue
+
+
+def test_a_measured_target_falls_back_to_the_caption_end_to_end(env) -> None:
+    env.keys("ANTHROPIC_API_KEY")
+    env.claude.cue = "Bend your elbow to 109 degrees."
+    result = {"stroke": "backhand", "cue": FAULTS["straight_arm"]["cue"], "fault": {
+        "label": "Straight arm, no elbow lead: elbow never bends past 109 deg before contact",
+        "cue": FAULTS["straight_arm"]["cue"]}}
+    assert voice_for_swing("arm", result) == {"cue": FAULTS["straight_arm"]["cue"], "audioUrl": None,
+                                             "source": "caption"}
+
+
+# ---- Review fix on #65: a quoted number must stay in its measured phrase -----------------
+# Each new keyword list left another phrasing open ("at", "aim for", "aims for"). Now a number
+# Claude quotes must share a neighbouring word with the measured label: the word right before
+# it, or the word right after its unit.
+
+@pytest.mark.parametrize("cue", [
+    "Set your elbow at 109 degrees.",
+    "Aim for an elbow angle of 109 degrees.",
+    "Bend your elbow so it aims for 109 degrees.",
+])
+def test_a_number_moved_out_of_its_measured_phrase_is_rejected(cue: str) -> None:
+    with pytest.raises(CoachError, match="out of its measured phrase"):
+        check_worded_cue(cue, ARM_FACTS)
+
+
+@pytest.mark.parametrize("facts, cue", [
+    (STANCE_FACTS, "Your stance is 80 degrees open, so close it a little."),  # shares "open"
+    (STANCE_LIVE_FACTS, LIVE_CUE),  # "it's 80 degrees open, so ...": the comma is skipped
+    (STANCE_LIVE_FACTS, "Your stance is 80° open to the shot, so close it."),  # a symbol unit
+    (OVER95_FACTS, "Your hips turn 95 degrees, so turn a little less."),  # shares "turn"
+    (RELEASE_FACTS, "You release minus 20 ms before contact, so hold the cock."),  # "before", after the unit
+])
+def test_a_number_in_its_measured_phrase_passes(facts: dict, cue: str) -> None:
+    assert check_worded_cue(cue, facts) == cue
+
+
+def test_a_moved_number_falls_back_to_the_caption_end_to_end(env) -> None:
+    env.keys("ANTHROPIC_API_KEY")
+    env.claude.cue = "Set your elbow at 109 degrees."
+    result = {"stroke": "backhand", "cue": FAULTS["straight_arm"]["cue"], "fault": {
+        "label": "Straight arm, no elbow lead: elbow never bends past 109 deg before contact",
+        "cue": FAULTS["straight_arm"]["cue"]}}
+    assert voice_for_swing("arm", result)["source"] == "caption"
