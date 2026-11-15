@@ -87,7 +87,17 @@ npm run dev
 
 Stop both with Ctrl+C when you're done, then start terminal tabs 1 and 2 for the show as below.
 
-**5. Optional: make the mock wrist-sensor data (once).**
+**5. Voice check (during the rehearsal in step 4).** With the rehearsal tabs still running, upload a swing with a fault through `/upload`: one where the coach names a fault, not *"No fault found"*. At the coach's call, wait a few seconds for **Hear the coach**, click it and listen. It needs both keys in `.env.local` and the Mac online. Without them there's no button, and that's expected, not a failure.
+
+If there's no **Hear the coach** button and terminal tab 1 printed *"ElevenLabs audio unavailable … Could not reach ElevenLabs"*, this Python can't verify ElevenLabs' certificate. Stop terminal tab 1 (Ctrl+C) and start it again with `SSL_CERT_FILE` in front:
+
+```
+SSL_CERT_FILE="$(~/ghost-env/bin/python -m certifi)" GHOST_SWINGS_DIR=~/ghost-rehearsal ~/ghost-env/bin/python -m uvicorn pipeline.server:app --port 8000
+```
+
+Reload the swing in `/ghost` and click **Hear the coach** again. If that fixed it, put the same `SSL_CERT_FILE=...` in front of the show's tab 1 command too (see *Tab 1* below).
+
+**6. Optional: make the mock wrist-sensor data (once).**
 
 ```
 cd ~/hackathon-demo/services
@@ -96,7 +106,7 @@ cd ~/hackathon-demo/services
 ~/ghost-env/bin/python -m wrist.synth ~/wrist-mock --camera --mishit 3
 ```
 
-**6. Run the smoke check** (`~/ghost-env/bin/python scripts/demo_smoke.py`) once terminal tabs 1 and 2 are up: see tab 3 below.
+**7. Run the smoke check** (`~/ghost-env/bin/python scripts/demo_smoke.py`) once terminal tabs 1 and 2 are up: see tab 3 below.
 
 ## Start Ghost (three terminal tabs)
 
@@ -125,6 +135,12 @@ Run `ls ~/ghost-stage` again; it must print nothing. Then:
 
 ```
 GHOST_SWINGS_DIR=~/ghost-stage ~/ghost-env/bin/python -m uvicorn pipeline.server:app --port 8000
+```
+
+If the voice check (pre-flight step 5) needed `SSL_CERT_FILE`, start it like this instead:
+
+```
+SSL_CERT_FILE="$(~/ghost-env/bin/python -m certifi)" GHOST_SWINGS_DIR=~/ghost-stage ~/ghost-env/bin/python -m uvicorn pipeline.server:app --port 8000
 ```
 
 Don't add `--reload` for the demo, so a saved file can't restart the service mid-upload. To check it's up:

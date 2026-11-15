@@ -232,7 +232,7 @@ export function GhostStage({
 
   return (
     <section aria-label="Swing replay" className="flex flex-col gap-3">
-      <div className="relative h-[min(72vh,760px)] min-h-[26rem] overflow-hidden rounded-xl border bg-card">
+      <div className="relative h-[min(72vh,760px)] lg:h-[min(760px,calc(100svh-24rem))] min-h-[26rem] overflow-hidden rounded-xl border bg-card">
         <div
           ref={viewportRef}
           role="img"
