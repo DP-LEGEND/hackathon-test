@@ -43,9 +43,14 @@ Validation (2026-11-15, base faccec3, Windows / Edge 156.0.4314.58):
 - The requested real clip, IMG_2110.mov, was submitted with all settings Auto.
   It returned HTTP 422: No fully tracked swing found. An identical detector-only
   run resolved Auto to 4x and decoded all 127 frames, but rejected the candidate
-  because the right-wrist gap exceeds the existing repair limit. Backend code
-  matches origin/main. The Live-card success check remains unpassed; no tracking
-  gates, API behavior or protected replay files were changed to bypass it.
+  because the right-wrist gap exceeds the existing repair limit. A clean detached
+  origin/main worktree at faccec3 also returned the same 422 through its web proxy
+  and service. This is an existing pipeline limit; its behavior is unchanged.
+- IMG_2114.mov completed a real upload with Forehand and Slowdown Auto: HTTP 201
+  in 12 seconds, swing 9f94d9803aca-swing-0001. The Live card, skeleton, coach card,
+  Show the ghost, Show the court, numeric panels and PREDICTED labels all loaded.
+  The result retains the existing estimated-joint caveats. IMG_2116.MOV was copied
+  to ignored data/raw as requested, but did not need trimming or processing.
 
-Evidence lives under the ignored before/, final/ and live/ directories noted
-above. The source clip is outside the repository and is never committed.
+Evidence lives under the ignored before/, final/, live/ and live-2114-forehand/
+directories noted above. Source clips and generated results are never committed.
