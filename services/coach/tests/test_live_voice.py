@@ -151,7 +151,10 @@ def test_a_refusal_falls_back_to_the_caption(env, result: dict) -> None:
 
 def test_check_worded_cue_only_allows_numbers_from_the_facts() -> None:
     facts = {"measured": "Straight arm: elbow never bends past 109 degrees before contact"}
-    assert check_worded_cue("  Bend   the elbow below 109 degrees. ", facts) == "Bend the elbow below 109 degrees."
+    # 109 keeps its measured phrase ("bends past 109 degrees"); "below 109 degrees" would make it a
+    # target, which check_number_anchor rejects.
+    assert (check_worded_cue("  Bend   the elbow, it bends past 109 degrees. ", facts)
+            == "Bend the elbow, it bends past 109 degrees.")
     with pytest.raises(CoachError, match="didn't measure"):
         check_worded_cue("Bend it to 90 degrees.", facts)
 
@@ -694,3 +697,38 @@ def test_a_measured_target_falls_back_to_the_caption_end_to_end(env) -> None:
         "cue": FAULTS["straight_arm"]["cue"]}}
     assert voice_for_swing("arm", result) == {"cue": FAULTS["straight_arm"]["cue"], "audioUrl": None,
                                              "source": "caption"}
+
+
+# ---- Review fix on #65: a quoted number must stay in its measured phrase -----------------
+# Each new keyword list left another phrasing open ("at", "aim for", "aims for"). Now a number
+# Claude quotes must share a neighbouring word with the measured label: the word right before
+# it, or the word right after its unit.
+
+@pytest.mark.parametrize("cue", [
+    "Set your elbow at 109 degrees.",
+    "Aim for an elbow angle of 109 degrees.",
+    "Bend your elbow so it aims for 109 degrees.",
+])
+def test_a_number_moved_out_of_its_measured_phrase_is_rejected(cue: str) -> None:
+    with pytest.raises(CoachError, match="out of its measured phrase"):
+        check_worded_cue(cue, ARM_FACTS)
+
+
+@pytest.mark.parametrize("facts, cue", [
+    (STANCE_FACTS, "Your stance is 80 degrees open, so close it a little."),  # shares "open"
+    (STANCE_LIVE_FACTS, LIVE_CUE),  # "it's 80 degrees open, so ...": the comma is skipped
+    (STANCE_LIVE_FACTS, "Your stance is 80° open to the shot, so close it."),  # a symbol unit
+    (OVER95_FACTS, "Your hips turn 95 degrees, so turn a little less."),  # shares "turn"
+    (RELEASE_FACTS, "You release minus 20 ms before contact, so hold the cock."),  # "before", after the unit
+])
+def test_a_number_in_its_measured_phrase_passes(facts: dict, cue: str) -> None:
+    assert check_worded_cue(cue, facts) == cue
+
+
+def test_a_moved_number_falls_back_to_the_caption_end_to_end(env) -> None:
+    env.keys("ANTHROPIC_API_KEY")
+    env.claude.cue = "Set your elbow at 109 degrees."
+    result = {"stroke": "backhand", "cue": FAULTS["straight_arm"]["cue"], "fault": {
+        "label": "Straight arm, no elbow lead: elbow never bends past 109 deg before contact",
+        "cue": FAULTS["straight_arm"]["cue"]}}
+    assert voice_for_swing("arm", result)["source"] == "caption"

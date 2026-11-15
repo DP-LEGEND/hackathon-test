@@ -267,13 +267,58 @@ def check_number_context(cue: str, facts: dict[str, str]) -> None:
             raise CoachError(f"Cue puts {number} next to a change {words}: the coach only measured it")
 
 
+# A quoted number must stay in its measured phrase: it shares a neighbouring word with the
+# label ("stance 80 degrees open" -> "80 degrees open"). Keyword lists kept missing new
+# ways to turn a measurement into a target ("at 109 degrees", "aim for ... 109 degrees").
+_UNIT_TOKENS = sorted((tuple(re.findall(r"[a-z]+", u)) for u in UNIT_ALIASES if re.search(r"[a-z]", u)),
+                      key=len, reverse=True)
+
+
+def _neighbours(tokens: list[str], number: str) -> list[tuple[Optional[str], Optional[str]]]:
+    """(word before, word after its unit) for each `number` in tokens (words and numbers only).
+
+    The word after skips the number's unit ("80 degrees open" -> "open"; "80 open" when
+    the unit was a symbol like ° that isn't a word). None at the start or end.
+    """
+    out = []
+    for i, tok in enumerate(tokens):
+        if tok != number:
+            continue
+        j = i + 1
+        for unit in _UNIT_TOKENS:
+            if tuple(tokens[j:j + len(unit)]) == unit:
+                j += len(unit)
+                break
+        out.append((tokens[i - 1] if i > 0 else None, tokens[j] if j < len(tokens) else None))
+    return out
+
+
+def check_number_anchor(cue: str, facts: dict[str, str]) -> None:
+    """Raise CoachError if a quoted number has left the measured phrase it came from.
+
+    For every number in the cue, some occurrence must share a neighbour with some
+    occurrence in facts["measured"]: the word right before the number, or the word right
+    after its unit. "80 degrees open" passes for "stance 80 degrees open to the shot";
+    "at 109 degrees" or "of 109 degrees" fail for "never bends past 109 degrees before contact".
+    """
+    words = lambda text: [t for t in _tokens(text) if t not in _CLAUSE_BREAK]  # noqa: E731
+    cue_words, label_words = words(cue), words(facts.get("measured", ""))
+    for _, number, _ in quoted_numbers(cue):
+        label = _neighbours(label_words, number.lower())
+        ok = any((b is not None and b == lb) or (a is not None and a == la)
+                 for b, a in _neighbours(cue_words, number.lower()) for lb, la in label)
+        if not ok:
+            raise CoachError(f"Cue moves {number} out of its measured phrase")
+
+
 def check_worded_cue(cue: str, facts: dict[str, str]) -> str:
     """The cleaned cue if it's one short sentence quoting only numbers in the facts.
 
     Every number must match one in the coach facts EXACTLY: same sign, same digits as
     written and same unit (80 degrees is fine; -80 degrees, 80.0 degrees, 80 percent or
     a bare 80 aren't). No number words, no negations (don't, never, stop...), no number
-    next to a change word (check_number_context), and the coach's fix direction kept
+    next to a change word (check_number_context), every number kept in its measured
+    phrase (check_number_anchor), and the coach's fix direction kept
     (check_direction).
     Raises CoachError otherwise (the caller then uses the plain caption).
     """
@@ -296,6 +341,7 @@ def check_worded_cue(cue: str, facts: dict[str, str]) -> str:
     if negation:
         raise CoachError(f"Cue negates an instruction: {negation.group(0)!r}")
     check_number_context(cue, facts)
+    check_number_anchor(cue, facts)
     check_direction(cue, facts)
     return cue
 
