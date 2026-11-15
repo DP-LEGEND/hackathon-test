@@ -17,6 +17,8 @@
 
 # next.js
 /.next/
+
+# Static exports and generated backup demo recordings (never commit videos).
 /out/
 
 # production

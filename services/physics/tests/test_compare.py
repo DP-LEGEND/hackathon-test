@@ -54,7 +54,9 @@ def test_ghost_swing_is_the_fixed_synthetic_swing(good, elbow):
     assert ghost["edits"] == [{"id": "elbow_bend", "size": -12.0, "unit": "deg"}]
     assert ghost["contactFrame"] == you["contactFrame"] == elbow["contactFrame"] == good["contactFrame"]
     assert len(ghost["frames"]) == len(you["frames"])
-    assert elbow["fix"] == {"id": "straighten_elbow", "amount": 12.0, "unit": "deg"}
+    assert {k: v for k, v in elbow["fix"].items() if k != "explain"} == {"id": "straighten_elbow", "amount": 12.0,
+                                                                        "unit": "deg"}
+    assert "PREDICTED" in elbow["fix"]["explain"]
 
 
 def test_more_shoulder_turn_swings_faster_so_the_predicted_ball_is_faster(good):
@@ -79,7 +81,7 @@ def test_new_fixes_work_in_compare(good, fix, amount, metric):
     for k in ("elbow_at_contact_deg", "shoulder_turn_deg", "wrist_at_contact_deg", "wrist_release_ms"):
         if k != metric:
             assert d[k]["change"] == 0.0, k
-    assert r["fix"] == {"id": fix, "amount": float(amount), "unit": "deg"}
+    assert {k: v for k, v in r["fix"].items() if k != "explain"} == {"id": fix, "amount": float(amount), "unit": "deg"}
     assert r["ghost"]["swing"]["synthetic"] is True
     assert r["ghost"]["ball"]["label"] == "PREDICTED"
     assert any(line.startswith(METRICS[metric][1]) for line in r["delta"]["summary"])
@@ -181,9 +183,11 @@ def test_cli_prints_the_json(good, tmp_path, capsys):
     assert "swing" not in out["you"] and "swing" not in out["ghost"]
     assert out["delta"]["metrics"]["elbow_at_contact_deg"]["change"] == pytest.approx(12.0)
 
-    main([str(path), "hold_wrist_cock", "-20", "--fps-real", "240"])  # negative amount = the opposite edit
+    main([str(path), "hold_wrist_cock", "20", "--fps-real", "240"])
     out = json.loads(capsys.readouterr().out)
     assert out["ghost"]["swing"]["synthetic"] is True and out["fpsReal"] == 240.0
+    with pytest.raises(SystemExit, match="amount must be 0 or more"):  # the fix's name gives the direction
+        main([str(path), "hold_wrist_cock", "-20"])
 
 
 def test_cli_reports_errors_without_a_traceback(tmp_path):
@@ -193,3 +197,12 @@ def test_cli_reports_errors_without_a_traceback(tmp_path):
         main([str(path), "swing_harder", "1"])
     with pytest.raises(SystemExit, match="No such file"):
         main([str(tmp_path / "missing.json"), "straighten_elbow", "1"])
+
+
+@pytest.mark.parametrize("fix", ["straighten_elbow", "turn_shoulders_less"])
+def test_a_negative_amount_is_refused(good, fix):
+    # Codex P2 on #86: a negative amount would reverse the named fix (straighten -> bend) while
+    # fix.explain and the legend still name it. The fix's name gives the direction.
+    with pytest.raises(ValueError, match="amount must be 0 or more"):
+        compare(good, fix, -12)
+    assert compare(good, fix, 0)["fix"]["amount"] == 0.0

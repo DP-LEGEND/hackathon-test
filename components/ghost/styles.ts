@@ -9,6 +9,7 @@ const styles = {
   footer: "ghost-footer",
   ghostAsset: "ghost-ghostAsset",
   hero: "ghost-hero",
+  heroActions: "ghost-heroActions",
   heroArt: "ghost-heroArt",
   heroCta: "ghost-heroCta",
   heroEyebrow: "ghost-heroEyebrow",

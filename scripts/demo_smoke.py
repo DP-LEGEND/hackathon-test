@@ -13,10 +13,11 @@ It prints one PASS (green) or FAIL (red) line per check and exits 1 if any check
   1. health    The service's GET /health and the web app's /api proxy (/api/health) both answer ok.
   2. hero      The saved forehand hero (catalogue.json's defaultSwing in public/swings): the coach
                says over_rotation; the compare file for the coach's fix is in court coordinates at
-               the ASSUMED 12 deg, and shows exactly the PREDICTED numbers the runbook and pitch
-               quote: ball speed 133.2 -> 119.1 km/h, front wall 1.92 -> 1.88 m.
+               the ASSUMED 12 deg from the MEASURED hit spot, and shows exactly the PREDICTED
+               numbers the runbook and pitch quote: ball speed 133.2 -> 119.1 km/h, front wall
+               1.45 -> 1.44 m, and the real-ball check: predicted 1.45 m vs 1.17 m tracked.
   3. backhand  The saved backhand: the coach's fault is null (nothing to fix), and its ball shows
-               exactly 130.4 km/h and front wall 0.78 m, at 3 deg from anchor x = 2.0.
+               exactly 130.4 km/h and front wall 0.77 m, at 3 deg from the MEASURED spot x = 1.572.
   4. pages     /ghost and /upload answer 200.
   5. process   An upload with no file answers exactly 422, both from the service (POST /process)
                and through the web app's proxy (POST /api/process), which is what /upload uses.
@@ -63,9 +64,13 @@ PAGE_TIMEOUT_S = 15.0  # a page: the Next dev server compiles it on the first re
 # exactly: a changed saved file changes what's on screen. None isn't checked (beat 2 stops at the
 # coach's call, so the backhand's ghost numbers are never said).
 HERO_SPEED_KMH = (133.2, 119.1)
-HERO_WALL_M = (1.92, 1.88)
+HERO_WALL_M = (1.45, 1.44)
 BACKHAND_SPEED_KMH = (130.4, None)
-BACKHAND_WALL_M = (0.78, None)
+BACKHAND_WALL_M = (0.77, None)
+# Where each player hit from, MEASURED from the video (services/physics/court_spot.py), and the
+# hero's real-ball check (compare `validation`: front wall predicted vs tracked, metres).
+BACKHAND_SPOT_X = 1.572
+HERO_VALIDATION_M = (1.45, 1.17)
 
 # Same limits as the browser (app/ghost/swing.ts JOINT_COUNT, compare.ts OUTCOMES and fileName).
 JOINT_COUNT = 33
@@ -460,15 +465,25 @@ def _shown_problems(compare: dict, speed: tuple, wall: tuple) -> list[str]:
     return problems
 
 
-def _court_problems(compare: dict, elevation: float, anchor_x: float | None = None) -> list[str]:
+def _court_problems(compare: dict, elevation: float, anchor_x: float | None = None,
+                    validation: tuple[float, float] | None = None) -> list[str]:
     problems = []
     if compare.get("coordinateSystem") != "court":
         problems.append(f"coordinateSystem is {compare.get('coordinateSystem')!r}, want 'court'")
     angle = compare["assumptions"]["launch"]["elevation"]["value"]
     if angle != elevation:
         problems.append(f"assumptions.launch.elevation is {angle}°, want {elevation:g}°")
-    if anchor_x is not None and compare["assumptions"]["anchor"]["x"] != anchor_x:
-        problems.append(f"assumptions.anchor.x is {compare['assumptions']['anchor']['x']}, want {anchor_x}")
+    anchor = compare["assumptions"]["anchor"]
+    if anchor.get("label") != "MEASURED":
+        problems.append(f"assumptions.anchor.label is {anchor.get('label')!r}, want 'MEASURED' (the hit spot from the video)")
+    if anchor_x is not None and anchor["x"] != anchor_x:
+        problems.append(f"assumptions.anchor.x is {anchor['x']}, want {anchor_x}")
+    if validation is not None:
+        v = compare.get("validation") or {}
+        got = (v.get("predicted"), v.get("tracked"))
+        if got != validation or v.get("method") not in ("tracked", "hand-labelled"):
+            problems.append(f"validation (predicted, tracked) is {got} by {v.get('method')!r}, "
+                            f"want exactly {validation} by 'tracked' or 'hand-labelled'")
     return problems
 
 
@@ -495,14 +510,16 @@ def check_hero(smoke: Smoke) -> str:
     coach = smoke.saved(entry["coach"], parse_coach)
     _swing_file(smoke, entry)
     _, compare, why = _compare_for(smoke, entry, coach)
-    problems = _court_problems(compare, elevation=12.0) + _shown_problems(compare, HERO_SPEED_KMH, HERO_WALL_M)
+    problems = (_court_problems(compare, elevation=12.0, validation=HERO_VALIDATION_M)
+                + _shown_problems(compare, HERO_SPEED_KMH, HERO_WALL_M))
     fault = (coach.get("fault") or {}).get("id")
     if fault != "over_rotation":
         problems.insert(0, f"{entry['coach']}: fault.id is {fault!r}, want 'over_rotation'")
     if problems:
         raise CheckFailed(f"{hero}: " + "; ".join(problems))
     return (f"{hero}: over_rotation, court coordinates at 12°, ball speed {HERO_SPEED_KMH[0]} → {HERO_SPEED_KMH[1]} "
-            f"km/h, front wall {HERO_WALL_M[0]} → {HERO_WALL_M[1]} m; {why}; "
+            f"km/h, front wall {HERO_WALL_M[0]} → {HERO_WALL_M[1]} m from the MEASURED spot, real-ball check "
+            f"{HERO_VALIDATION_M[0]} predicted vs {HERO_VALIDATION_M[1]} m tracked; {why}; "
             "its catalogue, coach, swing and compare files load as /ghost loads them")
 
 
@@ -521,7 +538,7 @@ def check_backhand(smoke: Smoke) -> str:
     coach = smoke.saved(entry["coach"], parse_coach)
     _swing_file(smoke, entry)
     _, compare, why = _compare_for(smoke, entry, coach)
-    problems = (_court_problems(compare, elevation=3.0, anchor_x=2.0)
+    problems = (_court_problems(compare, elevation=3.0, anchor_x=BACKHAND_SPOT_X)
                 + _shown_problems(compare, BACKHAND_SPEED_KMH, BACKHAND_WALL_M))
     if coach.get("fault") is not None:
         fault = coach["fault"].get("id") if isinstance(coach["fault"], dict) else coach["fault"]
@@ -529,7 +546,7 @@ def check_backhand(smoke: Smoke) -> str:
     if problems:
         raise CheckFailed(f"{entry['id']}: " + "; ".join(problems))
     return (f"{entry['id']}: fault null, ball speed {BACKHAND_SPEED_KMH[0]} km/h, front wall {BACKHAND_WALL_M[0]} m "
-            f"at 3° from x = 2.0; {why}; its files load as /ghost loads them")
+            f"at 3° from the MEASURED spot x = {BACKHAND_SPOT_X}; {why}; its files load as /ghost loads them")
 
 
 def check_pages(smoke: Smoke) -> str:
