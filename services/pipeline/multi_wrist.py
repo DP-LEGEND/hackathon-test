@@ -1,11 +1,11 @@
-"""Optional, fail-soft tap-synced wrist data for the multi-upload endpoint.
+"""Optional, fail-soft sequence-synced wrist data for the multi-upload endpoint.
 
 Flat CSV contract: seconds_elapsed (seconds) or time (Unix nanoseconds),
 accel_x/y/z in m/s² and gyro_x/y/z in rad/s. ax/ay/az and gx/gy/gz are accepted
 aliases. Optional qx/qy/qz/qw and mock retain Sensor Logger provenance. The
 phone's long edge (y) must lie along the hitting forearm, as in wrist/README.md.
-No clocks are fitted to ball impacts: an unambiguous audible double tap is
-required, otherwise the optional sensor data is ignored. Sensor Logger ZIPs use
+Only dominant swing sequences establish the clock; small feed taps and isolated
+peaks cannot establish sync. Sensor Logger ZIPs use
 the same native reader as scripts/make_sensor_sample.py.
 """
 from __future__ import annotations
@@ -20,21 +20,20 @@ import tempfile
 import zipfile
 
 import numpy as np
+from scipy.signal import find_peaks
 
-from pipeline.live import playback_hits_to_real
-from pipeline.segment import audio_hits
-from pipeline.video import VideoInfo, probe_video, run_tool, tool
+from pipeline.multi_audio import _extract_hits
+from pipeline.multi_sync import match_sequence, select_swing_peaks
+from pipeline.video import VideoInfo, probe_video
 from wrist.fuse import attach_wrist_entries
 from wrist.load import Recording, load_recording
 from wrist.metrics import wrist_report
-from wrist.shadow import find_shadow_swings, find_tap_events
-from wrist.sync import (IMPACT_GUARD_S, MIN_SWING_DPS, TOLERANCE_MS, align,
-                        find_impacts, find_spikes)
+from wrist.tempo import speed_dps
 
 MAX_SENSOR_BYTES = 25 * 1024 * 1024
 MAX_SENSOR_ROWS = 500_000
-TAP_GAP_TOLERANCE_S = 0.04
-GYRO_PEAK_SEARCH_S = 0.3
+CONTACT_MATCH_S = 0.3
+SEQUENCE_TOLERANCE_S = 0.12
 
 
 def is_sensor_zip(path: Path) -> bool:
@@ -154,90 +153,73 @@ def _flat_recording(path: Path, work: Path) -> Recording:
     return load_recording(work)
 
 
-def _video_taps(clip: Path, work: Path, info: VideoInfo) -> np.ndarray:
-    wav = work / "tap-audio.wav"
-    run_tool([tool("ffmpeg"), "-v", "error", "-nostdin", "-y", "-protocol_whitelist", "file,pipe",
-              "-format_whitelist", "mov,avi", "-i", str(clip.resolve()), "-map", "0:a:0", "-vn",
-              "-ac", "1", "-ar", "16000", "-t", "300", str(wav)], timeout=30)
-    hits = audio_hits(str(wav), min_gap_s=0.04, rise_db=20)
-    return playback_hits_to_real(info, hits)
+def _video_swing_times(clip: Path, work: Path, info: VideoInfo) -> np.ndarray:
+    """The same dominant audio swings used by the two-camera sync path."""
+    return _extract_hits(clip, info, work / "sensor-sync-audio.wav")[0]
 
 
-def _tap_sync(rec: Recording, contacts: list[tuple[str, float]], hits: np.ndarray) -> dict:
-    spikes = find_spikes(rec)
-    events = [event for event in find_tap_events(rec, spikes)
-              if event["taps_s"][-1] <= float(rec.t[0]) + 60]
-    if not events:
-        raise ValueError("no still-arm double tap found in the sensor data")
-    taps = events[0]["taps_s"]
-    impacts, rejected = find_impacts(spikes, taps[-1] + IMPACT_GUARD_S)
-    speed = np.degrees(np.linalg.norm(rec.gyro, axis=1))
+def _gyro_swings(rec: Recording) -> tuple[np.ndarray, np.ndarray]:
+    """Session-sized gyro peaks; each is the strongest event in its 2 s window."""
+    speed = speed_dps(rec)
+    if not np.isfinite(speed).all():
+        raise ValueError("sensor gyro contains non-finite values")
+    peaks, _ = find_peaks(speed, distance=max(1, int(round(.04 * rec.rate_hz))))
+    return select_swing_peaks(rec.t[peaks], speed[peaks])
 
-    def swinging(t: float) -> bool:
-        near = np.abs(rec.t - t) <= TOLERANCE_MS / 1000
-        return bool(near.any() and rec.t[0] <= t <= rec.t[-1] and speed[near].max() >= MIN_SWING_DPS)
 
-    # The taps precede the first video swing. Require both the tap interval and
-    # subsequent contact alignment to agree; never infer a clock from hits alone.
-    hits = np.sort(np.asarray(hits, dtype=float))
-    hits = hits[np.isfinite(hits) & (hits >= 0) & (hits < min(t for _, t in contacts) - IMPACT_GUARD_S)]
-    candidates = []
-    for start in range(len(hits) - len(taps) + 1):
-        sequence = hits[start:start + len(taps)]
-        if np.any(np.abs(np.diff(sequence) - np.diff(taps)) > TAP_GAP_TOLERANCE_S):
+def _sequence_sync(rec: Recording, contacts: list[tuple[str, float]], hits: np.ndarray,
+                   debug: dict, gyro_peaks: tuple[np.ndarray, np.ndarray] | None = None) -> dict:
+    gyro, strength = gyro_peaks if gyro_peaks is not None else _gyro_swings(rec)
+    video = np.asarray(hits, dtype=float)
+    if video.ndim != 1 or not np.isfinite(video).all():
+        raise ValueError("video swing times must be finite and one-dimensional")
+    debug.update(chosenGyroTimesSeconds=gyro.tolist(), chosenGyroStrengthDps=strength.tolist(),
+                 chosenVideoTimesSeconds=video.tolist())
+    try:
+        match = match_sequence(video, gyro, tolerance_s=SEQUENCE_TOLERANCE_S, min_matches=3)
+    except ValueError as exc:
+        # offset_b_s only overrides camera B, not the sensor's independent clock.
+        raise ValueError(str(exc).replace('; provide offset_b_s', '')) from None
+    offset = match["offsetSeconds"]
+    debug.update(offsetSeconds=offset, matchedCount=match["matchedCount"],
+                 residualMs=match["residualMs"], sequencePairs=match["pairs"])
+    matched = {int(i): int(j) for i, j in match["pairs"]}
+    used = set()
+    paired, unpaired = [], []
+    for sid, contact in sorted(contacts, key=lambda item: item[1]):
+        candidates = [i for i in matched if i not in used and abs(float(video[i]) - contact) <= CONTACT_MATCH_S]
+        if not candidates:
+            unpaired.append(sid)
             continue
-        a = float(sequence[0])
-        alignment = align([s.t for s in impacts], contacts, taps[0], a, swinging=swinging)
-        if alignment["error_ms"]["n_ok"] or alignment["tap_only"]:
-            candidates.append((float(a), alignment))
-    if len(candidates) != 1:
-        reason = "ambiguous" if candidates else "no matching"
-        raise ValueError(f"{reason} audio double tap in video A; wrist sync was not trusted")
-    tap, alignment = candidates[0]
-    return {"taps_s": taps, "video_tap_s": tap, "alignment": alignment,
-            "impacts": {p["swing"]: p["impact_s"] for p in alignment["pairs"] if p["ok"]},
-            "tap_only": {p["swing"]: p["contact_s"] for p in alignment["tap_only"]},
-            "rejected_spikes": rejected, "warnings": [], "tap_method": "audio double tap matched to sensor taps"}
-
-
-def _at_gyro_peak(rec: Recording, sync: dict, metrics: dict) -> tuple[dict, list[str]]:
-    """Match make_sensor_sample: wrist window at gyro peak, camera/racket at impact."""
-    entries = {sid: entry for sid, entry in metrics["swings"].items() if entry.get("usable")}
-    peaks, warnings = [], []
-    for sid, entry in entries.items():
-        contact = entry["contact_s"]
-        found = find_shadow_swings(rec, contact - GYRO_PEAK_SEARCH_S, contact + GYRO_PEAK_SEARCH_S)
-        if found:
-            peaks.append({"swing": sid, "contact_s": min(found, key=lambda t: abs(t - contact))})
-        else:
-            warnings.append(f"Wrist data skipped for {sid}: no gyro peak near its synced contact.")
-    gp_sync = {**sync, "impacts": {}, "tap_only": {}, "alignment": {
-        **sync["alignment"], "pairs": [], "unpaired_swings": [], "tap_only": [], "gyro_peak": peaks}}
-    gp_metrics, _, _ = wrist_report(rec, gp_sync)
-    accepted = {}
-    for sid, gp in gp_metrics["swings"].items():
-        if not gp.get("usable"):
-            continue
-        before = entries[sid]
-        info = {"contact_source": "gyro peak", "gyro_peak_s": gp["contact_s"],
-                "found_from": before["contact_source"], "found_from_s": before["contact_s"],
-                "gyro_peak_minus_found_from_ms": round((gp["contact_s"] - before["contact_s"]) * 1000, 1),
-                "search_ms": GYRO_PEAK_SEARCH_S * 1000}
-        accepted[sid] = {**gp, "occlusion_fill": before["occlusion_fill"],
-                         "racket_speed_sensor": {**before["racket_speed_sensor"],
-                                                 "contact_source": before["contact_source"]},
-                         "align_error_ms": before.get("align_error_ms"), "timing": info}
-    return {**gp_metrics, "swings": accepted}, [*metrics["warnings"], *gp_metrics["warnings"], *warnings]
+        i = min(candidates, key=lambda index: abs(float(video[index]) - contact))
+        used.add(i)
+        sensor_time = float(gyro[matched[i]])
+        paired.append({"swing": sid, "contact_s": sensor_time,
+                       "contact_video_s": contact, "video_swing_s": float(video[i]),
+                       "error_ms": (sensor_time - float(video[i]) - offset) * 1000})
+    if not paired:
+        raise ValueError("no video swing contact matches the synchronized gyro sequence")
+    debug.update(status="matched", reason=None, matchedSwingIds=[row["swing"] for row in paired],
+                 unmatchedSwingIds=unpaired)
+    return {"taps_s": None, "video_tap_s": None, "impacts": {}, "tap_only": {},
+            "rejected_spikes": [], "warnings": [], "method": "dominant swing sequence",
+            "alignment": {"pairs": [], "tap_only": [], "gyro_peak": paired,
+                          "unpaired_swings": unpaired, "offset_s": offset,
+                          "offset_from": "dominant swing sequence", "tolerance_ms": SEQUENCE_TOLERANCE_S * 1000}}
 
 
 def attach_sensor(swings: list[dict], clip_a: Path, csv_path: Path, *, slowdown: float | None,
-                  work: Path, info: VideoInfo | None = None) -> tuple[list[dict], list[str]]:
+                  work: Path, info: VideoInfo | None = None, debug: dict | None = None,
+                  video_swing_times: list[float] | None = None) -> tuple[list[dict], list[str]]:
     """Return wrist-enriched swings, or originals with a warning on any sensor/sync failure.
 
     Swings must already have final unique IDs and metadata.sourceContactSeconds in
     video A's real-time clock. Pass info when slowdown was inferred/retried.
     Optional sensor work never mutates a caller's swings or publishes raw uploads.
     """
+    debug = debug if debug is not None else {}
+    debug.update(status="pending", reason=None, chosenGyroTimesSeconds=[],
+                 chosenVideoTimesSeconds=[], offsetSeconds=None, matchedCount=0, residualMs=None)
     try:
         contacts = [(s["id"], float(s["metadata"]["sourceContactSeconds"])) for s in swings]
         if not contacts or not all(math.isfinite(t) for _, t in contacts):
@@ -248,26 +230,41 @@ def attach_sensor(swings: list[dict], clip_a: Path, csv_path: Path, *, slowdown:
             folder = Path(temporary)
             rec = (_zip_recording(csv_path, folder) if is_sensor_zip(csv_path)
                    else _flat_recording(csv_path, folder))
-            sync = _tap_sync(rec, contacts, _video_taps(clip_a, folder, info))
+            gyro_peaks = _gyro_swings(rec)
+            debug.update(chosenGyroTimesSeconds=gyro_peaks[0].tolist(),
+                         chosenGyroStrengthDps=gyro_peaks[1].tolist())
+            hits = (np.asarray(video_swing_times, dtype=float) if video_swing_times is not None
+                    else _video_swing_times(clip_a, folder, info))
+            sync = _sequence_sync(rec, contacts, hits, debug, gyro_peaks)
             originals = {s["id"]: copy.deepcopy(s) for s in swings}
             metrics, _, filled = wrist_report(rec, sync, swings=originals)
-            metrics, warnings = _at_gyro_peak(rec, sync, metrics)
-            accepted = metrics["swings"]
+            warnings = list(metrics["warnings"])
+            accepted = {sid: entry for sid, entry in metrics["swings"].items() if entry.get("usable")}
             if not accepted:
                 raise ValueError("no usable wrist samples aligned with the video swings")
+            paired = {row["swing"]: row for row in sync["alignment"]["gyro_peak"]}
+            for sid, entry in accepted.items():
+                event = paired[sid]
+                entry["timing"] = {"contact_source": "gyro peak", "gyro_peak_s": event["contact_s"],
+                                   "found_from": "dominant swing sequence", "found_from_s": event["contact_s"],
+                                   "gyro_peak_minus_found_from_ms": 0.0, "sequence_error_ms": event["error_ms"]}
+                entry["racket_speed_sensor"]["contact_source"] = "gyro peak"
+            metrics = {**metrics, "swings": accepted}
             attached = attach_wrist_entries({sid: originals[sid] for sid in accepted}, metrics, filled)
             for sid, swing in attached.items():
                 swing.setdefault("metadata", {})["wristSync"] = {
-                    "method": sync["tap_method"], "offsetSeconds": sync["alignment"]["offset_s"],
-                    "videoTapSeconds": sync["video_tap_s"], "sensorTapSeconds": sync["taps_s"][0],
+                    "method": sync["method"], "offsetSeconds": sync["alignment"]["offset_s"],
+                    "matchedCount": debug["matchedCount"], "residualMs": debug["residualMs"],
                     "forearmAxis": "y", "mock": rec.mock}
                 swing["metadata"]["wristTiming"] = accepted[sid]["timing"]
             if len(attached) != len(swings):
-                warnings.append("Sensor data was ignored for swings without trusted tap/contact alignment or usable wrist data.")
+                warnings.append("Sensor data was ignored for swings without trusted sequence alignment or usable wrist data.")
             warnings.append("Sensor forearm axis assumed y: strap the phone's long edge along the hitting forearm.")
+            debug.update(status="attached", attachedSwingIds=list(attached))
             return [attached.get(s["id"], s) for s in swings], list(dict.fromkeys(warnings))
     except Exception as exc:
         # Optional input must not fail a successfully reconstructed video. Limit
         # diagnostics to our validation messages; tool/library errors may contain paths.
-        reason = str(exc) if type(exc) is ValueError else "invalid sensor data or tap sync failed"
+        reason = str(exc) if type(exc) is ValueError else "invalid sensor data or swing sequence sync failed"
+        debug.update(status="ignored", reason=reason)
         return swings, [f"Sensor data ignored: {reason}."]

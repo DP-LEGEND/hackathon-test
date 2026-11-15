@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
+import numpy as np
 from fastapi.testclient import TestClient
 
 from pipeline.server import app
@@ -37,6 +38,11 @@ def multi_run(tmp_path, monkeypatch, stereo_pair):
         return 0., None, {'method': 'manual' if offset is not None else 'audio-peak'}
 
     monkeypatch.setattr(multi, 'prepare_audio', audio)
+    # These HTTP tests inject pose extraction; raw video/audio decoding is
+    # exercised separately by generated WAV and FFmpeg timing fixtures.
+    import pipeline.multi_audio as audio_module
+    monkeypatch.setattr(audio_module, 'extract_playback_peaks', lambda *args: (np.array([]), np.array([])))
+    monkeypatch.setattr(audio_module, '_extract_hits', lambda *args: (np.array([]), np.array([])))
     return TestClient(app), root, sync_calls
 
 
@@ -61,6 +67,8 @@ def published(client, root, response):
     manifest = json.loads(directory.read_text())
     assert manifest['files'] == result['files']
     assert manifest['warnings'] == result['warnings']
+    assert manifest['debug'] == result['debug']
+    assert {'videoA', 'videoB', 'sync', 'stereo', 'sensor'} <= result['debug'].keys()
     saved = [json.loads((directory.parent / name).read_text()) for name in manifest['files']]
     for swing in saved:
         identifier = swing['id']
@@ -115,7 +123,7 @@ def test_auto_slowdown_uses_airdrop_metadata(multi_run, monkeypatch, second):
     monkeypatch.setattr(multi, 'probe_video', probe)
     # The page leaves both fields out for Auto, exactly as it does for /process.
     result, saved = published(client, root, client.post('/process/multi', files=uploads(second)))
-    assert calls == ([None, None] if second else [None])
+    assert calls and all(value is None for value in calls)
     assert result['warnings'] == []
     assert all(swing['metadata']['slowdown'] == 4 for swing in saved)
     assert all(swing['metadata']['slowdownSource'] == 'playback-intent' for swing in saved)
@@ -226,7 +234,7 @@ def test_real_sensor_sync_measurement_and_publish_are_chained(multi_run, tmp_pat
     from wrist.synth import make_session
 
     client, root, _ = multi_run
-    truth = make_session(tmp_path / 'sensor-session', labels=('none', 'rolled_wrist'),
+    truth = make_session(tmp_path / 'sensor-session', labels=('none', 'rolled_wrist', 'none'),
                          camera=True, video_jitter_s=0, shadow=(1,), zip_export=True)
     recording = load_recording(truth['export'])
     swings = list(read_swings(truth['swings_dir']).values())
@@ -234,7 +242,8 @@ def test_real_sensor_sync_measurement_and_publish_are_chained(multi_run, tmp_pat
         swing['metadata']['reconstruction'] = 'stereo'
     monkeypatch.setattr(multi, '_stereo', lambda *args: (copy.deepcopy(swings),
         {'detected': len(swings), 'written': len(swings), 'rejected': [], 'sync': {}, 'calibration': {}}, info()))
-    monkeypatch.setattr(wrist, '_video_taps', lambda *args: [t - truth['video_offset_s'] for t in truth['taps_s']])
+    monkeypatch.setattr(wrist, '_video_swing_times', lambda *args: [
+        row['impact_s'] - truth['video_offset_s'] for row in truth['swings'].values()])
     sensor = (flat_csv(tmp_path / 'sensor.csv', recording) if filename.endswith('.csv')
               else Path(truth['export']))
     files = uploads(True)
@@ -243,7 +252,7 @@ def test_real_sensor_sync_measurement_and_publish_are_chained(multi_run, tmp_pat
     assert not any('ignored' in warning.lower() for warning in result['warnings'])
     for swing in saved:
         assert swing['wrist']['usable'] and swing['wrist']['contact_source'] == 'gyro peak'
-        assert swing['metadata']['wristSync']['method'] == 'audio double tap matched to sensor taps'
+        assert swing['metadata']['wristSync']['method'] == 'dominant swing sequence'
     assert result['compare']['assumptions']['launch']['you']['azimuth']['label'] == 'MOCK (sensor)'
 
 
@@ -282,6 +291,106 @@ def test_stereo_failure_keeps_video_a_available(multi_run, monkeypatch, failure)
     result, saved = published(client, root, client.post('/process/multi', files=uploads(True)))
     assert any('using video_a' in warning for warning in result['warnings'])
     assert all(swing['metadata']['depth'] == 'estimated (1 camera)' for swing in saved)
+    assert result['debug']['stereo']['reason']
+    if failure == 'calibration':
+        assert result['debug']['stereo']['sharedJointSamples'] == 0
+        assert 'too few tracked joints' in ' '.join(result['warnings'])
+
+
+def test_sequence_offset_failure_preserves_chosen_events_in_debug(multi_run, monkeypatch):
+    import pipeline.multi as multi
+    from pipeline.multi_audio import SyncError
+    client, root, _ = multi_run
+
+    def missing(*args):
+        raise SyncError('offset not found: swing spacing does not agree', {
+            'audioSwingTimesA': [.63, 1.53], 'audioSwingTimesB': [.2, .9],
+            'matchedAudioHits': 0})
+
+    monkeypatch.setattr(multi, 'prepare_audio', missing)
+    result, _ = published(client, root, client.post('/process/multi', files=uploads(True)))
+    assert result['debug']['videoA']['chosenSwingTimesSeconds'] == [.63, 1.53]
+    assert result['debug']['videoB']['chosenSwingTimesSeconds'] == [.2, .9]
+    assert 'offset not found' in result['debug']['stereo']['reason']
+    assert any('offset not found' in warning for warning in result['warnings'])
+
+
+def test_calibration_error_value_survives_mono_fallback(multi_run, monkeypatch):
+    import pipeline.process as process
+    client, root, _ = multi_run
+
+    def rejected(*args, diagnostics=None, **kwargs):
+        diagnostics.update(status='failed', reason='calibration reprojection error exceeds tolerance',
+                           reprojectionErrorPx=17.2, tolerancePx=6., sharedJointSamples=100)
+        raise ValueError('Stereo reprojection error exceeds calibration tolerance')
+
+    monkeypatch.setattr(process, 'calibrate', rejected)
+    result, _ = published(client, root, client.post('/process/multi', files=uploads(True)))
+    assert result['debug']['stereo']['reprojectionErrorPx'] == 17.2
+    assert result['debug']['stereo']['tolerancePx'] == 6
+    assert any('17.20 px' in warning for warning in result['warnings'])
+
+
+def test_failed_video_response_still_explains_sync_failure(multi_run, monkeypatch):
+    import pipeline.multi as multi
+    client, _, _ = multi_run
+    monkeypatch.setattr(multi, 'prepare_audio', lambda *args: (_ for _ in ()).throw(ValueError('No swing sequence')))
+    monkeypatch.setattr(multi, 'process_live_clip', lambda *args: (_ for _ in ()).throw(ValueError('No tracked swing')))
+    response = client.post('/process/multi', files=uploads(True))
+    assert response.status_code == 422
+    assert response.json()['detail'] == 'No tracked swing'
+    assert 'offset not found' in response.json()['debug']['stereo']['reason']
+
+
+def test_mono_retry_replaces_stale_stereo_audio_clock(multi_run, monkeypatch):
+    import pipeline.live as live
+    import pipeline.multi as multi
+    import pipeline.multi_audio as audio
+    client, root, _ = multi_run
+    raw = live.extract_raw('injected')
+    monkeypatch.setattr(live, 'extract_raw', lambda *args, **kwargs: {
+        **copy.deepcopy(raw), 't': raw['t'] * 4, 'fps': raw['fps'] / 4})
+    for module in (live, multi):
+        monkeypatch.setattr(module, 'probe_video', lambda *args: VideoInfo(30, 30, 8, 30, 1, 'encoded-cadence', []))
+
+    def failed_sync(*args):
+        raise audio.SyncError('offset not found', {'audioSwingTimesA': [2.52, 6.12]})
+
+    seen = []
+
+    def corrected_audio(clip, info, wav):
+        seen.append(info)
+        return np.array([.63, 1.53]), np.array([1., 1.])
+
+    monkeypatch.setattr(multi, 'prepare_audio', failed_sync)
+    monkeypatch.setattr(audio, '_extract_hits', corrected_audio)
+    result, saved = published(client, root, client.post('/process/multi', files=uploads(True)))
+    assert seen[-1].source == 'speed-retry' and seen[-1].slowdown == 4
+    assert result['debug']['sync']['preRetryAudioSwingTimesA'] == [2.52, 6.12]
+    assert result['debug']['videoA']['chosenSwingTimesSeconds'] == [.63, 1.53]
+    assert all(s['metadata']['slowdown'] == 4 for s in saved)
+
+
+def test_single_camera_uses_local_timing_and_remaps_source_metadata(multi_run, monkeypatch):
+    import pipeline.multi as multi
+    import pipeline.multi_audio as audio
+    import pipeline.process as process
+    import pipeline.live as live
+    client, root, _ = multi_run
+    initial = VideoInfo(30, 30, 9, 120, 4, 'playback-intent', [])
+    corrected = VideoInfo(30, 30, 9, 30, 4, 'local-speed-inference', [
+        {'playbackStart': 0, 'playbackEnd': 1, 'mediaStart': 0, 'rate': 1},
+        {'playbackStart': 1, 'playbackEnd': 9, 'mediaStart': 1, 'rate': .25}])
+    monkeypatch.setattr(multi, 'probe_video', lambda *args: initial)
+    monkeypatch.setattr(audio, 'extract_playback_peaks', lambda *args: (np.array([.63, 3.12, 7.]), np.ones(3)))
+    monkeypatch.setattr(process, 'extract_raw', live.extract_raw)
+    monkeypatch.setattr(multi, 'infer_local_timing', lambda *args: (corrected, {'warnings': ['Timing is inferred.']}))
+    result, saved = published(client, root, client.post('/process/multi', files=uploads()))
+    assert {s['metadata']['slowdown'] for s in saved} == {1, 4}
+    assert {s['metadata']['captureFps'] for s in saved} == {30, 120}
+    assert all(s['metadata']['slowdownSource'] == 'local-speed-inference' for s in saved)
+    assert result['debug']['videoA']['timingSource'] == 'local-speed-inference'
+    assert any('Timing is inferred' in warning for warning in result['warnings'])
 
 
 def test_explicit_offset_is_forwarded_and_not_double_scaled(multi_run, monkeypatch):

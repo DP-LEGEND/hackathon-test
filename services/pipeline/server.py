@@ -26,7 +26,7 @@ from coach.live_voice import voice_for_swing
 from physics.compare import GuessedFixError, compare
 from physics.ghost import FIXES
 from pipeline.live import LiveOptions, process_live_clip, ghost_choice
-from pipeline.multi import MultiOptions, process_multi_clips
+from pipeline.multi import MultiOptions, MultiProcessingError, process_multi_clips
 from pipeline.multi_wrist import is_sensor_zip
 
 MAX_UPLOAD_BYTES = 250 * 1024 * 1024
@@ -355,6 +355,8 @@ def process_multi_video(
                                            video_b=secondary, sensor_csv=sensor, warnings=notices)
             finally:
                 PROCESS_SEMAPHORE.release()
+    except MultiProcessingError as exc:
+        return JSONResponse({'detail': str(exc), 'debug': exc.debug}, status_code=exc.status_code)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from None
     except RuntimeError:

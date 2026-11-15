@@ -40,6 +40,8 @@ class Options:
     b_realtime_after: float | None = None
     hits_wav: str | None = None
     tap_filter: bool = False
+    # Opt-in diagnostics for /process/multi; existing callers retain the same path.
+    calibration_debug: dict | None = None
 
     def validate(self) -> None:
         Timeline(self.slowdown_a, self.a_realtime_before, self.a_realtime_after)
@@ -188,7 +190,8 @@ def swings_from_raw(a: dict, b: dict | None = None, options: Options = Options()
     try:
         if b is None:
             raise ValueError("Single camera: depth is estimated from MediaPipe")
-        cal = calibrate(synced_a, synced_b, 1.0, real_offset, f_a=focal_a, f_b=focal_b)
+        cal = calibrate(synced_a, synced_b, 1.0, real_offset, f_a=focal_a, f_b=focal_b,
+                        **({'diagnostics': options.calibration_debug} if options.calibration_debug is not None else {}))
         reconstructed, stereo_filled, stereo_visibility = triangulate(
             synced_a, synced_b, cal, 0, len(a['t']), provenance=True)
         # A stereo sample between B frames uses a temporally interpolated view.

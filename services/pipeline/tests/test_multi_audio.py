@@ -8,9 +8,10 @@ import pytest
 from pipeline import multi_audio
 from pipeline.segment import audio_hits
 from pipeline.video import VideoInfo
+from pipeline.video import timing_at
 
 
-def info(slowdown=1, duration=4, edits=None):
+def info(slowdown=1, duration=20, edits=None):
     return VideoInfo(30, 30, duration, 30 * slowdown, slowdown, 'manual', edits or [])
 
 
@@ -27,18 +28,18 @@ def decoded_audio(monkeypatch, peaks_a, peaks_b, energy_a=None, energy_b=None):
     return calls
 
 
-def test_one_hit_per_camera_syncs_with_correct_offset_sign(tmp_path, monkeypatch):
-    decoded_audio(monkeypatch, [1.25], [1.75])
+def test_sequence_syncs_with_correct_offset_sign(tmp_path, monkeypatch):
+    decoded_audio(monkeypatch, [1.25, 4.25, 8.25], [1.75, 4.75, 8.75])
     offset, markers, sync = multi_audio.prepare_audio(Path('a.mov'), Path('b.mov'), info(), info(), tmp_path)
     assert offset == .5  # B time = A time + .5
-    assert sync['method'] == 'audio-hit-peaks' and sync['matchedAudioHits'] == 1
+    assert sync['method'] == 'audio-swing-sequence' and sync['matchedAudioHits'] == 3
     assert sync['offsetBRealSeconds'] == .5
     assert markers.is_file()
-    np.testing.assert_allclose(audio_hits(str(markers), rise_db=25), [1.25], atol=.0051)
+    np.testing.assert_allclose(audio_hits(str(markers), rise_db=25), [1.25, 4.25, 8.25], atol=.0051)
 
 
 def test_shared_nonuniform_hit_pattern_handles_cropped_leading_event(tmp_path, monkeypatch):
-    decoded_audio(monkeypatch, [.3, .8, 1.6, 2.9], [.6, 1.4, 2.7])
+    decoded_audio(monkeypatch, [1, 4, 8, 13], [3.8, 7.8, 12.8])
     offset, _, sync = multi_audio.prepare_audio(Path('a.mov'), Path('b.mov'), info(), info(), tmp_path)
     assert offset == pytest.approx(-.2)
     assert sync['matchedAudioHits'] == 3
@@ -46,15 +47,18 @@ def test_shared_nonuniform_hit_pattern_handles_cropped_leading_event(tmp_path, m
 
 
 def test_ambiguous_repeated_hits_do_not_silently_pick_an_offset(tmp_path, monkeypatch):
-    decoded_audio(monkeypatch, [.5, 1.5], [.5, 1.5, 2.5])
-    with pytest.raises(ValueError, match='ambiguous'):
+    decoded_audio(monkeypatch, [1, 4, 7], [1, 4, 7, 10])
+    with pytest.raises(multi_audio.SyncError, match='ambiguous') as failed:
         multi_audio.prepare_audio(Path('a.mov'), Path('b.mov'), info(), info(), tmp_path)
+    assert failed.value.debug['audioSwingTimesA'] == [1, 4, 7]
+    assert failed.value.debug['audioSwingTimesB'] == [1, 4, 7, 10]
+    assert failed.value.debug['offsetBRealSeconds'] is None
 
 
-def test_dominant_ball_hit_beats_unpaired_transient_noise(tmp_path, monkeypatch):
-    decoded_audio(monkeypatch, [.5, 1.5], [.25, 1.75, 3], [1, 10], [1, 10, 1])
-    offset, _, sync = multi_audio.prepare_audio(Path('a.mov'), Path('b.mov'), info(), info(), tmp_path)
-    assert offset == .25 and sync['matchedAudioHits'] == 1
+def test_single_loud_peak_cannot_override_missing_sequence(tmp_path, monkeypatch):
+    decoded_audio(monkeypatch, [1.5], [1.75], [10], [10])
+    with pytest.raises(multi_audio.SyncError, match='at least 3'):
+        multi_audio.prepare_audio(Path('a.mov'), Path('b.mov'), info(), info(), tmp_path)
 
 
 @pytest.mark.parametrize('peaks_a,peaks_b', [([], []), ([1], []), ([], [1])])
@@ -127,18 +131,18 @@ def test_decoded_original_hits_map_to_normalized_seconds_and_cleanup(tmp_path, m
         commands.append(arguments)
         assert kwargs['timeout'] == 30
         destination = Path(arguments[-1])
-        hits = np.array([2.4, 4.8]) if destination.name == 'audio-a.wav' else np.array([1.7, 2.3])
-        multi_audio._write_markers(destination, hits, 6)
+        hits = np.array([4., 16., 32.]) if destination.name == 'audio-a.wav' else np.array([2.1, 5.1, 9.1])
+        multi_audio._write_markers(destination, hits, 40)
         return ''
 
     monkeypatch.setattr(multi_audio, 'run_tool', ffmpeg)
     offset, markers, sync = multi_audio.prepare_audio(
-        Path('a.mov'), Path('b.mov'), info(4, 6), info(1, 6), tmp_path)
+        Path('a.mov'), Path('b.mov'), info(4, 40), info(1, 12), tmp_path)
     assert offset == pytest.approx(1.1, abs=.006)
     assert len(commands) == 2 and all('file,pipe' in args and 'mov,avi' in args for args in commands)
     assert not (tmp_path / 'audio-a.wav').exists() and not (tmp_path / 'audio-b.wav').exists()
-    np.testing.assert_allclose(audio_hits(str(markers), rise_db=25), [.6, 1.2], atol=.0051)
-    assert sync['matchedAudioHits'] == 2
+    np.testing.assert_allclose(audio_hits(str(markers), rise_db=25), [1, 4, 8], atol=.0051)
+    assert sync['matchedAudioHits'] == 3
 
 
 def test_automatic_missing_audio_is_a_controlled_sync_error(tmp_path, monkeypatch):
@@ -157,3 +161,60 @@ def test_clip_duration_is_bounded_before_audio_decode(tmp_path, monkeypatch):
     monkeypatch.setattr(multi_audio, '_extract_hits', forbidden)
     with pytest.raises(ValueError, match='30 real seconds'):
         multi_audio.prepare_audio(Path('a.mov'), Path('b.mov'), info(duration=31), info(), tmp_path)
+
+
+def noisy_session_audio(path, movie, swing_times):
+    """Generated audio, with feeds/pickups around every stronger swing."""
+    rate = 16_000
+    samples = np.random.default_rng(41).normal(0, 2, int(movie.duration * rate) + rate)
+    burst = np.sin(2 * np.pi * 4000 * np.arange(80) / rate) * np.hanning(80)
+    for number, when in enumerate(swing_times):
+        for delta, amplitude in [(-.9, 1200), (-.25, 3500), (0, 18000 + number * 1000), (.5, 1800)]:
+            playback, _ = timing_at(movie, when + delta)
+            start = int(round(playback * rate))
+            samples[start:start + len(burst)] += amplitude * burst
+    with wave.open(str(path), 'wb') as stream:
+        stream.setnchannels(1)
+        stream.setsampwidth(2)
+        stream.setframerate(rate)
+        stream.writeframes(np.clip(samples, -32768, 32767).astype('<i2').tobytes())
+
+
+def test_real_decoder_output_rejects_feeds_and_matches_swings_across_different_speed_switches(tmp_path, monkeypatch):
+    a = info(duration=50, edits=[
+        {'playbackStart': 0, 'playbackEnd': 5, 'mediaStart': 0, 'rate': 1},
+        {'playbackStart': 5, 'playbackEnd': 45, 'mediaStart': 5, 'rate': .25},
+        {'playbackStart': 45, 'playbackEnd': 50, 'mediaStart': 15, 'rate': 1},
+    ])
+    b = info(duration=46, edits=[
+        {'playbackStart': 0, 'playbackEnd': 9, 'mediaStart': 0, 'rate': 1},
+        {'playbackStart': 9, 'playbackEnd': 41, 'mediaStart': 9, 'rate': .25},
+        {'playbackStart': 41, 'playbackEnd': 46, 'mediaStart': 17, 'rate': 1},
+    ])
+    swings = np.array([3., 7., 12., 18.])
+
+    def ffmpeg(arguments, **kwargs):
+        path = Path(arguments[-1])
+        movie, hits = (a, swings) if path.name == 'audio-a.wav' else (b, swings + .6)
+        noisy_session_audio(path, movie, hits)
+        return ''
+
+    monkeypatch.setattr(multi_audio, 'run_tool', ffmpeg)
+    offset, markers, sync = multi_audio.prepare_audio(Path('a.mov'), Path('b.mov'), a, b, tmp_path)
+    assert offset == pytest.approx(.6, abs=.006)
+    assert sync['matchedAudioHits'] == 4
+    assert sync['audioSwingTimesA'] == pytest.approx(swings, abs=.006)
+    assert sync['audioSwingTimesB'] == pytest.approx(swings + .6, abs=.006)
+    assert sync['audioSwingPlaybackTimesA'] == pytest.approx([3, 13, 33, 48], abs=.006)
+    assert sync['audioSwingSlowdownsA'] == [1, 4, 4, 1]
+    assert sync['audioSwingSlowdownsB'] == [1, 1, 4, 1]
+    assert sync['sequencePairs'] == [[0, 0], [1, 1], [2, 2], [3, 3]]
+    assert audio_hits(str(markers), rise_db=25) == pytest.approx(swings, abs=.006)
+
+
+def test_playback_peak_helper_is_provisional_before_real_clock_selection(tmp_path, monkeypatch):
+    times = np.array([1., 2., 4., 7.])
+    amplitudes = np.array([1., 10., 11., 12.])
+    monkeypatch.setattr(multi_audio, '_decode_candidates', lambda *args: (times, amplitudes))
+    playback, _ = multi_audio.extract_playback_peaks(Path('a.mov'), tmp_path / 'audio.wav')
+    assert playback == pytest.approx([2, 4, 7])
