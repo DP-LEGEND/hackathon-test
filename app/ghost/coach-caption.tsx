@@ -56,7 +56,10 @@ export function CoachCaptionBar({
 }: {
   state: CaptionState;
   size: "large" | "compact";
-  /** Physics' chain from body to ball for the coach's fix (compare `fix.explain`); null hides it. */
+  /**
+   * Physics' chain from body to ball for the coach's fix (compare `fix.explain`); null hides it.
+   * Shown after "Physics:", outside the quoted cue, so it never reads as the coach's words.
+   */
   explain?: string | null;
 }) {
   const large = size === "large";
@@ -115,7 +118,7 @@ export function CoachCaptionBar({
             </blockquote>
             {explain && !partial && (
               <p className={cn("mt-1.5 text-pretty text-muted-foreground", large ? "text-sm sm:text-base" : "text-xs sm:text-sm")}>
-                {explain}
+                Physics: {explain}
               </p>
             )}
             {voice && (voice.audioUrl || voice.wordedByClaude) && (
