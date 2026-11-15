@@ -3,9 +3,7 @@ For pasting into Devpost at 11:00. Each "##" heading is one Devpost field: paste
 Sources: docs/devpost.md and main at 6302bce. Every claim was checked against main. Where
 docs/devpost.md is older than main, this file follows main:
 - forearm roll is the gyro integrated about the forearm (#75), not the phone's orientation;
-- the wrist sensor has been tried on mock data and one real shadow session (services/wrist/README.md);
-- Adaption: main has the SIMULATED training data, an eval and a status script (#78), but nothing in the
-  app uses a fine-tuned model, so nothing here claims one.
+- the wrist sensor has been tried on mock data and one real shadow session (services/wrist/README.md).
 Before pasting:
 - Figma: set the file's share link to "anyone with the link can view" and open it in a private window.
 - If #73 (ghost direction), #74 (real wrist threshold), #81 (Adaption) or #83 (Figma case study)
@@ -59,6 +57,7 @@ We wanted to show a player the swing they haven't played yet.
 - **Wrist sensor.** A phone strapped to the forearm records with Sensor Logger at 100 Hz, synced to the video by two taps and the impact spikes.
   - Forearm roll is the gyro integrated about the forearm, and it feeds the coach's rolled-wrist rule.
   - The sensor also estimates racket speed for the predicted ball.
+- **Adaption.** A fault-injection data generator built from our own real swings, exported in Adaption's format, and fine-tuned Qwen3.5-2B with AutoScientist: 66% win rate vs the base model on Adaption's own eval, below its 70% target. This is Adaption's own measure, judged on evaluations it derives from our training data. It isn't accuracy on our held-out swings, so it isn't comparable with our held-out test numbers. The data is SIMULATED, and Ghost's live coach doesn't use the tuned model yet.
 - **Web app.**
   - **Front end:** Next.js 16, React 19, TypeScript and Tailwind CSS 4, with three.js for the 3D replay and the court.
   - **Back end:** a local FastAPI service, behind a same-origin proxy so the browser never talks to Python directly.
@@ -66,7 +65,7 @@ We wanted to show a player the swing they haven't played yet.
   - **#71:** the landing page.
   - **#76:** the shared header and the upload page.
   - **#82:** the swing view (step bar, coach card, ghost legend and PREDICTED tags).
-- **Team.** Four people and several AI agents (Claude Code and Codex) worked in one repo under a shared `CLAUDE.md`: folder ownership, typed contracts and small pull requests (77 merged).
+- **Team.** Four people and several AI agents (Claude Code and Codex) worked in one repo under a shared `CLAUDE.md`: folder ownership, typed contracts and small pull requests (80 merged).
 
 ## Challenges we ran into
 
@@ -85,7 +84,7 @@ We wanted to show a player the swing they haven't played yet.
 - **A coach that never guesses.** It measures in code, skips any fault that would rest on a joint the camera couldn't see, and labels every number with its source.
 - **A language model that can't invent a number.** Claude only words the fix, and code checks every sentence before it's spoken.
 - **A real design system.** Our Figma frames drove three restyle PRs, and the data, the coach's wording and the PREDICTED labels didn't change.
-- **Four people, about 24 hours, 77 merged pull requests.**
+- **Four people, about 24 hours, 80 merged pull requests.**
 
 ## What we learned
 
@@ -107,7 +106,7 @@ We wanted to show a player the swing they haven't played yet.
 
 ## Built with
 
-mediapipe, opencv, numpy, scipy, ffmpeg, python, fastapi, next.js, react, typescript, tailwindcss, three.js, anthropic-claude, elevenlabs, figma, sensor-logger, claude-code, codex
+mediapipe, opencv, numpy, scipy, ffmpeg, python, fastapi, next.js, react, typescript, tailwindcss, three.js, anthropic-claude, elevenlabs, figma, adaption, sensor-logger, claude-code, codex
 
 ## Links
 
