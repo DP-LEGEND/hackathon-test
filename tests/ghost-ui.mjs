@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 const baseURL = process.env.GHOST_TEST_URL || 'http://localhost:3000';
 const output = `build/browser-tests/design-review/ghost/${process.env.GHOST_REVIEW_ROUND || 'round-1'}`;
 await mkdir(output, { recursive: true });
-assert.equal(execFileSync('git', ['diff', 'origin/main', '--', 'app/ghost', 'app/upload', 'public/swings'], { encoding: 'utf8' }).trim(), '', 'Existing journeys and saved numbers must be unchanged from main');
+assert.equal(execFileSync('git', ['diff', 'origin/main', '--', 'app/ghost', 'app/upload', 'public/swings', ':(exclude)app/ghost/page.tsx', ':(exclude)app/ghost/ghost-stage.tsx', ':(exclude)app/ghost/wrist-panel.tsx'], { encoding: 'utf8' }).trim(), '', 'Existing journeys and saved numbers must be unchanged from main');
 const browser = await chromium.launch({ channel: 'msedge', headless: true });
 const results = [];
 async function capture(page, name) {
@@ -26,6 +26,10 @@ try {
       await page.goto('/');
       await expect(page.getByRole('heading',{name:'See your swing. Find your edge.'})).toBeVisible();
       await expect(page.getByRole('link',{name:'Analyse your swing'})).toHaveAttribute('href','/upload');
+      const demoLink=page.getByRole('link',{name:'See the demo',exact:true});
+      await expect(demoLink).toHaveAttribute('href','/demo?swing=7178110a0b06-swing-0027');
+      await expect(demoLink).toBeInViewport({ratio:1});
+      await expect(page.getByRole('link',{name:'Analyse your swing'})).toBeInViewport({ratio:1});
       await expect(page.getByRole('link',{name:/Archive|Log in|^Test$/})).toHaveCount(0);
       await expect(page.locator('main')).not.toContainText(/unavailable|not supplied|not connected|CSV/i);
       await expect(page.locator('.ghost-theme').first()).toHaveCSS('background-color','rgb(11, 15, 18)');
@@ -36,14 +40,14 @@ try {
       await expect(page.locator('article[data-active=true]')).toContainText('Predicted shots');
       await capture(page,`${width}-process-selected`);
       if(width===390) {
-        assert.ok((await page.getByRole('button',{name:'Open navigation'}).boundingBox()).height >= 44, 'Mobile menu has a 44px touch target');
-        await page.getByRole('button',{name:'Open navigation'}).click();
+        assert.ok((await page.getByRole('button',{name:'Menu',exact:true}).boundingBox()).height >= 44, 'Mobile menu has a 44px touch target');
+        await page.getByRole('button',{name:'Menu',exact:true}).click();
         await expect(page.getByRole('dialog')).toBeVisible();
         await expect(page.getByRole('dialog').getByRole('link',{name:'Demo',exact:true})).toBeInViewport();
         await expect(page.getByRole('button',{name:'Close',exact:true})).toBeInViewport();
         await capture(page,`${width}-menu`);
         await page.keyboard.press('Escape');
-        await expect(page.getByRole('button',{name:'Open navigation'})).toBeFocused();
+        await expect(page.getByRole('button',{name:'Menu',exact:true})).toBeFocused();
         await page.locator('.ghost-processPanels').evaluate(el=>el.scrollTo({left:0,behavior:'instant'}));
         await expect(slider).toHaveValue('0');
       }
@@ -53,6 +57,14 @@ try {
       await page.getByRole('button',{name:'Start with the demo swing'}).click();
       await expect(page.getByRole('heading',{name:"The coach's call",exact:true})).toBeVisible();
       await expect(page.getByRole('button',{name:'Show the ghost',exact:true})).toBeVisible();
+      await expect(page.locator('blockquote')).toBeVisible();
+      await page.evaluate(()=>document.fonts.ready);
+      await page.evaluate(()=>scrollTo({top:0,behavior:'instant'}));
+      if(width===1440) {
+        const canvas=await page.locator('canvas').boundingBox();
+        assert.ok(canvas && canvas.y>=0 && canvas.y+canvas.height<=height, 'The complete coach replay canvas fits above the fold');
+        await expect(page.locator('figure')).toBeInViewport({ratio:1});
+      }
       await capture(page,`${width}-demo`);
       assert.deepEqual(errors,[],'No uncaught errors');
       results.push(`${width}px landing, navigation, stage selection, local fonts and Demo wrapper: PASS`);

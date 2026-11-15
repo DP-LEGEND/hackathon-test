@@ -8,6 +8,8 @@ aren't on main yet. When each one merges, move it into the built sections and de
   submission, update the model and the number (check with `python -m physics.adaption_status`).
 - Figma: before submitting, set the Figma file's share link to "anyone with the link can view", or
   judges can't open the case study.
+- The real-ball check, the measured hit spot and the straight-drive ghosts (sections 5 and the table
+  under it) arrive with #86 (stacked on #73). If either hasn't merged, take them out before pasting.
 Delete this comment before pasting into Devpost.
 -->
 
@@ -31,16 +33,16 @@ Ghost closes that gap. You film a swing on your phone, then see yourself in 3D (
 
 **4. Ghost.** Physics edits your skeleton to make the fix: turn the shoulders less, bend or straighten the elbow, close the stance, or hold the wrist cock longer. Bone lengths stay fixed, so the ghost is still your body. The ghost then re-measures itself, so the before and after numbers come from the same code.
 
-**5. Predicted ball path.** From the racket speed and direction at contact, an effective-mass collision gives the ball speed (about 1.3 × racket-head speed). The ball then flies with gravity and drag that grows with speed squared, on a court built to the World Squash Federation (WSF) spec, with the tin, the out lines and wall bounces. Both swings and both balls are placed in one court coordinate frame, so your ball and the ghost's leave from each racket head. Every path is labelled **PREDICTED**: there is no ball tracking.
+**5. Predicted ball path.** From the racket speed and direction at contact, an effective-mass collision gives the ball speed (about 1.3 × racket-head speed). The ball then flies with gravity and drag that grows with speed squared, on a court built to the World Squash Federation (WSF) spec, with the tin, the out lines and wall bounces. Both swings and both balls are placed in one court coordinate frame, so your ball and the ghost's leave from each racket head. Every path is labelled **PREDICTED**: the app doesn't track the ball. Where the player hit from is measured from the video when the camera sees the court lines (the floor lines and the player's feet); otherwise it is assumed. Every ghost aims a straight drive: on the demo forehand your PREDICTED ball goes cross-court and the ghost's goes straight down the right wall.
 
-**Checked against video on 2 real swings.** The predicted front-wall contact point is within about 0.1–0.3 m of where the ball hits in the video:
+**Checked against the real ball on 2 real swings.** We tracked the ball after contact in the two demo clips and fitted its flight. On the forehand, the tracked ball hit the front wall at 1.17 m; Ghost predicted 1.45 m from body motion alone (0.28 m off, launch angle assumed).
 
-| Clip | Predicted | In the video |
+| Clip | Ghost PREDICTED (body motion alone) | Tracked from the real video |
 |---|---|---|
-| Forehand (IMG_2115) | front wall at **1.92 m** high, 2.7 m from the right wall, 133 km/h | about **1.8 m** high, about 2.6 m from the right wall, 125–150 km/h |
-| Backhand (IMG_2116) | front wall at **0.78 m** high | **0.5–0.8 m** high |
+| Forehand (IMG_2115) | front wall at **1.45 m** high, 13.5° cross-court, 133 km/h | front wall at **1.17 m** high, 21° cross-court, 136 ± 41 km/h |
+| Backhand (IMG_2116) | front wall at **0.77 m** high, straight (aim ASSUMED), 130 km/h | front wall at **0.69 m** high, 23° cross-court, 128 ± 11 km/h |
 
-That's a check on two swings, not accuracy validation. The launch angle is ASSUMED, and we set it from these same clips.
+That's a check on two swings, not accuracy validation. The launch angle is ASSUMED (12° forehand, 3° backhand), and we set it from these same clips; the tracked forehand left at about 7.6°, flatter than the 12° we assume, which is most of the 0.28 m.
 
 ## What's measured and what's estimated
 
