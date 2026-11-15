@@ -91,11 +91,11 @@ Mark it **ESTIMATE (sensor)**. The coach's call above already lists the wrist as
 
 | OPERATOR clicks | On screen | PRESENTER says | s |
 |---|---|---|---|
-| Switch to terminal tab 3 | The morning `wrist.tune` output: `roll_change_abs_deg`, rolled vs normal medians, the in-sample split | The camera can't see wrist roll — it says so on screen. So we strapped a phone to the forearm. It's an estimate from one session: normal backhands turned [normal median]° through contact, rolled ones [rolled median]°, and every swing was sorted correctly. *(Read both medians exactly as tab 3 prints them under roll_change_abs_deg. Say 'estimate'. Don't subtract them out loud. Only say 'every swing sorted correctly' if the in-sample line shows 100% of rolled and 0% of normal.)* | 23 (incl. 2 s switch) |
+| Switch to terminal tab 3 | The morning `wrist.tune` output: `roll_change_abs_deg`, rolled vs normal medians, the in-sample split | The camera can't see wrist roll, which is why the coach couldn't check it. So we strapped a phone to the forearm. It's an estimate from one session: normal backhands turned [normal median]° through contact, rolled ones [rolled median]°, and every swing was sorted correctly. *(Read both medians exactly as tab 3 prints them under roll_change_abs_deg. Say 'estimate'. Don't subtract them out loud. Only say 'every swing sorted correctly' if the in-sample line shows 100% of rolled and 0% of normal.)* | 23 (incl. 2 s switch) |
 
 **Otherwise, spoken only (13 s, 1:36–1:49).** Switch nothing, and don't say a number: without usable sample output there's no real measurement to quote. Then go straight on to the fresh clip at 1:49; every later beat uses its second, earlier time.
 
-> The camera can't see wrist roll — it says so on screen. So we strapped a phone to the forearm to measure it. So far we've only tested that on mock data.
+> The camera can't see wrist roll, which is why the coach couldn't check it. So we strapped a phone to the forearm to measure it. We've tried it on real practice swings, but the numbers aren't solid enough to quote yet.
 
 ### Fresh clip (1:59–2:21, 22 s; 1:49–2:11 if the wrist beat was spoken)
 
