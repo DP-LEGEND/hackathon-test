@@ -7,8 +7,8 @@ docs/devpost.md is older than main, this file follows main:
 Before pasting:
 - Figma: set the file's share link to "anyone with the link can view" and open it in a private window.
 - If #73 (ghost direction), #74 (real wrist threshold), #81 (Adaption) or #83 (Figma case study)
-  merge before 11:00, recheck the lines that mention their topics. Screenshot 3's numbers and the
-  real-ball check need #73 and #86 (measured hit spot, straight-drive ghosts) merged.
+  merge before 11:00, recheck the lines that mention their topics. Screenshot 1 and 3's numbers, the
+  Physics line and the real-ball check are on main (#73, #85, #86) and were checked in the running app.
 Delete this comment before pasting.
 -->
 
@@ -119,8 +119,8 @@ Five, from the running app in a 1440 × 900 window. Keep every PREDICTED, SAMPLE
 
 | # | Page | State | What it shows |
 |---|---|---|---|
-| 1 | `/ghost` | Forehand · over-rotation, **Coach's call** step | The step bar on step 2, the orange skeleton, and the coach card: *"Over-rotation: hips turn 157°"* and the cyan cue *"Turn a little less and stay balanced through the ball."* |
+| 1 | `/ghost` | Forehand · over-rotation, **Coach's call** step | The step bar on step 2 and the coach card: *"Over-rotation: hips turn 157°"*, the cyan cue *"Turn a little less and stay balanced through the ball."*, and the *Physics:* line under it (137.6° → 85°, front wall 1.45 → 1.44 m, 133.2 → 119.1 km/h, with its MEASURED, ESTIMATE and ASSUMED labels). At 1440 × 900 the card covers most of the orange skeleton |
 | 2 | `/ghost` | Same swing, **The ghost** step: click **Side by side** (it opens in Overlay), then scroll so the 3D view and the *What the fix changes* card both show | Orange swing and cyan ghost apart, the fix *Turn shoulders less 52.6°* with the *Coach's pick* badge, and *What the fix changes*: shoulder turn 137.6° → 85° |
-| 3 | `/ghost` | Same swing, **On court** step, scrolled so the 3D court and the Ball card both show | Both PREDICTED ball paths with their tags (orange goes cross-court, cyan goes straight down the right wall), the ghost legend, and the Ball card (PREDICTED badge): 133.2 → 119.1 km/h, front wall 1.45 → 1.44 m |
+| 3 | `/ghost` | Same swing, **On court** step, scrolled so the 3D court and the Ball card both show | Both PREDICTED ball paths with their tags (orange goes cross-court, cyan goes straight down the right wall), the ghost legend (*aiming straight drive*, STATED), the badge *"Reference check against a real ball: 1.45 m predicted, 1.17 m tracked"*, and the Ball card (PREDICTED badge): 133.2 → 119.1 km/h, front wall 1.45 → 1.44 m |
 | 4 | `/ghost?swing=<id>` after an upload | A **Live** swing you uploaded, at the coach's call, with the coach naming a fault | The **Hear the coach** button and *worded by Claude*, which needs both keys and the Mac online. Without the button, capture `/upload` with a clip chosen instead |
 | 5 | `/` | Top of the landing page | The GHOST landing page built from the Figma frames, with the Home, Demo and Try your swing navigation |
