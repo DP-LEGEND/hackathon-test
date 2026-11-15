@@ -8,6 +8,7 @@ import { ChevronRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { listWords, notJudgedReason, type CompareResult, type LaunchFact } from "./compare";
+import { look } from "./look";
 import { formatFrameRanges, MIN_VISIBILITY, percentOf, summariseGuesses, type GuessField, type GuessSummary } from "./provenance";
 import type { LoadedSwing } from "./swing";
 
@@ -27,12 +28,17 @@ const FIELD_WORDS: Record<GuessField, string> = {
 export function PredictionPanel({ you, compare }: { you: LoadedSwing; compare: CompareResult | null }) {
   const guesses = summariseGuesses(you.guessed);
   return (
-    <details className="group rounded-xl border bg-card">
-      <summary className="flex cursor-pointer list-none items-center gap-2 rounded-xl p-3 text-sm font-medium outline-none select-none hover:bg-muted/40 focus-visible:ring-3 focus-visible:ring-ring/50 sm:p-4 [&::-webkit-details-marker]:hidden">
-        <ChevronRight aria-hidden className="size-4 text-muted-foreground group-open:rotate-90 motion-safe:transition-transform" />
-        How this was predicted
+    <details className={cn(look.card, "group")}>
+      <summary className="flex min-h-14 cursor-pointer list-none items-center gap-3 rounded-[20px] px-4 py-3 select-none hover:bg-(--media) sm:px-6 [&::-webkit-details-marker]:hidden">
+        <span
+          aria-hidden
+          className="grid size-7 shrink-0 place-items-center rounded-full border text-muted-foreground group-hover:border-primary/60 group-hover:text-primary"
+        >
+          <ChevronRight className="size-4 group-open:rotate-90 motion-safe:transition-transform" />
+        </span>
+        <span className={look.title}>How this was predicted</span>
       </summary>
-      <div className="flex flex-col gap-5 px-3 pb-4 text-sm sm:px-4">
+      <div className="flex flex-col gap-6 px-4 pt-1 pb-5 text-sm leading-relaxed sm:px-6 sm:pb-6">
         <Part title="1. The 3D skeleton">
           <p>
             Two phones film the swing from different angles. In each video a pose model finds 33 body points, and matching
@@ -90,8 +96,8 @@ export function PredictionPanel({ you, compare }: { you: LoadedSwing; compare: C
 
 function Part({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="flex flex-col gap-1.5">
-      <h4 className="text-xs font-semibold tracking-[0.12em] text-muted-foreground uppercase">{title}</h4>
+    <section className="flex flex-col gap-2">
+      <h4 className={cn(look.label, "text-primary")}>{title}</h4>
       {children}
     </section>
   );
@@ -123,7 +129,7 @@ function LabelBadge({ label }: { label: string | null }) {
       ? "border-foreground/40"
       : "border-border text-muted-foreground";
   return (
-    <Badge variant="outline" className={cn("font-mono tracking-wide", tone)}>
+    <Badge variant="outline" className={cn("h-5 rounded-full font-mono tracking-wide", tone)}>
       {label}
     </Badge>
   );
@@ -132,9 +138,9 @@ function LabelBadge({ label }: { label: string | null }) {
 function FactList({ facts }: { facts: LaunchFact[] }) {
   if (facts.length === 0) return <p className="text-muted-foreground">This file doesn&apos;t list the ball model&apos;s inputs.</p>;
   return (
-    <dl className="flex flex-col divide-y rounded-lg border">
+    <dl className="flex flex-col divide-y rounded-2xl border bg-(--media)">
       {facts.map((fact) => (
-        <div key={fact.key} className="flex flex-col gap-1 px-3 py-2 sm:grid sm:grid-cols-[11rem_1fr_auto] sm:items-baseline sm:gap-3">
+        <div key={fact.key} className="flex flex-col gap-1 px-4 py-3 sm:grid sm:grid-cols-[11rem_1fr_auto] sm:items-baseline sm:gap-4">
           <dt className="text-muted-foreground">{fact.name}</dt>
           <dd className="flex flex-col gap-0.5">
             <span className="tabular-nums">{fact.value}</span>
