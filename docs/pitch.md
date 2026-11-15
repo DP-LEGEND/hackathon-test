@@ -1,8 +1,9 @@
 <!--
 TODO (9 AM freeze): written against main at cca6a0d (upload page #48 merged). The demo section
-follows docs/demo-runbook.md (PR #52) click by click; merge #56 before #52. Not on main, so not
-claimed here: voice or Claude in the live flow, and an Adaption fine-tune. If either changes,
-update the script and docs/devpost.md together.
+follows docs/demo-runbook.md (PR #52) click by click; merge #56 before #52. Voice and Claude in
+the live caption are on main (#63, "Hear the coach"), so judge question 2 claims them. Not on
+main, so not claimed here: an Adaption fine-tune. If that changes, update the script and
+docs/devpost.md together.
 -->
 
 # Ghost: 3-minute pitch
@@ -61,25 +62,28 @@ Same clicks as the runbook's beats 1–3, faster. The wrist sensor (beat 4) move
 |---|---|---|
 | The top card, **Forehand · over-rotation** | The coach's call: *"Over-rotation: hips turn 157°"* | A real forehand, filmed in slow motion and rebuilt in 3D. Our code measured it: the hips turn 157 degrees. Too much. That's the one fix. |
 | **Show the ghost**, then **0.25× slow-mo** (it's already playing) | Orange swing, cyan ghost. *Turn shoulders less*, *Coach's pick* | Orange is the swing they played. Cyan is their ghost: same body, same swing, shoulders turning less. |
-| **Show the court** | Two paths, each *PREDICTED*. Front wall height 1.92 → 1.88 m | Here's where each ball goes. These paths are predicted, not tracked. Their ball hits the front wall at 1.92 metres, with an assumed launch angle of 12 degrees. Checked by eye against the video, about 1.8 metres. The ghost's hits at 1.88. |
+| **Show the court** | Two paths, each *PREDICTED*. Front wall height 1.92 → 1.88 m | Here's where each ball goes. These paths are predicted, not tracked. Their ball hits the front wall at 1.92 metres, with an assumed launch angle of 12 degrees. Checked by eye against the video, about 1.8 metres. We set the 12 degrees from this clip, so it's a sanity check, not a test. The ghost's hits at 1.88. |
 
 ### Backhand (1:15–1:35)
 
 | OPERATOR clicks | On screen | PRESENTER says |
 |---|---|---|
-| **Try another swing**, then **Backhand · two-camera stereo** | The coach's call: *"No fault found"*, cue *"Nothing to fix on this swing. Hit the next one the same way."* | A backhand, filmed on two cameras at once. Nothing to fix in what the camera could see, and it couldn't see the wrist. That's exactly why we strapped a sensor to the arm. |
+| **Try another swing**, then **Backhand · two-camera stereo** | The coach's call: *"No fault found in what was checked"*, cue *"Nothing to fix in what the coach could check."* | A backhand, filmed on two cameras at once. Nothing to fix in what the coach could check. It also says what it couldn't check: the wrist (no sensor on this swing) and checks that need the right elbow, which the camera couldn't see. That's exactly why we strapped a sensor to the arm. |
 | **Pick a swing** (the step bar at the top) | The swing list | |
 
 ### Fresh clip (1:35–2:05)
 
 | OPERATOR clicks | On screen | PRESENTER says |
 |---|---|---|
-| Switch to browser tab 2 | The new swing at the coach's call: *"Reading the coach's call…"*, then the call, or *"No fault found"* (see below) | This one we filmed today on one phone. Slow motion, hitting hand, and forehand or backhand are all detected automatically. The coach measures it live. *(Read the caption exactly as shown.)* |
-| Only if the coach named a fault: **Show the ghost**, then **Show the court** | The ghost (*Coach's pick*), then both *PREDICTED* paths | And there's their ghost, computed just now. |
+| Switch to browser tab 2 | The new swing at the coach's call: *"Reading the coach's call…"*, then the call, or *"No fault found"* or *"No fault found in what was checked"* (see below) | This one we filmed today on one phone. Slow motion, hitting hand, and forehand or backhand are all detected automatically. The coach measures it live. *(Read the caption exactly as shown.)* |
+| If the coach named a fault: **Show the ghost** | *"Making the … ghost…"*, then the ghost and its fix | *(Say nothing yet; look at the badge.)* |
+| If the fix shows the badge *Coach's pick*: **Show the court** | Both *PREDICTED* paths | And there's their ghost, computed just now. |
 
-**If the caption says "No fault found":** read it as shown. Then do one of these:
+**If the caption says "No fault found" or "No fault found in what was checked":** read it as shown. Then do one of these:
 - Stop the beat there and go to *How it works*.
 - Or click **Show the ghost** and say: "This is an example edit at demo size, not a coached fix." The panel says *"Demo size: the coach didn't flag this fault."* Never call it the fix.
+
+**If the coach named a fault but the panel says *"Demo size: the coach didn't flag this fault"*:** say "This is an example edit at demo size, not the coached fix." Never call it the fix, or stop and go to *How it works*.
 
 **If tab 2 still shows the progress panel** (*Finding your swing… / Measuring… / Building your ghost…*) at 1:35, skip this beat and say: "That clip is still processing, so here's how it works." Then go to *How it works*.
 
@@ -114,7 +118,7 @@ Same clicks as the runbook's beats 1–3, faster. The wrist sensor (beat 4) move
 We checked it against the video on two real swings, and the front-wall contact point came within about 0.1 to 0.3 metres. That's a check, not validation, because we set the launch angle from those same two clips.
 
 **2. Where does Claude come in?**
-The measuring and the choice of fix are plain code, so the live coach can never invent a number and works offline. The Claude-worded cue currently runs on mock numbers in a command-line demo, not in the live app, and a checker rejects any number in it that wasn't measured.
+The measuring and the choice of fix are plain code, so the live coach can never invent a number and works offline. The live `/ghost` caption has a **Hear the coach** button: Claude rewords the coach's cue, a checker rejects any number the code didn't measure, and ElevenLabs speaks it. Without keys it falls back to the plain cue.
 
 **3. How do you know the coaching is right?**
 We filmed blocks of swings where the player acted one fault, labelled them, and tuned four of the twelve rules on the gap between good and faulty swings. The other eight use coaching defaults until we have more data, and the code marks every rule as tuned or default.

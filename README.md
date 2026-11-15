@@ -69,12 +69,14 @@ To keep the model somewhere else, set `GHOST_POSE_MODEL` to its path.
 
 ### 4. API keys (optional)
 
-The live flow (the API, `/ghost` and new clips) needs no keys: coaching, the ghost and the ball paths are all plain code. Keys are only needed for two command-line demos that aren't wired into the live flow yet:
+The live flow (the API, `/ghost` and new clips) needs no keys: coaching, the ghost and the ball paths are all plain code. With keys, the live `/ghost` caption has a **Hear the coach** button: Claude rewords the coach's cue (`ANTHROPIC_API_KEY`), a checker rejects any number the code didn't measure, and ElevenLabs speaks it (`ELEVENLABS_API_KEY`). Without keys it falls back to the plain cue.
 
-- `python -m coach.cue` has Claude word a cue from MOCK metrics (`ANTHROPIC_API_KEY`)
-- `python -m coach.cue --speak` also reads it aloud with ElevenLabs (`ELEVENLABS_API_KEY`)
+The same keys also run two command-line demos:
 
-To run them, copy `.env.example` to `.env.local` at the repo root and fill in those keys. Never commit `.env.local`.
+- `python -m coach.cue` has Claude word a cue from MOCK metrics
+- `python -m coach.cue --speak` also reads it aloud with ElevenLabs
+
+To use them, copy `.env.example` to `.env.local` at the repo root and fill in those keys, then restart the service and reload `/ghost`. Never commit `.env.local`.
 
 ### 5. Start the API
 
