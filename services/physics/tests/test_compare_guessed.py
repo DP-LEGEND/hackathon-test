@@ -74,3 +74,19 @@ def test_unflagged_swing_has_no_speed_flags():
     r = compare(_unflagged("swing_fh_over_rotation.json"), "turn_shoulders_less", 20, fps_real=120, hand="R",
                 side="forehand")
     assert "racket_speed" not in r["notMeasured"]
+
+
+@pytest.mark.parametrize("flag,joint,why", [("filled", 16, "joint 16 filled at frame 48"),
+                                            ("visibility", 14, "joint 14 visibility 0.30 at contact")])
+def test_no_aim_is_held_on_a_guessed_arm(flag, joint, why):
+    # Codex P2 on #73: the straight-drive hold turns the racket line, which runs from the elbow
+    # through the wrist. If either is guessed at contact, nothing is held and `why` says so.
+    s = _unflagged("swing_fh_over_rotation.json")
+    s["frames"][48][flag] = [False] * 33 if flag == "filled" else [0.99] * 33
+    s["frames"][48][flag][joint] = True if flag == "filled" else 0.3
+    kw = dict(fps_real=120, hand="R", side="forehand")
+    r = compare(s, "turn_shoulders_less", 52.6, intent="straight drive", **kw)
+    aim = r["assumptions"]["aim"]
+    assert aim["applied"] is False and why in aim["why"] and "guessed" in aim["why"]
+    assert "aiming" not in r["fix"] and "Aiming" not in r["assumptions"]["note"]
+    assert r["ghost"] == compare(s, "turn_shoulders_less", 52.6, intent=None, **kw)["ghost"]

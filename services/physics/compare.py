@@ -421,7 +421,7 @@ def ghost_azimuth(you_aim: dict, Pc_you: np.ndarray, Pc_ghost: np.ndarray, hand:
 
 
 def contact_turn_for_intent(P: np.ndarray, Pc: np.ndarray, hand: str, contact: int, you_aim: dict,
-                            intent: str, fix_name: str, amount: float) -> tuple[dict, float]:
+                            intent: str, fix_name: str, amount: float, *, arm_guessed: str | None = None) -> tuple[dict, float]:
     """(assumptions.aim, contact_turn_deg for apply_fix): the smallest shoulder turn held at contact
     that puts the ghost's aim on the line the player said they meant (INTENT_AIMS).
 
@@ -432,6 +432,9 @@ def contact_turn_for_intent(P: np.ndarray, Pc: np.ndarray, hand: str, contact: i
     shoulder fixes (AIM_FIXES) turn the trunk; for any other fix, a zero amount, an aim that is
     only ASSUMED (no measured aim to turn) or a racket line that can't be measured, nothing is
     held (contact_turn_deg 0) and `why` says so.
+
+    arm_guessed: why the hitting elbow or wrist at contact is guessed (guessed_arm_at_contact),
+        else None. The racket line runs through them, so a guessed arm holds nothing.
 
     contactTurnDeg is in the shoulders' sense (- = turned less far through at contact, i.e. less
     open), as apply_fix takes it; headingTurnDeg is the same turn on the court (+ = towards the
@@ -447,6 +450,8 @@ def contact_turn_for_intent(P: np.ndarray, Pc: np.ndarray, hand: str, contact: i
         why = "the fix's amount is 0"
     elif not you_aim.get("estimate"):
         why = "your aim is assumed, not measured, so there is no measured aim to turn onto the line"
+    elif arm_guessed:
+        why = f"the hitting arm at contact is guessed ({arm_guessed}), so its racket line can't be aimed"
     elif racket_line_heading(Pc, hand, contact) is None:
         why = "the racket line at contact can't be measured, so a turn of it can't be aimed"
     if why:
@@ -551,6 +556,25 @@ def guessed_metrics(swing: dict, hand: str, contact: int, fps: float) -> dict[st
             out["ball_speed"] = reason
     return out
 
+
+
+def guessed_arm_at_contact(swing: dict, hand: str, contact: int) -> str | None:
+    """Why the hitting elbow or wrist is guessed at the contact frame, else None.
+
+    guessed_metrics' rule (coach.measure_extra): listed in metadata.approximatedJoints, marked
+    true in frames[contact].filled, or below 0.5 visibility at contact. The racket line that an
+    aiming hold turns runs from the elbow through the wrist, so neither may be guessed.
+    """
+    from coach.measure_extra import _guessed_why, _per_joint
+
+    frames = swing.get("frames") or []
+    if not frames:
+        return None
+    c = int(np.clip(contact, 0, len(frames) - 1))
+    listed = set((swing.get("metadata") or {}).get("approximatedJoints") or [])
+    vis = _per_joint(frames[c], "visibility")
+    a = ARM[hand]
+    return next((w for j in (a["el"], a["wr"]) if (w := _guessed_why(j, listed, frames, range(c, c + 1), vis))), None)
 
 # Fix -> the measurement it edits, and the joint that measurement needs around contact.
 FIX_TARGETS = {
@@ -663,7 +687,8 @@ def compare(swing: dict, fix_name: str, amount: float, fps_real: float | None = 
     Pc = court_axes(P)
     you_aim = estimate_azimuth(Pc + shift, hand, contact)  # as _on_court measures it
     aim, contact_turn = (None, 0.0) if intent is None else contact_turn_for_intent(
-        P, Pc, hand, contact, you_aim, intent, fix_name, amount)
+        P, Pc, hand, contact, you_aim, intent, fix_name, amount,
+        arm_guessed=guessed_arm_at_contact(played, hand, contact))
     ghost_swing = apply_fix(played, fix_name, amount, fps_real, hand, contact_turn_deg=contact_turn)
     ghost_swing.pop("wrist", None)  # your forearm phone's data isn't the ghost's: nothing may coach it
 
