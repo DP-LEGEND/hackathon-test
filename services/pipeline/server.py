@@ -294,8 +294,8 @@ def process_multi_video(
     video_a: Annotated[UploadFile, File(description="Primary MOV, MP4, AVI or M4V clip")],
     video_b: Annotated[UploadFile | None, File(description="Optional second camera clip")] = None,
     sensor_csv: Annotated[UploadFile | None, File(description="Optional Sensor Logger ZIP or combined wrist-sensor CSV")] = None,
-    slowdown_a: Annotated[float, Form(gt=0, le=16, allow_inf_nan=False)] = 1,
-    slowdown_b: Annotated[float, Form(gt=0, le=16, allow_inf_nan=False)] = 1,
+    slowdown_a: Annotated[float | None, Form(gt=0, le=16, allow_inf_nan=False)] = None,
+    slowdown_b: Annotated[float | None, Form(gt=0, le=16, allow_inf_nan=False)] = None,
     offset_b_s: Annotated[float | None, Form(allow_inf_nan=False,
         description="Camera B playback seconds at camera A's start; omit to sync by hit audio")] = None,
 ) -> dict:
@@ -308,7 +308,7 @@ def process_multi_video(
             raise HTTPException(422, 'Upload a MOV, MP4, M4V or AVI video')
         root = Path(os.environ.get('GHOST_SWINGS_DIR', str(
             Path(__file__).resolve().parents[2] / 'data' / 'processed'))).resolve()
-        options = MultiOptions(slowdown_a=slowdown_a, slowdown_b=slowdown_b,
+        options = MultiOptions(slowdown_a=slowdown_a, slowdown_b=slowdown_a if slowdown_b is None else slowdown_b,
                                offset_b_s=offset_b_s,
                                model_path=os.environ.get('GHOST_POSE_MODEL', MultiOptions.model_path))
         notices = []

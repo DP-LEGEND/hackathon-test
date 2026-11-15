@@ -25,8 +25,8 @@ from pipeline.video import VideoInfo, normalize_video, probe_video, timing_at
 
 @dataclass(frozen=True)
 class MultiOptions:
-    slowdown_a: float = 1.0
-    slowdown_b: float = 1.0
+    slowdown_a: float | None = None
+    slowdown_b: float | None = None
     # B playback seconds at A's start, as in pipeline.process.Options.offset_b.
     offset_b_s: float | None = None
     model_path: str = DEFAULT_MODEL
@@ -68,7 +68,8 @@ def _stereo(video_a: Path, video_b: Path, work: Path, options: MultiOptions) -> 
             'sourceContactPlaybackSeconds': playback,
             'sourceStartPlaybackSeconds': timing_at(info_a, metadata['realStartSeconds'])[0],
             'sourceTimeBase': 'normalized-real-time', 'timeMapping': info_a.edits,
-            'slowdown': factor, 'slowdownSource': 'manual', 'timingBasis': info_a.source,
+            'slowdown': factor, 'slowdownSource': ('manual' if options.slowdown_a is not None else
+                info_a.source if info_a.source == 'playback-intent' else 'auto'), 'timingBasis': info_a.source,
             'timingWarning': info_a.warning, 'captureFps': info_a.capture_fps,
             'avgFrameRate': info_a.playback_fps or info_a.fps, 'rFrameRate': info_a.base_fps,
         })

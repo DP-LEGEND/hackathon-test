@@ -498,10 +498,14 @@ node --experimental-strip-types "app/api/[...path]/route.test.mjs"
 | `video_a` | Required primary MOV, MP4, M4V or AVI clip |
 | `video_b` | Optional second camera, recording the same swing |
 | `sensor_csv` | Optional Sensor Logger ZIP or combined wrist-sensor CSV, up to 10 MiB |
-| `slowdown_a`, `slowdown_b` | Playback slowdown factors, each defaulting to 1; positive and at most 16 |
+| `slowdown_a`, `slowdown_b` | Optional playback slowdown factors, positive and at most 16. Omit for Auto; B inherits A's override when omitted |
 | `offset_b_s` | Optional B playback seconds at A's beginning; replaces automatic audio sync |
 
 With constant slowdown, `B_playback = A_playback * slowdown_b / slowdown_a + offset_b_s`.
+Auto uses the existing video timing detection (edit list, capture tag or AirDrop
+playback-intent). The one-camera path also retains the live worker's 2/4/8 retry
+when capture timing is absent and no swing is initially found. With both fields
+omitted, each camera's metadata is detected independently.
 Both clips are normalized to real time before stereo. Without an explicit offset,
 matching hit-audio transients establish the clock offset. Missing or ambiguous
 audio, failed stereo, or an unusable second clip falls back to the primary video

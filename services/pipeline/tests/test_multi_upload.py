@@ -94,6 +94,81 @@ def test_two_videos_publish_triangulated_depth(multi_run):
     assert all(swing['metadata']['sourceTimeBase'] == 'normalized-real-time' for swing in saved)
 
 
+@pytest.mark.parametrize('second', [False, True])
+def test_auto_slowdown_uses_airdrop_metadata(multi_run, monkeypatch, second):
+    import pipeline.live as live
+    import pipeline.multi as multi
+    import pipeline.video as video
+    from pipeline.tests.test_live_clip import probe_payload
+
+    client, root, _ = multi_run
+    payload = probe_payload('30/1', '30/1', {'com.apple.quicktime.full-frame-rate-playback-intent': '1'})
+    monkeypatch.setattr(video, 'run_tool', lambda *args, **kwargs: json.dumps(payload))
+    monkeypatch.setattr(video, 'quicktime_edits', lambda *args: [])
+    calls = []
+
+    def probe(path, slowdown):
+        calls.append(slowdown)
+        return video.probe_video(path, slowdown)
+
+    monkeypatch.setattr(live, 'probe_video', probe)
+    monkeypatch.setattr(multi, 'probe_video', probe)
+    # The page leaves both fields out for Auto, exactly as it does for /process.
+    result, saved = published(client, root, client.post('/process/multi', files=uploads(second)))
+    assert calls == ([None, None] if second else [None])
+    assert result['warnings'] == []
+    assert all(swing['metadata']['slowdown'] == 4 for swing in saved)
+    assert all(swing['metadata']['slowdownSource'] == 'playback-intent' for swing in saved)
+
+
+@pytest.mark.parametrize('values,expected', [
+    ({'slowdown_a': '4'}, [4, 4]),
+    ({'slowdown_a': '4', 'slowdown_b': '2'}, [4, 2]),
+    ({'slowdown_b': '2'}, [None, 2]),
+])
+def test_second_camera_inherits_only_an_explicit_primary_override(multi_run, monkeypatch, values, expected):
+    import pipeline.multi as multi
+    client, root, _ = multi_run
+    original_probe = multi.probe_video
+    calls = []
+
+    def probe(path, slowdown):
+        calls.append(slowdown)
+        return original_probe(path, slowdown)
+
+    monkeypatch.setattr(multi, 'probe_video', probe)
+    published(client, root, client.post('/process/multi', files=uploads(True), data=values))
+    assert calls == expected
+
+
+@pytest.mark.parametrize('manual', [False, True])
+def test_auto_preserves_live_speed_retry_without_overriding_manual_one(multi_run, monkeypatch, manual):
+    import pipeline.live as live
+    client, root, _ = multi_run
+    raw = live.extract_raw('injected')
+    slowed = {**raw, 't': raw['t'] * 4, 'fps': raw['fps'] / 4}
+    monkeypatch.setattr(live, 'extract_raw', lambda *args, **kwargs: copy.deepcopy(slowed))
+    monkeypatch.setattr(live, 'probe_video', lambda *args: VideoInfo(30, 30, 8, 30, 1, 'encoded-cadence', []))
+    detect = live.swings_from_raw
+    calls = []
+
+    def swings(raw, b, options):
+        calls.append(options.slowdown_a)
+        return detect(raw, b, options)
+
+    monkeypatch.setattr(live, 'swings_from_raw', swings)
+    response = client.post('/process/multi', files=uploads(), data={'slowdown_a': '1'} if manual else {})
+    if manual:
+        assert response.status_code == 422
+        assert calls == [1]
+        assert not list(root.glob('*/manifest.json'))
+    else:
+        _, saved = published(client, root, response)
+        assert calls == [1, 2, 4, 8]
+        assert all(swing['metadata']['slowdown'] == 4 for swing in saved)
+        assert all(swing['metadata']['slowdownSource'] == 'speed-retry' for swing in saved)
+
+
 def test_two_videos_and_csv_attach_before_coaching(multi_run, monkeypatch):
     import pipeline.multi as multi
     client, root, _ = multi_run
@@ -103,7 +178,7 @@ def test_two_videos_and_csv_attach_before_coaching(multi_run, monkeypatch):
     def attach(swings, clip, csv, **kwargs):
         assert csv.read_bytes() == b'CSV fixture'
         assert clip.read_bytes() == b'primary bytes'
-        assert kwargs['slowdown'] == 1 and kwargs['info'].capture_fps == 120
+        assert kwargs['slowdown'] is None and kwargs['info'].capture_fps == 120
         for swing in swings:
             swing['wrist'] = {'usable': True, 'mock': True, 'roll_change_abs_deg': 10.,
                              'peak_roll_rate_abs_dps': 15., 'peak_angular_speed_dps': 350.,
