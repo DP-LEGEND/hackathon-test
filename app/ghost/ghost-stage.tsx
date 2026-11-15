@@ -35,6 +35,7 @@ import {
 } from "./swing";
 
 const SLOW_MO = 0.25;
+const LOOP_HOLD_S = 0.3; // real seconds the last frame stays up before the replay loops
 const THUMB_PX = 16; // native range thumb width, used to line the contact tick up with it
 
 export type StageStatus =
@@ -151,6 +152,7 @@ export function GhostStage({
         let started = false;
         let last = performance.now();
         let drawnTau = Number.NaN;
+        let held = 0;
         const tick = (now: number) => {
           const dt = Math.min((now - last) / 1000, 0.1);
           last = now;
@@ -177,10 +179,22 @@ export function GhostStage({
             const { start, end } = l.timeline;
             const span = end - start;
             if (playingRef.current && span > 0) {
-              let next = tauRef.current + dt * speedRef.current;
-              if (next > end) next = start + ((next - end) % span);
-              tauRef.current = next;
-              setTau(next);
+              if (tauRef.current >= end) {
+                // Hold the last frame before looping, so the follow-through doesn't cut straight to the start.
+                held += dt;
+                if (held >= LOOP_HOLD_S) {
+                  held = 0;
+                  tauRef.current = start;
+                  setTau(start);
+                }
+              } else {
+                held = 0;
+                const next = Math.min(tauRef.current + dt * speedRef.current, end);
+                tauRef.current = next;
+                setTau(next);
+              }
+            } else {
+              held = 0;
             }
             if (tauRef.current !== drawnTau) {
               drawnTau = tauRef.current;
