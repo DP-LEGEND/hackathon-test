@@ -3,6 +3,7 @@
 // fault), cyan = the fix (the cue). "No fault" never claims more than the coach checked.
 // Once the coach's voice (#60) loads, its cue replaces the plain one, with a play button when
 // there's audio and "worded by Claude" when Claude wrote it. The clip stops when the caption goes.
+// With no fault but checks skipped, the cue says only what was checked and the voice is left out.
 
 import { useEffect, useRef, useState } from "react";
 import { RotateCcw, Volume2 } from "lucide-react";
@@ -35,8 +36,25 @@ export function checkedEverything(caption: CoachCaption): boolean {
   return caption.notJudged.length === 0 && caption.notMeasured.length === 0;
 }
 
+/**
+ * No fault, but the coach skipped checks or couldn't check some faults: the caption says "No fault
+ * found in what was checked", its cue says only what was checked, and there's no voice (the page
+ * doesn't ask for one).
+ */
+export function noFaultInWhatWasChecked(caption: CoachCaption): boolean {
+  return !caption.fault && !checkedEverything(caption);
+}
+
+/** The cue when the coach found no fault but couldn't check everything: never an outright all-clear. */
+const PARTIAL_CHECK_CUE = "Nothing to fix in what the coach could check.";
+
 export function CoachCaptionBar({ state, size }: { state: CaptionState; size: "large" | "compact" }) {
   const large = size === "large";
+  // No fault, but the coach skipped checks or couldn't check some faults: its own cue ("Nothing to
+  // fix on this swing") and any voice, which words or speaks that cue, would read as an all-clear
+  // under "No fault found in what was checked". So say only what was checked, with no voice.
+  const partial = state.kind === "ready" && noFaultInWhatWasChecked(state.caption);
+  const voice = state.kind === "ready" && !partial ? (state.voice ?? null) : null;
   return (
     <div className="pointer-events-none absolute inset-x-3 bottom-3 flex justify-center">
       <figure
@@ -82,12 +100,12 @@ export function CoachCaptionBar({ state, size }: { state: CaptionState; size: "l
               )}
               style={{ color: GHOST_COLOUR }}
             >
-              “{state.voice?.cue ?? state.caption.cue}”
+              “{partial ? PARTIAL_CHECK_CUE : (voice?.cue ?? state.caption.cue)}”
             </blockquote>
-            {state.voice && (state.voice.audioUrl || state.voice.wordedByClaude) && (
+            {voice && (voice.audioUrl || voice.wordedByClaude) && (
               <div className="mt-2 flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
-                {state.voice.audioUrl && <PlayVoice url={state.voice.audioUrl} large={large} />}
-                {state.voice.wordedByClaude && <span className="text-xs text-muted-foreground">worded by Claude</span>}
+                {voice.audioUrl && <PlayVoice url={voice.audioUrl} large={large} />}
+                {voice.wordedByClaude && <span className="text-xs text-muted-foreground">worded by Claude</span>}
               </div>
             )}
             {state.caption.ghostNote && (

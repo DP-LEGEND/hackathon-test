@@ -118,7 +118,8 @@ function postJson<T>(url: string, body: unknown, parse: (value: unknown) => T): 
 
 // One promise per resource, so switching fixes or steps never refetches. `attempt` is part of
 // the key: Try again bumps it for a fresh request. A failed promise is dropped from the cache,
-// and so is a value `keep` says no to (a missing voice), so the next ask tries again.
+// and so is a value `keep` says no to (a voice that's missing or has no audio), so the next ask
+// tries again.
 const cache = new Map<string, Promise<unknown>>();
 
 function cached<T>(key: string, make: () => Promise<T>, keep: (value: T) => boolean = () => true): Promise<T> {
@@ -314,9 +315,10 @@ export function loadCoachFor(entry: SwingEntry, attempt: number): Promise<CoachC
 /**
  * The coach's cue as speech (`GET /api/coach/{id}/voice`, Henoch's #60), or null. Never rejects:
  * a 404 (no voice route yet, or a swing the service doesn't know), any error, a timeout or a bad
- * answer all mean "keep the plain caption", without a message. A voice is kept until the page
- * reloads (the same promise, so coming back to the caption shows it at once). Null isn't kept,
- * so the next ask, e.g. once the service is up, tries again.
+ * answer all mean "keep the plain caption", without a message. A voice with audio is kept until
+ * the page reloads (the same promise, so coming back to the caption shows it at once). Null, or a
+ * voice without audio, isn't kept, so the next ask (e.g. once the service is up, or has its TTS
+ * key) tries again. Only live swings ask (ghost-demo.tsx).
  */
 export function loadVoiceFor(entry: SwingEntry): Promise<CoachVoice | null> {
   return cached(
@@ -325,7 +327,7 @@ export function loadVoiceFor(entry: SwingEntry): Promise<CoachVoice | null> {
       getJson(`${API}/coach/${encodeURIComponent(entry.id)}/voice`, parseVoice, {
         signal: AbortSignal.timeout(VOICE_TIMEOUT_MS),
       }).catch(() => null),
-    (voice) => voice !== null,
+    (voice) => voice !== null && voice.audioUrl !== null,
   );
 }
 
