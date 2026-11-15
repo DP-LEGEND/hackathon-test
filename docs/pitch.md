@@ -75,11 +75,13 @@ Same clicks as the runbook's beats 1–3, faster. The wrist sensor (beat 4) move
 | OPERATOR clicks | On screen | PRESENTER says |
 |---|---|---|
 | Switch to browser tab 2 | The new swing at the coach's call: *"Reading the coach's call…"*, then the call, or *"No fault found"* or *"No fault found in what was checked"* (see below) | This one we filmed today on one phone. Slow motion, hitting hand, and forehand or backhand are all detected automatically. The coach measures it live. *(Read the caption exactly as shown.)* |
-| Only if the coach named a fault: **Show the ghost**, then **Show the court** | The ghost (*Coach's pick*), then both *PREDICTED* paths | And there's their ghost, computed just now. |
+| Only if the ghost shows the badge *Coach's pick*: **Show the ghost**, then **Show the court** | The ghost (*Coach's pick*), then both *PREDICTED* paths | And there's their ghost, computed just now. |
 
 **If the caption says "No fault found" or "No fault found in what was checked":** read it as shown. Then do one of these:
 - Stop the beat there and go to *How it works*.
 - Or click **Show the ghost** and say: "This is an example edit at demo size, not a coached fix." The panel says *"Demo size: the coach didn't flag this fault."* Never call it the fix.
+
+**If the coach named a fault but the panel says *"Demo size: the coach didn't flag this fault"*:** say "This is an example edit at demo size, not the coached fix." Never call it the fix, or stop and go on.
 
 **If tab 2 still shows the progress panel** (*Finding your swing… / Measuring… / Building your ghost…*) at 1:35, skip this beat and say: "That clip is still processing, so here's how it works." Then go to *How it works*.
 

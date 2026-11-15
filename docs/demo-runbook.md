@@ -7,7 +7,7 @@ If #53 (ghost honesty: measured vs guessed joints) merges, re-check beat 2 and t
 
 # Ghost live demo runbook
 
-For the live demo on aryan's Mac. Code: `~/hackathon-demo` (a git worktree). Python: `~/ghost-env`. Everything runs on this Mac at `localhost`. The live flow needs no API keys, and nothing in it calls the internet.
+For the live demo on aryan's Mac. Code: `~/hackathon-demo` (a git worktree). Python: `~/ghost-env`. Everything runs on this Mac at `localhost`. The live flow works with no API keys and no internet. If `.env.local` has the Claude or ElevenLabs key and the Mac is online, the coach card may reword its cue a few seconds later (*"worded by Claude"*) and show a play-voice button; offline or without keys it keeps the plain cue.
 
 Two people: **PRESENTER** talks, **OPERATOR** drives the laptop and terminal.
 
