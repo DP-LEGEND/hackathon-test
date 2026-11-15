@@ -261,7 +261,8 @@ export function GhostStage({
   return (
     <section aria-label="Swing replay" className="flex flex-col gap-3">
       <div className="overflow-hidden rounded-[24px] border bg-(--media)">
-        <div className="relative h-[min(62vh,680px)] min-h-[24rem]">
+        {/* #76's replay height: the stage and the coach's caption fit a 1440×900 screen without scrolling. */}
+        <div className="relative h-[min(72vh,760px)] lg:h-[min(760px,calc(100svh-24rem))] min-h-[26rem]">
           <div
             ref={viewportRef}
             role="img"

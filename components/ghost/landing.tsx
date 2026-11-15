@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { ArrowDown, ArrowUpRight } from "lucide-react";
+import { ArrowDown, ArrowRight, ArrowUpRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { StageSelector } from "./selector";
 import styles from "./styles";
@@ -37,7 +37,7 @@ export function LandingHero() {
     </div>
     <div className={styles.heroMessage}>
       <p className={styles.heroEyebrow}>AI-powered squash analysis</p><h1 id="hero-title">See your swing. Find your edge.</h1>
-      <Button nativeButton={false} role="link" render={<Link href="/upload" />} className={styles.heroCta}>Analyse your swing <ArrowUpRight aria-hidden /></Button>
+      <Button nativeButton={false} role="link" render={<Link href="/upload" />} className={styles.heroCta}>Analyse your swing <ArrowRight aria-hidden /></Button>
       <Link href="/demo" className={styles.secondaryLink}>Watch demo <ArrowUpRight size={16} aria-hidden /></Link>
     </div>
     <div className={styles.heroFooter}><span>Your game. Another dimension.</span><a href="#process">Scroll to explore <ArrowDown size={16} aria-hidden /></a></div>
