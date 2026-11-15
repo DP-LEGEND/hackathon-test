@@ -141,6 +141,11 @@ SSL_CERT_FILE="$(~/ghost-env/bin/python -m certifi)" GHOST_SWINGS_DIR=~/ghost-re
 
 Reload the swing in `/ghost` and click **Hear the coach** again. If that fixed it, put the same `SSL_CERT_FILE=...` in front of the show's tab 1 command too (see *Tab 1* below).
 
+**Turn on for demo: Ask the coach (optional, needs #94; skip it to keep the rehearsed demo).**
+1. Add the agent ID with hidden input, as `~/set-ghost-keys.sh` does (copy the ID from the ElevenLabs dashboard, Agents → *Ghost: ask the coach*): `read -rsp "ElevenLabs agent ID: " id && printf '\nELEVENLABS_AGENT_ID=%s\n' "$id" >> ~/hackathon-demo/.env.local && unset id && echo " saved"`
+2. Restart terminal tab 1: Ctrl+C, then the same tab 1 command (with `SSL_CERT_FILE=...` if step 5 needed it).
+3. Test one spoken question: at a swing's coach's call, click **Ask the coach**, allow the microphone, and ask "Why?". The coach should answer with the measured number in digits. No button means the key or the agent ID is missing, so leave it off.
+
 **6. Optional: the morning wrist-sensor sample (for beat 4).** If the morning recording has been run through `wrist.run` into a `wrist_metrics.json`, beat 4 can show it; *Tab 3* below says how to print and check it. Otherwise beat 4 is spoken, with no number. Don't use the mock data (`wrist.synth`) on stage: beat 4 never shows *MOCK DATA*.
 
 **7. Run the smoke check** (`~/ghost-env/bin/python scripts/demo_smoke.py`) once terminal tabs 1 and 2 are up: see tab 3 below.
