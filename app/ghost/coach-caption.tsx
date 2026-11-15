@@ -47,7 +47,7 @@ export function noFaultInWhatWasChecked(caption: CoachCaption): boolean {
 }
 
 /** The cue when the coach found no fault but couldn't check everything: never an outright all-clear. */
-const PARTIAL_CHECK_CUE = "Nothing to fix in what the coach could check.";
+export const PARTIAL_CHECK_CUE = "Nothing to fix in what the coach could check.";
 
 export function CoachCaptionBar({ state, size }: { state: CaptionState; size: "large" | "compact" }) {
   const large = size === "large";
