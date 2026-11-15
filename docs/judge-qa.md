@@ -2,6 +2,11 @@
 Facts from main at dfb849a: docs/devpost.md, services/ and public/swings/. #86 (real-ball check,
 measured hit spot, straight-drive ghosts) and #74 (rolled-wrist rule tuned on real swings) are
 merged, and public/swings is rebuilt: the forehand shows a front wall of 1.45 m.
+Q7 and Q8's phones story checked against main at c5c4f99: the demo forehand is one camera
+(`source: "mono"`), the demo backhand two cameras, and neither has sensor data; the racket-face
+aim is physics/wrist_face.py (ASSUMED face model). Uploading a second angle or a sensor file in
+the app is #107, still open, and it also needs Dev's `/process/multi` route: keep "in progress"
+in Q7 until both are on main.
 -->
 
 # Ghost: judge Q&A
@@ -30,16 +35,16 @@ We filmed blocks of real forehands and backhands where the player acted one faul
 **6. What happens when the camera can't see a joint?**
 The pose model still guesses a joint it can't see. So the coach skips any fault that would rest on a guessed joint and lists it as not checked instead of guessing. The ghost also refuses a fix that would edit a guessed joint: on our backhand the right elbow was hidden, so the elbow fixes say "not available on this swing".
 
-**7. Does it work with one phone?**
-Yes. Drop one clip on the upload page, and it detects:
-- slow motion, from the video's timing data;
-- the hitting hand, from the faster wrist;
-- forehand or backhand, from which side of the body the wrist is on at contact.
+**7. Does it work with one phone? What do more phones add?**
+Yes: it scales from 1 to 3 phones.
+- **1 phone on a tripod** gives a 3D swing. Drop one clip on the upload page, and it detects slow motion, the hitting hand and forehand or backhand by itself. Depth from one camera is estimated, not measured, and the screen says "one-camera depth". Our demo forehand is one camera.
+- **Add a second angle** for triangulated depth. We sync the two videos on the sound of the ball being hit and calibrate the cameras from the player's own joints, with no calibration board. Our demo backhand is two cameras.
+- **Add a phone strapped to the forearm** for wrist roll, measured by its gyro, and racket-face aim: the roll turns the racket face through an ASSUMED face model, which aims both PREDICTED balls (see 8). Neither demo swing has sensor data.
 
-Depth from one camera is estimated, not measured, and the screen says "one-camera depth".
+The upload page takes one clip today. Uploading a second angle or a sensor file in the app is **in progress**; on main, both run from the command line.
 
 **8. What does the wrist sensor add that pose can't see?**
-The camera can't see the forearm roll behind a rolled wrist, so a phone strapped to the forearm measures it with its gyro, synced to the video by two taps and the impact spikes, and feeds the coach's rolled-wrist rule. That rule is tuned on one real shadow session without a ball (14 Nov), one line per stroke from 29 backhands and 21 forehands, and every usable swing was sorted correctly; it's labelled ESTIMATE because it's one player, and it only judges swings timed the way it was tuned, so real hits are listed as not checked until we retune on them. The sensor also adds the forearm's spin to the racket-speed estimate and fills in wrist and elbow positions the camera lost behind the body, both tested on mock data so far.
+The camera can't see the forearm roll behind a rolled wrist, so a phone strapped to the forearm measures it with its gyro, synced to the video by two taps and the impact spikes, and feeds the coach's rolled-wrist rule. That rule is tuned on one real shadow session without a ball (14 Nov), one line per stroke from 29 backhands and 21 forehands, and every usable swing was sorted correctly; it's labelled ESTIMATE because it's one player, and it only judges swings timed the way it was tuned, so real hits are listed as not checked until we retune on them. On a swing the rule can judge, the roll also aims both PREDICTED balls by the racket face; how far the face turns per degree of roll is ASSUMED, not measured. The sensor also adds the forearm's spin to the racket-speed estimate and fills in wrist and elbow positions the camera lost behind the body, both tested on mock data so far.
 
 ## Sponsors' tech
 
