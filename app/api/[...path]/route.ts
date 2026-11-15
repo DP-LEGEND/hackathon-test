@@ -13,7 +13,8 @@ async function forward(request: Request, context: ProxyContext): Promise<Respons
     return Response.json({ error: "Invalid API path" }, { status: 400 });
   }
 
-  const isUpload = request.method === "POST" && path.length === 1 && path[0] === "process";
+  const isUpload = request.method === "POST" && path[0] === "process"
+    && (path.length === 1 || (path.length === 2 && path[1] === "multi"));
   if (isUpload) {
     const length = request.headers.get("content-length");
     if (length !== null) {

@@ -7,12 +7,17 @@
 | `upload-form.tsx` | The flow: clip, settings, send, progress, errors, then open the swing |
 | `clip-drop.tsx` | Drag and drop (anywhere on the page) or pick a video, with a preview |
 | `clip-settings.tsx` | Optional hitting hand, stroke and slowdown. Auto lets the service decide |
+| `extra-inputs.tsx` | Optional second camera angle (with "Second clip offset (s)") and wrist sensor export (.zip or .csv) |
 | `progress-panel.tsx` | Real upload progress, then the steps while the service works |
 | `process-clip.ts` | `POST /api/process` and what each answer means |
 
 ## The request
 
 Multipart `POST /api/process` with `file`, plus `hand` (`R`/`L`), `stroke` (`forehand`/`backhand`) and `slowdown` (`1`/`4`/`8`) when they aren't Auto. Auto fields are left out. The catch-all proxy (`app/api/[...path]/route.ts`) forwards it to `POST /process` in `services/pipeline/server.py` (PR #41). The service answers once, after pose, coach and ghost are saved, with `swingId`. The page then opens `/ghost?swing=<swingId>`.
+
+With a second camera angle or a wrist sensor export, the same request goes to `POST /api/process/multi` instead (Dev's route, same answer as `/process`), with `video_a`, `video_b`, `sensor_csv`, `slowdown_a`, `slowdown_b` and `offset_b_s`. The sensor export (Sensor Logger's .zip or a .csv, up to 10 MB like the service allows, checked before uploading) goes in `sensor_csv` either way. All the files together must be at most 250 MB, the service's limit for one upload; over that, **Build my ghost** is disabled and a message says by how much. Fields with nothing in them are left out; both angles use the one Slowdown setting, and the offset is only sent with a second angle. Without either extra, the request is exactly the single-clip one above. If the answer has `warnings` (a list of strings), the page stays on the "ready" panel and lists them, with **Open it in Ghost** to go on; without warnings it opens the swing straight away, as before. A 404 or 405 from `/process/multi` says the service can't take a second angle or sensor file yet.
+
+The extra zones take their own drops (a file dropped on them never replaces the main video) and open their pickers from an input made on demand, so the page keeps a single `<input type=file>`.
 
 Upload progress is real (XMLHttpRequest). The service doesn't report its steps, so "Finding your swing… Measuring… Building your ghost…" move on a timer after the upload, and the panel says they're a rough guide.
 

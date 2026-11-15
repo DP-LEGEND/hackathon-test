@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 const baseURL = process.env.GHOST_TEST_URL || 'http://localhost:3000';
 const output = `build/browser-tests/design-review/ghost/${process.env.GHOST_REVIEW_ROUND || 'round-1'}`;
 await mkdir(output, { recursive: true });
-assert.equal(execFileSync('git', ['diff', 'origin/main', '--', 'app/ghost', 'app/upload', 'public/swings', ':(exclude)app/ghost/page.tsx', ':(exclude)app/ghost/ghost-stage.tsx', ':(exclude)app/ghost/wrist-panel.tsx', ':(exclude)app/ghost/validation-badge.tsx'], { encoding: 'utf8' }).trim(), '', 'Existing journeys and saved numbers must be unchanged from main');
+assert.equal(execFileSync('git', ['diff', 'origin/main', '--', 'app/ghost', 'app/upload', 'public/swings', ':(exclude)app/ghost/page.tsx', ':(exclude)app/ghost/ghost-stage.tsx', ':(exclude)app/ghost/wrist-panel.tsx', ':(exclude)app/ghost/validation-badge.tsx', ':(exclude)app/upload/upload-form.tsx', ':(exclude)app/upload/extra-inputs.tsx', ':(exclude)app/upload/process-clip.ts', ':(exclude)app/upload/process-clip.test.mjs', ':(exclude)app/upload/upload.css', ':(exclude)app/upload/README.md'], { encoding: 'utf8' }).trim(), '', 'Existing journeys and saved numbers must be unchanged from main');
 const browser = await chromium.launch({ channel: 'msedge', headless: true });
 const results = [];
 async function capture(page, name) {
