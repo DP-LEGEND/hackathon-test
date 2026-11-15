@@ -520,7 +520,7 @@ function readHowPredicted(
 
 /**
  * #73's aim: `fix.aiming` names the shot, `assumptions.aim` labels it and says whether physics
- * applied it. Null when the file has no aim, physics didn't apply it, or there's no correction.
+ * applied it. Null unless physics says it did (`applied: true`), and when there's no correction.
  */
 function readAim(c: Record<string, unknown>, assumptions: Record<string, unknown>): GhostAim | null {
   if (c.noCorrection === true) return null;
@@ -532,7 +532,7 @@ function readAim(c: Record<string, unknown>, assumptions: Record<string, unknown
       : typeof aim?.intent === "string" && aim.intent.trim() !== ""
         ? aim.intent.trim()
         : null;
-  if (intent === null || aim?.applied === false) return null;
+  if (intent === null || aim?.applied !== true) return null;
   return { intent, label: labelOf(aim) };
 }
 
