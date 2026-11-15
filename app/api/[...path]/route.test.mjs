@@ -249,7 +249,7 @@ for (const first of ["timeout", "client"]) {
     }), context(["process"]));
     assert.equal(response.status, first === "timeout" ? 504 : 499);
     assert.deepEqual(await response.json(), {
-      error: first === "timeout" ? "Ghost API processing timed out. Please retry." : "Request cancelled.",
+      error: first === "timeout" ? "Ghost API is still processing; the proxy stopped waiting." : "Request cancelled.",
     });
   });
 }
@@ -272,6 +272,6 @@ for (const path of [["swings"], ["coach", "sample"], ["compare", "sample"], ["pr
     assert.equal(timeoutMilliseconds, 30_000);
     assert.equal(forwardedSignal.aborted, true);
     assert.equal(response.status, 504);
-    assert.deepEqual(await response.json(), { error: "Ghost API processing timed out. Please retry." });
+    assert.deepEqual(await response.json(), { error: "Ghost API is still processing; the proxy stopped waiting." });
   });
 }

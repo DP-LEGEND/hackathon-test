@@ -78,7 +78,7 @@ async function forward(request: Request, context: ProxyContext): Promise<Respons
     if (exceededLimit) return uploadTooLarge();
     // The combined signal retains the first abort reason even if both fire.
     if (timeoutSignal?.aborted && upstreamSignal?.reason === timeoutSignal.reason) {
-      return Response.json({ error: "Ghost API processing timed out. Please retry." }, { status: 504 });
+      return Response.json({ error: "Ghost API is still processing; the proxy stopped waiting." }, { status: 504 });
     }
     if (request.signal.aborted) {
       return Response.json({ error: "Request cancelled." }, { status: 499 });
