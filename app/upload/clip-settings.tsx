@@ -43,7 +43,7 @@ export function ClipSettingsPanel({
   disabled: boolean;
 }) {
   return (
-    <section aria-labelledby="settings-heading" className="flex flex-col gap-4 rounded-2xl border bg-card/60 p-4 sm:p-5">
+    <section aria-labelledby="settings-heading" className="upload-settings flex flex-col gap-4 rounded-2xl border bg-card/60 p-4 sm:p-5">
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
         <h2 id="settings-heading" className="text-base font-medium">
           Settings
@@ -97,7 +97,7 @@ function Segmented<T extends string>({
 }) {
   const id = useId();
   return (
-    <div className="grid gap-2 sm:grid-cols-[8rem_minmax(0,1fr)] sm:items-start">
+    <div className="upload-setting grid gap-2 sm:grid-cols-[8rem_minmax(0,1fr)] sm:items-start">
       <span id={`${id}-label`} className="text-sm font-medium sm:pt-1.5">
         {label}
       </span>
@@ -106,7 +106,7 @@ function Segmented<T extends string>({
           role="radiogroup"
           aria-labelledby={`${id}-label`}
           aria-describedby={hint ? `${id}-hint` : undefined}
-          className="flex w-full rounded-lg border bg-background/60 p-0.5 sm:w-fit"
+          className="upload-segments flex w-full rounded-lg border bg-background/60 p-0.5 sm:w-fit"
         >
           {options.map((option) => (
             <label key={option.value} className="relative flex-1 sm:flex-none">
@@ -120,7 +120,7 @@ function Segmented<T extends string>({
               />
               <span
                 className={cn(
-                  "flex h-8 cursor-pointer items-center justify-center rounded-md px-3 text-sm whitespace-nowrap text-muted-foreground transition-colors select-none peer-enabled:hover:text-foreground",
+                  "flex min-h-11 cursor-pointer items-center justify-center rounded-md px-3 text-sm whitespace-nowrap text-muted-foreground transition-colors select-none peer-enabled:hover:text-foreground",
                   "peer-checked:bg-secondary peer-checked:text-foreground peer-checked:shadow-sm",
                   "peer-focus-visible:ring-3 peer-focus-visible:ring-ring/50",
                   "peer-disabled:cursor-not-allowed peer-disabled:opacity-50",

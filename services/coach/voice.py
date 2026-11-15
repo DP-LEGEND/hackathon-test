@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -20,12 +21,31 @@ from typing import Optional
 
 from coach.env import require_env
 
+try:
+    import certifi  # installed with mediapipe; listed in requirements.txt
+except ImportError:  # never let a missing CA package stop the server: fall back to the system store
+    certifi = None
+
 API_URL = "https://api.elevenlabs.io/v1/text-to-speech/{voice_id}?output_format=mp3_44100_128"
 # ElevenLabs default voice "George". Works on the free plan; "library" voices (e.g. the
 # old default "Rachel") return HTTP 402 for free accounts. Override with ELEVENLABS_VOICE_ID.
 DEFAULT_VOICE_ID = "JBFqnCBsd6RMkjVDRZzb"
 MODEL_ID = "eleven_turbo_v2_5"  # low latency
 TIMEOUT_S = 20
+
+
+def _ssl_context() -> ssl.SSLContext:
+    """TLS context for the ElevenLabs call, trusting certifi's CA bundle.
+
+    The python.org macOS Python has no CA store until "Install Certificates.command" is run,
+    so HTTPS fails certificate checks and the voice reports "Could not reach ElevenLabs".
+    certifi's bundle works on every machine. Without certifi, use the system default.
+    certifi is added on top of the default roots, so the system store and SSL_CERT_FILE still apply.
+    """
+    context = ssl.create_default_context()
+    if certifi is not None:
+        context.load_verify_locations(cafile=certifi.where())
+    return context
 
 
 class VoiceError(RuntimeError):
@@ -79,7 +99,7 @@ def synthesize(text: str, timeout_s: float = TIMEOUT_S) -> bytes:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout_s) as response:
+        with urllib.request.urlopen(request, timeout=timeout_s, context=_ssl_context()) as response:
             audio = response.read()
     except urllib.error.HTTPError as exc:
         raise VoiceError(_explain_http_error(exc)) from exc
