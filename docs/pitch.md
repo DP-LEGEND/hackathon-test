@@ -1,11 +1,11 @@
 <!--
 TODO (before judging): timed at 150 words a minute (2.5 words a second), each block rounded up,
-plus the click/loading gaps written next to each beat. Total 2:52 with the longer wrist
-version; rehearse with a stopwatch and cut, don't speed up. Voice and Claude in the live caption
+plus the click/loading gaps written next to each beat. Total 2:59 with the longer wrist
+version (2:49 spoken), so only 1 s to spare; rehearse with a stopwatch and cut, don't speed up. Voice and Claude in the live caption
 are on main ("Hear the coach"), so judge questions 3 and 4 claim them. Not on main, so not
 claimed: an Adaption fine-tune. If that changes, update the script and docs/devpost.md together.
-WRIST BEAT: "32°" and "every swing sorted correctly" aren't in the repo yet: the only wrist results
-are mock (the mock run gives 62.1° vs 16.5° medians). Say them only from the morning sample's
+WRIST BEAT: the two medians and "every swing sorted correctly" aren't on main yet: the only wrist results
+there are mock (the mock run gives 62.1° vs 16.5° medians). Say them only from the morning sample's
 `wrist.tune` output on screen, as printed. Without that sample, use the spoken version (no number).
 -->
 
@@ -19,12 +19,12 @@ are mock (the mock run gives 62.1° vs 16.5° medians). Say them only from the m
 | Problem | 0:16–0:34 | 18 s |
 | Live demo: forehand | 0:34–1:18 | 44 s |
 | Live demo: backhand | 1:18–1:36 | 18 s |
-| Live demo: wrist sensor | 1:36–1:52 | 16 s (13 s if spoken only) |
-| Live demo: fresh clip | 1:52–2:14 | 22 s |
-| How it works | 2:14–2:33 | 19 s |
-| Honesty | 2:33–2:41 | 8 s |
-| What's next | 2:41–2:52 | 11 s |
-| **Total** | | **2:52** (under 3:00) |
+| Live demo: wrist sensor | 1:36–1:59 | 23 s (13 s if spoken only) |
+| Live demo: fresh clip | 1:59–2:21 | 22 s |
+| How it works | 2:21–2:40 | 19 s |
+| Honesty | 2:40–2:48 | 8 s |
+| What's next | 2:48–2:59 | 11 s |
+| **Total** | | **2:59** (under 3:00; 2:49 if the wrist beat is spoken) |
 
 Seconds are speaking time at 150 words a minute plus the click and loading gaps noted in each beat.
 
@@ -59,7 +59,7 @@ The replay in `/ghost` plays by itself. Don't click **Play/Pause**: it would pau
 > A coach says "turn your shoulders less", and you can't picture it.
 > Video shows what you did, not the better swing on your body, or where that ball would have gone.
 
-## Live demo (0:34–2:14, 100 s)
+## Live demo (0:34–2:21, 107 s)
 
 Same clicks as the runbook's beats 1–4, faster. The wrist sensor (runbook beat 4) now comes straight after the backhand. Don't fill the clicks and loading with talk.
 
@@ -78,7 +78,7 @@ Same clicks as the runbook's beats 1–4, faster. The wrist sensor (runbook beat
 | **Try another swing**, then **Backhand · two-camera stereo** | The coach's call: *"No fault found in what was checked"*, cue *"Nothing to fix in what the coach could check."* | A backhand, on two cameras at once. Nothing to fix in what the coach could check, and it says what it couldn't: the wrist, with no sensor, and the right elbow, which the camera couldn't see. | 18 (incl. 3 s clicks) |
 | **Pick a swing** (the step bar at the top) | The swing list | | |
 
-### Wrist sensor (1:36–1:52, 16 s, or 13 s spoken)
+### Wrist sensor (1:36–1:59, 23 s, or 13 s spoken)
 
 Mark it **ESTIMATE (sensor)**. The coach's call above already lists the wrist as not checked, so this beat follows straight on.
 
@@ -86,13 +86,13 @@ Mark it **ESTIMATE (sensor)**. The coach's call above already lists the wrist as
 
 | OPERATOR clicks | On screen | PRESENTER says | s |
 |---|---|---|---|
-| Switch to terminal tab 3 | The morning `wrist.tune` output: `roll_change_abs_deg`, rolled vs normal medians, the in-sample split | The camera can't see wrist roll — it says so on screen. So we strapped a phone to the forearm: on rolled backhands it measured 32° more forearm turn through contact, every swing sorted correctly. *(Say the numbers as printed: 32° is the rolled median minus the normal median, and "every swing sorted correctly" is the in-sample line flagging 100% of rolled and 0% of normal. If the screen differs, say what's on screen.)* | 16 (incl. 2 s switch) |
+| Switch to terminal tab 3 | The morning `wrist.tune` output: `roll_change_abs_deg`, rolled vs normal medians, the in-sample split | The camera can't see wrist roll — it says so on screen. So we strapped a phone to the forearm. It's an estimate from one session: normal backhands turned [normal median]° through contact, rolled ones [rolled median]°, and every swing was sorted correctly. *(Read both medians exactly as tab 3 prints them under roll_change_abs_deg. Say 'estimate'. Don't subtract them out loud. Only say 'every swing sorted correctly' if the in-sample line shows 100% of rolled and 0% of normal.)* | 23 (incl. 2 s switch) |
 
 **Otherwise, spoken only (13 s).** Switch nothing, and don't say a number: without the sample there's no real measurement to quote.
 
 > The camera can't see wrist roll — it says so on screen. So we strapped a phone to the forearm to measure it. So far we've only tested that on mock data.
 
-### Fresh clip (1:52–2:14, 22 s)
+### Fresh clip (1:59–2:21, 22 s)
 
 | OPERATOR clicks | On screen | PRESENTER says | s |
 |---|---|---|---|
@@ -106,22 +106,22 @@ Mark it **ESTIMATE (sensor)**. The coach's call above already lists the wrist as
 
 **If the coach named a fault but the panel says *"Demo size: the coach didn't flag this fault"*:** say "This is an example edit at demo size, not the coached fix." Never call it the fix, or stop and go to *How it works*.
 
-**If tab 2 still shows the progress panel** (*Finding your swing… / Measuring… / Building your ghost…*) at 1:52, skip this beat and say: "That clip is still processing, so here's how it works." Then go to *How it works*.
+**If tab 2 still shows the progress panel** (*Finding your swing… / Measuring… / Building your ghost…*) at 1:59, skip this beat and say: "That clip is still processing, so here's how it works." Then go to *How it works*.
 
-## How it works (2:14–2:33, 19 s)
+## How it works (2:21–2:40, 19 s)
 
 > MediaPipe finds 33 joints in every frame.
 > Two cameras, synced on the sound of the hit, give a 3D skeleton, with no calibration board.
 > The coach is plain code: four of its twelve rules are tuned on our labelled swings, the rest are defaults for now.
 
-## Honesty (2:33–2:41, 8 s)
+## Honesty (2:40–2:48, 8 s)
 
 > Joints and angles are measured.
 > Racket speed is estimated.
 > The launch angle is assumed.
 > Every ball path is predicted.
 
-## What's next (2:41–2:52, 11 s)
+## What's next (2:48–2:59, 11 s)
 
 > Next: track the racket, so speed and angle are measured.
 > Then a watch app instead of the phone.
@@ -150,7 +150,7 @@ The code is merged: it reads a phone strapped to the forearm through Sensor Logg
 First, track the racket so speed and launch angle are measured instead of estimated and assumed, and label more players to tune the other eight rules. Then player profiles: keep each player's swings over time, so the ghost compares you with your own best swing and shows whether the fix is sticking.
 
 **7. What does it cost to run?**
-Pose, coaching, the ghost and the ball physics run locally at no cost per swing; the only paid calls are one Claude sentence and one ElevenLabs clip per swing, each made at most once and then cached. By our estimate that's around a cent of Claude at Opus 5.5 prices plus about 100 characters of speech per swing, and with no keys it still works, with the plain cue and no audio.
+Pose, coaching, the ghost and the ball physics run locally at no cost per swing; the only paid calls are one Claude sentence and one ElevenLabs clip per swing, and a successful result is cached, so replaying a swing costs nothing (a failed call can be retried). By our estimate that's around a cent of Claude at Opus 5.5 prices plus about 100 characters of speech per swing, and with no keys it still works, with the plain cue and no audio.
 
 **8. Is this squash-specific?**
 The pipeline is general: pose, the 3D skeleton, the ghost edit and the coach with its checker would work for any racket or bat swing. What's squash-specific is the fault library and its thresholds, tuned on squash swings, and the ball and court physics built to the World Squash Federation spec, so a new sport needs its own labelled faults and ball model, not a new pipeline.
