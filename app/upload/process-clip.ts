@@ -15,9 +15,8 @@ const CLIP_EXTENSIONS: readonly string[] = [".mov", ".mp4", ".m4v", ".avi"];
 export const CLIP_ACCEPT = ["video/*", ...CLIP_EXTENSIONS].join(",");
 
 /**
- * The proxy stops waiting for the service after a fixed time (longer than this) and answers 502,
- * the same status as "service not running". A 502 that arrives this long after the upload
- * finished is that timeout, whatever the proxy's exact wait.
+ * Older proxies use 502 for both timeouts and an unreachable service. Keep the
+ * elapsed-time heuristic for those versions; current proxies explicitly use 504.
  */
 const PROXY_GAVE_UP_MS = 25_000;
 
@@ -36,7 +35,7 @@ export type ProcessFailure =
   | { kind: "too-large"; message: string }
   /** 502 straight away: the proxy couldn't reach the Python service. */
   | { kind: "offline"; message: string }
-  /** 502 after the proxy's wait: the service may still finish and save the swing. */
+  /** 504, or a delayed legacy 502: the service may still finish and save the swing. */
   | { kind: "proxy-timeout" }
   /** 404/405: the service that answered has no upload route (it predates PR #41). */
   | { kind: "no-route" }
@@ -126,6 +125,7 @@ function readAnswer(status: number, text: string, waitedAfterUpload: number): Pr
   if (status === 429) return failed({ kind: "busy" });
   if (status === 413) return failed({ kind: "too-large", message });
   if (status === 404 || status === 405) return failed({ kind: "no-route" });
+  if (status === 504) return failed({ kind: "proxy-timeout" });
   if (status === 502) {
     return failed(waitedAfterUpload >= PROXY_GAVE_UP_MS ? { kind: "proxy-timeout" } : { kind: "offline", message });
   }
