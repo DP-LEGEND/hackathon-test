@@ -66,6 +66,8 @@ For a fresh video, follow the full setup below and open **http://localhost:3000/
 
 Ghost has two parts: a Python API (`services/`, FastAPI on port 8000) and the Next.js web app (port 3000). The web app also works on its own: without the API, `/demo` and `/ghost` use the saved sample swings in `public/swings/`. The API is needed for new uploads.
 
+The Python service has **no authentication** and is **for local use only**. Run both the web app and service on the same laptop, with the service bound to localhost.
+
 ### You need
 
 - **Node.js 26**
@@ -121,7 +123,7 @@ To keep the model somewhere else, set `GHOST_POSE_MODEL` in the Python process e
 
 ### 4. API keys (optional)
 
-The live upload flow needs no provider keys: measurements, fault ranking, the ghost and ball paths run in code. For live swings, `ANTHROPIC_API_KEY` optionally lets Claude reword the selected cue, with numbers checked against the measured values. Independently, `ELEVENLABS_API_KEY` enables speech, including speech of the plain deterministic cue without Claude. **Hear the coach** appears only when audio is available. Missing configuration or provider failures keep the plain caption. Saved samples never request these providers.
+The live upload flow needs no provider keys: measurements, fault ranking, the ghost and ball paths run in code. For live swings, `ANTHROPIC_API_KEY` optionally lets Claude reword the selected cue, with numbers checked against the measured values. Independently, `ELEVENLABS_API_KEY` enables speech, including speech of the plain deterministic cue without Claude. **Hear the coach** appears only when audio is available. If Claude is unconfigured or fails, the caption shows the coach's plain cue; ElevenLabs can still speak that cue if available. If only ElevenLabs is unconfigured or fails, Claude's sentence stays in the caption and there is simply no audio. Saved samples never request these providers.
 
 The same keys also run two command-line demos:
 
@@ -150,7 +152,7 @@ npm run dev
 
 Windows PowerShell: `npm.cmd run dev`
 
-Open http://localhost:3000. Use `/demo` for saved swings and `/upload` for a new clip; `/ghost` remains the replay route. The web app reaches the service through its `/api` proxy, so the browser never calls port 8000 directly. To point it at another API, set the server-side `GHOST_API_URL` before starting Next.js (or in its `.env.local`).
+Open http://localhost:3000. Use `/demo` for saved swings and `/upload` for a new clip; `/ghost` remains the replay route. The web app reaches the service through its `/api` proxy, so the browser never calls port 8000 directly. Only override the server-side `GHOST_API_URL` for a different local service port on the same laptop, before starting Next.js (or in its `.env.local`).
 
 ### 7. Try your own swing
 
@@ -381,15 +383,15 @@ Copy `.env.example` to `.env.local` and populate only the variables required by 
 
 Variables prefixed with `NEXT_PUBLIC_` can be included in the client-side bundle. Do not store secrets in them.
 
-Configure Claude and ElevenLabs credentials on the separately hosted Python service. Configure the web app's server-side `GHOST_API_URL` in its hosting environment, such as Vercel.
+Keep optional Claude and ElevenLabs credentials on the local Python service. Run the web app and service on the same laptop; the service has no authentication and is for local use only.
 
 Never hardcode real credentials into prompts, screenshots, or committed source files.
 
 ## 9. Deployment
 
-Vercel can host the Next.js web app. A full live-upload deployment also needs a separately hosted Python service with ffmpeg, ffprobe and the pose model; configure the web server's `GHOST_API_URL` to reach it. Vercel does not deploy `services/` automatically. The saved sample demo can run without that service.
+The Python service has **no authentication** and is **for local use only**. For live uploads, run both the Next.js web app and Python service on the same laptop, with the service bound to localhost. Do not expose the Python service publicly or point a public Vercel deployment's `GHOST_API_URL` at it. Vercel can host the web app's saved sample demo without a connection to the Python service.
 
-For each new project:
+For a separate project created from the starter:
 
 1. Create the new repository from this template.
 2. Connect that repository to a new Vercel project.
