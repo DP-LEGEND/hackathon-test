@@ -4,9 +4,9 @@ aren't on main yet. When each one merges, move it into the built sections and de
 - Anam avatar lines (coach/avatar.py) are on main but only run from the command line
 - Adaption: the generator (physics/synth.py) is on main; data prep, the eval and the status script
   are in PR #78 (draft). Move Adaption into the built sections only after #78 merges.
-- Adaption win rate: fill in the [WIN RATE] slots from `python -m physics.adaption_status`
-  (services/, in the #78 worktree) once the AutoScientist run says succeeded.
-  If the run succeeded, switch these back to the past tense and fill in the win rate. If it failed, say it failed.
+- Adaption win rate: the AutoScientist run on Qwen3.5-2B succeeded (15 Nov 04:30, 3 of 3 rounds):
+  66% vs the base model, below its 70% target; filled in below. If a later run beats it before
+  submission, update the model and the number (check with `python -m physics.adaption_status`).
 Delete this comment before pasting into Devpost.
 -->
 
@@ -93,7 +93,7 @@ These work on their own branches or from the command line and are being merged i
 
 **Anam avatar.** The coach writes the two or three short lines a talking avatar would say (`coach/avatar.py`). It runs from the command line; the web app doesn't show an avatar.
 
-**Adaption.** A fault-injection data generator built from our own real swings, exported in Adaption's format; we started an AutoScientist fine-tune of Qwen3.5-2B (running at submission; win rate below if it finished). Win rate vs the base model: [WIN RATE, or: the run hadn't finished at submission]. The data is SIMULATED, and Ghost's live coach doesn't use the tuned model yet. See *Adaption* under *Sponsor tracks*.
+**Adaption.** A fault-injection data generator built from our own real swings, exported in Adaption's format, and fine-tuned Qwen3.5-2B with AutoScientist: 66% win rate vs the base model on Adaption's own eval, below its 70% target. The data is SIMULATED, and Ghost's live coach doesn't use the tuned model yet. See *Adaption* under *Sponsor tracks*.
 
 ## Built with
 
@@ -149,7 +149,7 @@ Claude is the coach's voice, not its judge. Measuring the swing and choosing the
 
 ### Adaption
 
-We built a fault-injection data generator on 94 real swings, then started an AutoScientist fine-tune of Qwen3.5-2B on its output (running at submission; win rate below if it finished). All of it is **SIMULATED**: the faults are injected by code into real swings.
+We built a fault-injection data generator on 94 real swings, then fine-tuned Qwen3.5-2B on its output with AutoScientist (66% win rate vs the base model on Adaption's own eval, below its 70% target). All of it is **SIMULATED**: the faults are injected by code into real swings.
 
 - **A fault-injection data generator** (`services/physics/synth.py`). It takes a real swing, injects one fault of known size into the 3D skeleton (a more bent elbow at contact, less shoulder turn, or an earlier wrist release), then re-measures it with the same code the coach uses. Labels come from the re-measured change, not the requested one. From our 94 real swings it wrote 2,758 labelled rows.
 - **Cleaned for training** (`services/physics/adaption_prep.py`).
@@ -157,8 +157,8 @@ We built a fault-injection data generator on 94 real swings, then started an Aut
   - The answer is the fault's name, never a number, so the model can't invent measurements.
   - Train and test are split by source swing (18 swings for training, 6 for testing), so no swing appears on both sides.
 - **Exported in Adaption's format.** The training split is 1,048 rows from 18 swings. Faults outnumber "none" (18 rows), so we repeated the "none" rows up to 343, about the size of each fault class, giving the 1,373 prompt/completion rows we uploaded in raw mode. The 366 test rows from the other 6 swings were never uploaded (the export script checks this).
-- **Started an AutoScientist fine-tune of Qwen3.5-2B** (running at submission; win rate below if it finished). Qwen3.5-2B is a small 2-billion-parameter model; the run uses LoRA and Adaption's defaults: up to 3 rounds, stopping early at a 0.7 win rate. `services/physics/adaption_status.py` tracks the run.
-  - **Win rate vs the base model: [WIN RATE, or: the run hadn't finished at submission].** This is Adaption's own measure, judged on evaluations it derives from our training data. It isn't accuracy on our held-out swings.
+- **Fine-tuned Qwen3.5-2B with AutoScientist.** Qwen3.5-2B is a small 2-billion-parameter model; the run used LoRA and Adaption's defaults: up to 3 rounds, stopping early at a 0.7 win rate. It ran all 3 rounds, and the best came in the first. `services/physics/adaption_status.py` tracked the run.
+  - **66% win rate vs the base model on Adaption's own eval, below its 70% target.** This is Adaption's own measure, judged on evaluations it derives from our training data. It isn't accuracy on our held-out swings, so it isn't comparable with the 34% / 37% / 33% below.
 - **What the data taught us** (`services/physics/adaption_eval.py`). We scored a code rule and Claude Opus 5.5 on the same held-out swings.
   - **The injector is reliable.** Compared with the unedited copy of the same swing, all 366 test rows, from the 6 test swings, are named correctly (366 of 366).
   - **A player's average swing isn't a tight enough baseline.** Compared with the average of 8 to 10 of the player's clean swings, the code rule scores 34% on those 366 test rows and Claude 37% on a 200-row sample of them, against 33% for always answering the most common fault. The injected faults (median 16 to 19°, and 45 ms) are smaller than one player's own swing-to-swing spread (about 30°, and 65 to 82 ms).
