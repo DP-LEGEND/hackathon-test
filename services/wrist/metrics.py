@@ -9,8 +9,9 @@ the swing's fastest forearm turn: contact_source "gyro peak", impact_s and impac
 
 Per swing, in the window -150 ms .. +100 ms around contact:
 - roll_change_deg: forearm ROLL (rotation about the forearm's long axis) over the
-  window: the gyro integrated about the forearm axis (on the integrated-gyro fallback,
-  with the estimated still bias taken off first). Signed (+ = right-hand turn about the
+  window: the gyro integrated about the forearm axis, with the gyro bias taken off first
+  (measured against the phone's orientation, or on the integrated-gyro fallback the still
+  bias around the sync taps). Signed (+ = right-hand turn about the
   axis); the rolled_wrist fault uses its size. roll_change_gyro_deg is the same number,
   kept for older readers.
 - roll_change_twist_deg: a cross-check only, the twist of the orientation's rotation
@@ -57,7 +58,7 @@ from physics.skeleton import ARM, to_array
 from wrist.fuse import LEVER_M, align_swing, fill_swing, racket_speed
 from wrist.impact import clip_levels, impact_report, noise_floor
 from wrist.load import Recording
-from wrist.orient import gyro_orientation
+from wrist.orient import gyro_orientation, orientation_bias
 from wrist.sync import spike_signal
 from wrist.tempo import series_grid_ms, speed_dps, speed_series, tempo
 
@@ -111,12 +112,15 @@ def body_rotations(rec: Recording, convention: str) -> Rotation:
 def choose_orientation(rec: Recording, taps_s: Optional[list[float]] = None
                        ) -> tuple[Rotation, dict[str, Any], np.ndarray]:
     """(phone-to-world rotations, report, gyro bias in rad/s): the phone's own orientation if it
-    matches the gyro (bias zero: none is estimated), else the integrated gyro and the still
-    bias it removed, which the roll integrals must remove too."""
+    matches the gyro, else the integrated gyro. Either way a gyro bias comes back, because the
+    roll is the gyro integral on every path and must have it taken off: on the phone path it
+    is measured against the phone's orientation (orient.orientation_bias; the report's
+    "gyro_bias" says how), on the fallback it is the still bias the integration removed."""
     conv = gyro_convention(rec)
     if conv["ok"]:
-        return (body_rotations(rec, conv["convention"]), {"source": "phone", "convention": conv["convention"]},
-                np.zeros(3))
+        rots = body_rotations(rec, conv["convention"])
+        bias, info = orientation_bias(rec, rots)
+        return rots, {"source": "phone", "convention": conv["convention"], "gyro_bias": info}, bias
     why = ("the export has no Orientation.csv" if rec.quat is None else
            f"the phone's orientation doesn't match its gyro (mismatch {conv['mismatch']:.2f} >= {GYRO_MATCH_OK})")
     rots, info, bias = gyro_orientation(rec, taps_s)
@@ -162,9 +166,9 @@ def swing_metrics(rec: Recording, slerp: Slerp, impact_s: float, axis: np.ndarra
 
     roll_from: "gyro" (the axial gyro integral: the default, and what wrist_report uses) or
     "orientation" (the twist, for comparison only: the module doc says why it isn't used).
-    gyro_bias: the still bias the fallback removed (choose_orientation), taken off the gyro
-    before the axial integral, so the roll doesn't drift by bias x window. None or zero =
-    the raw gyro (the phone path estimates none).
+    gyro_bias: the gyro bias (choose_orientation, on every path), taken off the gyro before
+    the axial integral, so the roll doesn't drift by bias x window. None or zero = the raw
+    gyro (too few samples to measure it).
     """
     t0, t1 = impact_s + WINDOW_MS[0] / 1000, impact_s + WINDOW_MS[1] / 1000
     if t0 < rec.t[0] or t1 > rec.t[-1]:
@@ -329,6 +333,8 @@ def wrist_report(rec: Recording, sync: dict[str, Any], axis: str = "y",
                         f"{orient['why_not_phone']}")
         if orient.get("warning"):
             warnings.append(orient["warning"])
+    elif orient["gyro_bias"].get("warning"):
+        warnings.append(orient["gyro_bias"]["warning"])
     if hint["agrees"] is False:
         warnings.append(f"forearm axis is {axis} but the {hint['dominant_accel_axis']} axis carries the most "
                         "acceleration through contact: check how the phone was strapped (--axis)")
