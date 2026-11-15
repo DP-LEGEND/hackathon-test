@@ -193,10 +193,11 @@ clear
 ~/ghost-env/bin/python -m wrist.tune "$WRIST_JSON" ../data/labels/labels.csv --run "$RUN"
 ```
 
-Beat 4 shows this tab only if **all three** hold. Otherwise beat 4 is spoken and this tab stays hidden:
+Beat 4 shows this tab only if **all four** hold. Otherwise beat 4 is spoken and this tab stays hidden:
 1. The first line does **not** say *MOCK DATA*, and it shows **at least 5 normal and 5 rolled** usable swings (wrist.tune's own minimum).
 2. There's a `roll_change_abs_deg (deg)` block with a `normal median …` line, a `rolled median …` line and an `in-sample: …` line. If it says *"roll_change_abs_deg: not measured in both groups"*, there are no medians to read.
 3. The rolled median is larger than the normal median.
+4. wrist.tune reports **no skipped swings**: the first line ends *"0 labelled swings skipped."*, with no `skipped …` lines under it.
 
 ## Browser tabs, in this order
 
@@ -218,7 +219,7 @@ The page has four steps: **Pick a swing → Coach's call → The ghost → On co
 
 Beat times are the pitch's (`docs/pitch.md`), counted from the hook at 0:00. The order is beat 1, beat 2, **beat 4 (wrist sensor)**, then beat 3 (the fresh clip), as in the pitch.
 
-### Beat 1: forehand over-rotation ghost (0:34–1:18)
+### Beat 1: forehand over-rotation ghost (0:34–1:16)
 
 Browser tab 1 is http://localhost:3000/ghost, opened directly: `/` is now a landing page.
 
@@ -230,7 +231,7 @@ Browser tab 1 is http://localhost:3000/ghost, opened directly: `/` is now a land
 | Scroll down with the pointer **beside** the replay, not over it (scrolling over the 3D view zooms it) | The **Ball** panel (*PREDICTED*): ball speed 133.2 → 119.1 km/h, **front wall height 1.92 → 1.88 m** | *(Read the front wall heights from this panel.)* |
 | Scroll back up to the top, again with the pointer beside the replay | The step bar and **Try another swing** | |
 
-### Beat 2: backhand, nothing to fix (1:18–1:36)
+### Beat 2: backhand, nothing to fix (1:16–1:34)
 
 | Click | Screen shows | PRESENTER says |
 |---|---|---|
@@ -239,23 +240,23 @@ Browser tab 1 is http://localhost:3000/ghost, opened directly: `/` is now a land
 
 Don't click **Show the ghost** here. With nothing flagged, the page would show an uncoached example edit.
 
-### Beat 4: wrist sensor (1:36–1:59, straight after beat 2)
+### Beat 4: wrist sensor (1:34–1:59, straight after beat 2)
 
 As in `docs/pitch.md`, this beat now runs between beats 2 and 3. There's no wrist screen in `/ghost`: it's terminal tab 3 or nothing. Call any sensor number an **ESTIMATE**, and never show *MOCK DATA* on stage.
 
-**Show terminal tab 3 only if it passes all three checks** in *Tab 3* above (not *MOCK DATA*, with at least 5 normal and 5 rolled usable swings; both `roll_change_abs_deg` medians and the `in-sample:` line printed; rolled median larger). Then (23 s, 1:36–1:59):
+**Show terminal tab 3 only if it passes all four checks** in *Tab 3* above (not *MOCK DATA*, with at least 5 normal and 5 rolled usable swings; both `roll_change_abs_deg` medians and the `in-sample:` line printed; rolled median larger; no skipped swings). Then (25 s, 1:34–1:59):
 
 | Click | Screen shows | PRESENTER says |
 |---|---|---|
-| Switch to terminal tab 3 | The morning `wrist.tune` output: `roll_change_abs_deg (deg)`, the normal and rolled medians, the in-sample line | The camera can't see wrist roll, which is why the coach couldn't check it. So we strapped a phone to the forearm. It's an estimate from one session: normal backhands turned [normal median]° through contact, rolled ones [rolled median]°, and every swing was sorted correctly. *(Read both medians exactly as printed. Say "estimate". Don't subtract them out loud. Only say "every swing sorted correctly" if the in-sample line shows 100% of rolled and 0% of normal.)* |
+| Switch to terminal tab 3 | The morning `wrist.tune` output: `roll_change_abs_deg (deg)`, the normal and rolled medians, the in-sample line | The camera can't see wrist roll, which is why the coach couldn't check it. So we strapped a phone to the forearm. It's an estimate from one session: normal backhands turned [normal median]° through contact, rolled ones [rolled median]°, and every usable swing was sorted correctly. *(Read both medians exactly as printed. Say "estimate". Don't subtract them out loud. Only say "every usable swing sorted correctly" if the in-sample line shows 100% of rolled and 0% of normal.)* |
 
-**Otherwise, including whenever tab 3 prints *MOCK DATA*, don't show the tab** (13 s, 1:36–1:49). Switch nothing and say no number:
+**Otherwise, including whenever tab 3 prints *MOCK DATA*, don't show the tab** (17 s, 1:34–1:51). Switch nothing and say no number:
 
 > The camera can't see wrist roll, which is why the coach couldn't check it. So we strapped a phone to the forearm to measure it. We've tried it on real practice swings, but the numbers aren't solid enough to quote yet.
 
-Then go straight on to beat 3. After the spoken version it starts at 1:49, and every later time is 10 s earlier.
+Then go straight on to beat 3. After the spoken version it starts at 1:51, and every later time is 8 s earlier.
 
-### Beat 3: the coach's call on a fresh 60 fps clip (1:59–2:21, or 1:49–2:11 if beat 4 was spoken)
+### Beat 3: the coach's call on a fresh 60 fps clip (1:59–2:21, or 1:51–2:13 if beat 4 was spoken)
 
 The clip was sent at 0:00 from browser tab 2 (`/upload`: **Choose a video**, settings on **Auto**, **Build my ghost**).
 
