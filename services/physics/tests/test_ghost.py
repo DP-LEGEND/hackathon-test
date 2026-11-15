@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from physics.ghost import EDITS, FIXES, LOWER_BODY, apply_fix, edit_swing, inject_fault
-from physics.metrics import contact_frame, measure
+from physics.metrics import contact_frame, measure, shoulder_coil, shoulder_yaw
 from physics.skeleton import (
     L_ANKLE, L_HIP, L_SH, R_ANKLE, R_HIP, R_SH, UPPER_BODY, bone_lengths, floor_basis, mid, to_array, up_vector,
 )
@@ -239,3 +239,62 @@ def test_cannot_remove_more_turn_than_there_is(good):
 def test_unknown_fix_is_rejected(good):
     with pytest.raises(ValueError, match="unknown fix"):
         apply_fix(good, "swing_harder", 5)
+
+
+# ---- A shoulder turn held at contact (contact_turn_deg) ----
+
+def _heading_change_at(a: dict, b: dict, frame: int) -> float:
+    """b's shoulder-line floor heading minus a's at `frame`, degrees (physics.metrics yaw sense)."""
+    up = up_vector(to_array(a))
+    e1, e2 = floor_basis(up)
+    def yaw(s):
+        d = to_array(s)[frame, R_SH] - to_array(s)[frame, L_SH]
+        return np.degrees(np.arctan2(d @ e2, d @ e1))
+    return float((yaw(b) - yaw(a) + 180) % 360 - 180)
+
+
+@pytest.mark.parametrize("y_up", [False, True], ids=["y-down", "y-up"])
+@pytest.mark.parametrize("fix,amount,held", [("turn_shoulders_less", 15, -8.0), ("turn_shoulders_more", 10, -6.0),
+                                             ("turn_shoulders_less", 15, 5.0)])
+def test_held_turn_stays_at_contact_and_the_coil_still_changes_by_the_amount(y_up, fix, amount, held):
+    swing = make_swing(y_up=y_up)
+    c = swing["contactFrame"]
+    before = measure(swing)["shoulder_turn_deg"]
+    plain = apply_fix(swing, fix, amount)
+    ghost = apply_fix(swing, fix, amount, contact_turn_deg=held)
+    change = -amount if fix == "turn_shoulders_less" else amount
+    assert measure(ghost)["shoulder_turn_deg"] == pytest.approx(before + change, abs=1e-6)
+    assert max_bone_change(swing, ghost) < 1e-9
+    # At contact the shoulders sit `held` deg further through the turn than without the hold:
+    # through = the heading's way from the top of the backswing to contact.
+    P, up = to_array(swing), up_vector(to_array(swing))
+    _, coil = shoulder_coil(shoulder_yaw(P, up), c)
+    through = -np.sign(coil)
+    assert _heading_change_at(plain, ghost, c) == pytest.approx(through * held, abs=1e-6)
+    assert _heading_change_at(swing, plain, c) == pytest.approx(0.0, abs=1e-9)  # no hold: contact untouched
+    # Held for 50 ms after contact, gone 50 + 150 ms after it, never jumping.
+    fps = swing["fps"]
+    hold_end, gone = c + int(50 * fps / 1000), c + int(np.ceil(200 * fps / 1000)) + 1
+    assert _heading_change_at(plain, ghost, hold_end) == pytest.approx(through * held, abs=1e-6)
+    assert _heading_change_at(plain, ghost, gone) == pytest.approx(0.0, abs=1e-9)
+    steps = [abs(_heading_change_at(plain, ghost, i + 1) - _heading_change_at(plain, ghost, i))
+             for i in range(c, gone)]
+    assert max(steps) < abs(held) * 0.05  # 150 ms cosine fade at 240 fps: no step over 5% of the hold
+    assert ghost["edits"][-1] == {"id": "shoulder_turn", "size": float(change), "unit": "deg", "contactTurnDeg": held}
+
+
+def test_no_hold_is_exactly_the_old_edit(good):
+    plain = apply_fix(good, "turn_shoulders_less", 15)
+    zero = apply_fix(good, "turn_shoulders_less", 15, contact_turn_deg=0.0)
+    np.testing.assert_array_equal(to_array(zero), to_array(plain))
+    assert zero["edits"] == plain["edits"]
+
+
+@pytest.mark.parametrize("kwargs,msg", [
+    (dict(fix_id="straighten_elbow", amount=12, contact_turn_deg=5), "only works with a shoulder_turn"),
+    (dict(fix_id="turn_shoulders_less", amount=15, contact_turn_deg=61), "within"),
+    (dict(fix_id="turn_shoulders_less", amount=15, contact_turn_deg=float("nan")), "within"),
+])
+def test_bad_held_turns_are_rejected(good, kwargs, msg):
+    with pytest.raises(ValueError, match=msg):
+        apply_fix(good, **kwargs)
