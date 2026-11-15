@@ -15,6 +15,9 @@ const eslintConfig = defineConfig([
     // Python virtual environment (CLAUDE.md: one venv in services/). Its packages
     // ship third-party JS (e.g. matplotlib) that isn't ours to lint.
     "services/.venv/**",
+    "**/.pytest_cache/**",
+    "**/__pycache__/**",
+    "data/**",
   ]),
 ]);
 
