@@ -5,15 +5,17 @@ stroke wasn't in the input, and the output asked for a fault size the input can'
 This module fixes that in two steps around physics.synth:
 
     # from services/
-    python -m physics.adaption_prep select --swings ~/hackathon-test-physics/data/raw/real_swings \
-        --labels ../data/labels/labels.csv --out ../data/raw/adaption/clean_swings
+    python -m physics.adaption_prep select --swings <processed>/fh-04 <processed>/bh-04 \
+        --labels ../data/labels/labels.csv --out ../data/raw/adaption/clean_swings  # a new, empty folder
     python -m physics.synth ../data/raw/adaption/clean_swings --out ../data/raw/adaption/synthetic \
         --fps-real 120 --per-swing 60
     python -m physics.adaption_prep split --synthetic ../data/raw/adaption/synthetic \
         --swings ../data/raw/adaption/clean_swings --out ../data/raw/adaption --seed 0
 
-- select: copies only swings that every row of labels.csv marks intended_fault "none".
-  The source folder is only read, never changed.
+- select: copies only swings that every row of labels.csv marks intended_fault "none", joined
+  on (pipeline run, swing id): ids repeat across runs and a later run's label has an "@run"
+  suffix. A file's run is its pipeline_run/run field, else its run folder's name. The source
+  folders are only read, never changed.
 - split: one row per synthetic swing, output = the injected fault's NAME only (no size; only
   code may state numbers). Train and test are split by SOURCE swing, so edits of one swing never
   sit on both sides. Two input formats are written:
@@ -57,47 +59,95 @@ AUTOSCIENTIST_INSTRUCTION = (
 MIN_AUTOSCIENTIST_ROWS = 1000
 
 
-def clean_swing_ids(labels_csv: str | Path) -> dict[str, str]:
-    """{swing id: stroke} for swings that every labels.csv row marks intended_fault "none"."""
-    seen: dict[str, set[tuple[str, str]]] = {}
+def _label_sets(labels_csv: str | Path) -> dict[tuple[str, str], set[tuple[str, str]]]:
+    """{(pipeline run, bare swing id): {(intended_fault, side), ...}} from labels.csv.
+
+    Swing ids repeat across pipeline runs, and a later run's label carries an "@run" suffix
+    (e.g. "7178110a0b06-swing-0024@fh-05"), so labels are keyed on the run as well as the id.
+    """
+    seen: dict[tuple[str, str], set[tuple[str, str]]] = {}
     with open(labels_csv, newline="") as fh:
-        for row in csv.DictReader(fh):
-            sid = row["swing"].strip()
-            if sid:
-                seen.setdefault(sid, set()).add((row["intended_fault"].strip(), row["side"].strip()))
+        for n, row in enumerate(csv.DictReader(fh), start=2):
+            raw = (row.get("swing") or "").strip()
+            if not raw:
+                continue
+            bare, _, suffix = raw.partition("@")
+            run = (row.get("pipeline_run") or "").strip()
+            if suffix and run and suffix != run:
+                raise ValueError(f"labels.csv line {n}: swing {raw!r} says run {suffix!r} but pipeline_run is {run!r}")
+            run = run or suffix
+            if not run:
+                raise ValueError(f"labels.csv line {n}: swing {raw!r} has no pipeline_run, so it can't be joined to a file")
+            seen.setdefault((run, bare.strip()), set()).add((row["intended_fault"].strip(), row["side"].strip()))
+    return seen
+
+
+def clean_swing_ids(labels_csv: str | Path) -> dict[tuple[str, str], str]:
+    """{(pipeline run, bare swing id): stroke} for swings that every row of that run marks "none"."""
     clean = {}
-    for sid, labels in seen.items():
+    for key, labels in _label_sets(labels_csv).items():
         faults = {f for f, _ in labels}
         sides = {s for _, s in labels}
         if faults == {"none"} and len(sides) == 1:
-            clean[sid] = sides.pop()
+            clean[key] = sides.pop()
     return clean
 
 
-def select_clean(swings_dir: str | Path, labels_csv: str | Path, out: str | Path) -> dict:
-    """Copy the labelled-clean swings from `swings_dir` into `out`. Returns a summary."""
-    swings_dir, out = Path(swings_dir).resolve(), Path(out).resolve()
-    if out == swings_dir:
+def swing_run(path: Path, swing: dict, known_runs: set[str]) -> str:
+    """Which pipeline run a swing file is from: a pipeline_run/run field, else its run folder."""
+    for where in (swing, swing.get("metadata") or {}):
+        for key in ("pipeline_run", "run"):
+            value = where.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    if path.parent.name in known_runs:
+        return path.parent.name
+    raise ValueError(f"{path}: can't tell which pipeline run this swing is from (no pipeline_run/run field, and "
+                     f"its folder {path.parent.name!r} isn't a run in labels.csv). Point --swings at the run "
+                     "folders instead, e.g. data/processed/fh-04 data/processed/bh-04.")
+
+
+def select_clean(swings: str | Path | list, labels_csv: str | Path, out: str | Path) -> dict:
+    """Copy the labelled-clean swings from one or more run folders into `out`. Returns a summary.
+
+    Each file is joined to labels.csv on (pipeline run, swing id), so a swing that is clean in
+    one run but faulty in another is only taken from the run where it's clean.
+    """
+    dirs = [Path(d).resolve() for d in ([swings] if isinstance(swings, (str, Path)) else swings)]
+    out = Path(out).resolve()
+    if out in dirs:
         raise ValueError("--out must be a different folder from --swings (the source is never changed)")
     if out.exists() and (not out.is_dir() or any(out.iterdir())):
         raise ValueError("--out must be empty or new; stale swings from an earlier run would leak into synth")
-    files = sorted(swings_dir.glob("*.json"))
+    files = sorted(f for d in dirs for f in d.glob("*.json"))
     if not files:
-        raise ValueError(f"no .json swings found in {swings_dir}")
+        raise ValueError(f"no .json swings found in {', '.join(map(str, dirs))}")
+    labels = _label_sets(labels_csv)
     clean = clean_swing_ids(labels_csv)
-    out.mkdir(parents=True, exist_ok=True)
+    known_runs = {run for run, _ in labels}
+    swings_by_file = {f: json.loads(f.read_text()) for f in files}
+    runs = {f: swing_run(f, swings_by_file[f], known_runs) for f in files}  # fails before anything is copied
+    picked: dict[str, Path] = {}
     selected, skipped = [], []
     for path in files:
-        if path.stem not in clean:
-            skipped.append(f"{path.name}: not labelled clean (intended_fault isn't 'none' in every row)")
+        run, key = runs[path], (runs[path], path.stem)
+        if key not in clean:
+            skipped.append(f"{path.name} ({run}): not labelled clean in {run} (intended_fault isn't 'none' in every row)")
             continue
-        side = json.loads(path.read_text()).get("side")
-        if side != clean[path.stem]:
-            skipped.append(f"{path.name}: swing says side {side!r} but labels.csv says {clean[path.stem]!r}")
+        side = swings_by_file[path].get("side")
+        if side != clean[key]:
+            skipped.append(f"{path.name} ({run}): swing says side {side!r} but labels.csv says {clean[key]!r}")
             continue
-        shutil.copy2(path, out / path.name)
+        if path.name in picked:
+            raise ValueError(f"{path.name} is clean in both {runs[picked[path.name]]} and {run}; "
+                             "select one run per swing id")
+        picked[path.name] = path
         selected.append(path.name)
-    return {"selected": selected, "skipped": skipped, "out": str(out)}
+    out.mkdir(parents=True, exist_ok=True)
+    for name, path in picked.items():
+        shutil.copy2(path, out / name)
+    return {"selected": selected, "skipped": skipped, "out": str(out),
+            "runs": {name: runs[path] for name, path in picked.items()}}
 
 
 def model_input(stroke: str, metrics: dict) -> str:
@@ -276,7 +326,8 @@ def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(description="Clean Adaption fine-tune data (SIMULATED).")
     sub = p.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("select", help="copy labelled-clean swings into a new folder")
-    s.add_argument("--swings", required=True, help="folder of real swing .json files (read only)")
+    s.add_argument("--swings", required=True, nargs="+",
+                   help="pipeline run folder(s) of real swing .json files, e.g. data/processed/fh-04 (read only)")
     s.add_argument("--labels", required=True, help="data/labels/labels.csv")
     s.add_argument("--out", required=True, help="new folder under data/raw/, e.g. ../data/raw/adaption/clean_swings")
     t = sub.add_parser("split", help="build train/test files from physics.synth output")

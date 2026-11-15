@@ -3,16 +3,18 @@
 import csv
 import json
 import re
+from pathlib import Path
 
 import pytest
 
-from physics.adaption_prep import (LABELS, autoscientist_rows, build_rows, make_relative, oversample_none,
-                                   relative_input, select_clean, write_split)
+from physics.adaption_prep import (LABELS, autoscientist_rows, build_rows, clean_swing_ids, make_relative,
+                                   oversample_none, relative_input, select_clean, write_split)
 from physics.synth import METRIC_KEYS, generate
 from physics.tests.swing_factory import make_swing
 
 LABEL_COLUMNS = ["clip", "swing", "side", "intended_fault", "severity", "quality_1_to_5",
-                 "outcome", "held_out", "comment"]
+                 "outcome", "held_out", "comment", "pipeline_run"]
+RUN = "run-01"  # mock pipeline run: the swing folder's name and labels.csv's pipeline_run
 CLEAN = [f"fhsess-swing-000{i}" for i in range(1, 5)] + [f"bhsess-swing-000{i}" for i in range(1, 5)]
 RELATIVE_FORMAT = re.compile(r"^(forehand|backhand); elbow [+-]\d+ deg vs your baseline; "
                              r"shoulder turn [+-]\d+ deg; wrist release [+-]\d+ ms$")
@@ -22,13 +24,14 @@ def write_labels(path, rows):
     with open(path, "w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=LABEL_COLUMNS)
         w.writeheader()
-        for swing, side, fault in rows:
-            w.writerow({"clip": "IMG_TEST", "swing": swing, "side": side, "intended_fault": fault})
+        for row in rows:
+            swing, side, fault, run = row if len(row) == 4 else (*row, RUN)
+            w.writerow({"clip": "IMG_TEST", "swing": swing, "side": side, "intended_fault": fault, "pipeline_run": run})
 
 
 @pytest.fixture()
 def real_folder(tmp_path):
-    d = tmp_path / "real"
+    d = tmp_path / RUN
     d.mkdir()
     sides = {name: ("forehand" if name.startswith("fh") else "backhand") for name in CLEAN}
     sides.update({"fhsess-swing-0009": "forehand", "bhsess-swing-0009": "backhand", "fhsess-swing-0010": "forehand"})
@@ -86,13 +89,67 @@ def test_select_refuses_a_non_empty_out_folder(real_folder, tmp_path):
 
 
 def test_side_mismatch_is_skipped(tmp_path):
-    d = tmp_path / "real"
+    d = tmp_path / RUN
     d.mkdir()
     (d / "x.json").write_text(json.dumps(dict(make_swing(fps=120.0), side="backhand")))
     labels = tmp_path / "labels.csv"
     write_labels(labels, [("x", "forehand", "none")])
     r = select_clean(d, labels, tmp_path / "clean")
     assert r["selected"] == [] and "side" in r["skipped"][0]
+
+
+PAIR = "7178110a0b06-swing-0024"  # real labels.csv pair: none in fh-04, early_wrist in fh-05
+
+
+def test_same_swing_id_is_only_taken_from_the_run_where_it_is_clean(tmp_path):
+    runs = {}
+    for run, fps in (("fh-04", 120.0), ("fh-05", 240.0)):  # different fps so the copies can be told apart
+        d = tmp_path / run
+        d.mkdir()
+        (d / f"{PAIR}.json").write_text(json.dumps(dict(make_swing(fps=fps), side="forehand")))
+        runs[run] = d
+    labels = tmp_path / "labels.csv"
+    write_labels(labels, [(PAIR, "forehand", "none", "fh-04"), (f"{PAIR}@fh-05", "forehand", "early_wrist", "fh-05")])
+    r = select_clean([runs["fh-04"], runs["fh-05"]], labels, tmp_path / "clean")
+    assert r["selected"] == [f"{PAIR}.json"] and r["runs"] == {f"{PAIR}.json": "fh-04"}
+    assert (tmp_path / "clean" / f"{PAIR}.json").read_bytes() == (runs["fh-04"] / f"{PAIR}.json").read_bytes()
+    assert any("(fh-05): not labelled clean in fh-05" in x for x in r["skipped"])
+
+
+def test_repo_labels_key_the_pair_by_run():
+    labels = Path(__file__).resolve().parents[3] / "data/labels/labels.csv"
+    if not labels.is_file():
+        pytest.skip("data/labels/labels.csv not in this checkout")
+    clean = clean_swing_ids(labels)
+    assert clean[("fh-04", PAIR)] == "forehand"
+    assert ("fh-05", PAIR) not in clean
+
+
+def test_a_swing_with_no_run_stops_with_its_name(tmp_path):
+    d = tmp_path / "real_swings"  # flat folder: not a run, and the file has no run field
+    d.mkdir()
+    (d / f"{PAIR}.json").write_text(json.dumps(dict(make_swing(fps=120.0), side="forehand")))
+    labels = tmp_path / "labels.csv"
+    write_labels(labels, [(PAIR, "forehand", "none", "fh-04")])
+    with pytest.raises(ValueError, match=f"{PAIR}.json: can't tell which pipeline run"):
+        select_clean(d, labels, tmp_path / "clean")
+    assert not (tmp_path / "clean").exists()  # nothing copied
+
+
+def test_a_run_field_in_the_swing_beats_its_folder(tmp_path):
+    d = tmp_path / "anywhere"
+    d.mkdir()
+    (d / f"{PAIR}.json").write_text(json.dumps(dict(make_swing(fps=120.0), side="forehand", pipeline_run="fh-04")))
+    labels = tmp_path / "labels.csv"
+    write_labels(labels, [(PAIR, "forehand", "none", "fh-04"), (f"{PAIR}@fh-05", "forehand", "early_wrist", "fh-05")])
+    assert select_clean(d, labels, tmp_path / "clean")["runs"] == {f"{PAIR}.json": "fh-04"}
+
+
+def test_a_suffix_that_disagrees_with_pipeline_run_is_refused(tmp_path):
+    labels = tmp_path / "labels.csv"
+    write_labels(labels, [(f"{PAIR}@fh-05", "forehand", "none", "fh-04")])
+    with pytest.raises(ValueError, match="says run 'fh-05' but pipeline_run is 'fh-04'"):
+        clean_swing_ids(labels)
 
 
 def test_rows_have_stroke_in_input_and_fault_name_only(synthetic):
