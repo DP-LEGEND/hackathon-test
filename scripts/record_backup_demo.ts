@@ -58,7 +58,7 @@ async function walkDemo(page: Page, holdMilliseconds: number, errors: string[]) 
   await page.goto("/");
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("See your swing. Find your edge.");
   await beat("1. Landing", page.getByRole("heading", { level: 1 }));
-  await page.getByRole("link", { name: "Watch demo", exact: true }).click();
+  await page.getByRole("navigation", { name: "Main navigation", exact: true }).getByRole("link", { name: "Demo", exact: true }).click();
   const hero = page.getByRole("button", { name: new RegExp(heroId) });
   await expect(hero).toContainText("Saved sample");
   await beat("2. Load the saved hero forehand (no live upload)", hero);
@@ -80,14 +80,17 @@ async function walkDemo(page: Page, holdMilliseconds: number, errors: string[]) 
   await playingReplay();
   await beat("4. Your swing and ghost, side by side", stage);
 
+  await stage.getByRole("button", { name: "Overlay", exact: true }).click();
+  await expect(stage.getByRole("button", { name: "Side by side", exact: true })).toHaveAttribute("aria-pressed", "false");
+
   // Court view alone only moves the camera; this step actually enables the ball paths.
   await page.getByRole("button", { name: "Show the court", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Where the ball goes", exact: true })).toBeVisible();
   await expect(stage.getByText("PREDICTED · you · in", { exact: true })).toBeVisible();
   await expect(stage.getByText("PREDICTED · ghost · in", { exact: true })).toBeVisible();
-  await expect(stage.getByRole("button", { name: "Overlay", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(stage.getByRole("button", { name: "Side by side", exact: true })).toHaveAttribute("aria-pressed", "false");
   await playingReplay();
-  await beat("5. Side-by-side PREDICTED ball paths", stage);
+  await beat("5. Overlaid PREDICTED ball paths", stage);
 
   const changes = page.getByRole("region", { name: "What the fix changes", exact: true });
   const shoulder = changes.getByRole("row", { name: /Shoulder turn/ });
@@ -127,6 +130,9 @@ async function main() {
     try {
       const health = await warmup.request.get("/api/health");
       expect(health.ok(), "Start the local app and Python service before recording").toBe(true);
+      const catalogue = await warmup.request.get("/api/swings");
+      expect(catalogue.ok(), "The local service's swing catalogue must be available").toBe(true);
+      expect(await catalogue.json(), "Start the service with GHOST_SWINGS_DIR pointing to an empty directory").toEqual({ swings: [] });
       const errors: string[] = [];
       await savedSamplesOnly(warmup, errors);
       await walkDemo(await warmup.newPage(), 0, errors);

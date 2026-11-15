@@ -41,56 +41,63 @@ export function FixPicker({
   const unavailable = fixes.filter((f) => f.unavailable !== null);
   return (
     <div className="flex flex-col gap-2">
-      <div role="group" aria-labelledby="fix-picker-label" className="flex flex-wrap items-center gap-2">
-        <p id="fix-picker-label" className={cn(look.label, "mr-1 w-full text-muted-foreground sm:w-auto")}>
+      <div
+        role="group"
+        aria-labelledby="fix-picker-label"
+        className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center"
+      >
+        <p id="fix-picker-label" className={cn(look.label, "mr-1 text-muted-foreground")}>
           Ghost shows the fix
         </p>
-        {fixes.map((fix) => {
-          const on = fix.id === selected;
-          const off = fix.unavailable !== null;
-          const flagged = fix.id !== coachPick && faults.some((f) => f.fix === fix.id);
-          return (
-            <Button
-              key={fix.id}
-              variant="outline"
-              aria-pressed={on}
-              aria-busy={on && loading}
-              aria-describedby={off ? `fix-why-${fix.id}` : undefined}
-              disabled={off}
-              focusableWhenDisabled
-              onClick={() => onSelect(fix.id)}
-              className={cn(
-                "rounded-full px-3.5",
-                on && "bg-(--media) dark:bg-(--media)",
-                off && "line-through decoration-muted-foreground/60",
-              )}
-              style={on ? { borderColor: GHOST_COLOUR } : undefined}
-            >
-              <span
-                aria-hidden
-                className={cn("size-2 rounded-full", on && loading && "motion-safe:animate-pulse")}
-                style={{ backgroundColor: on ? GHOST_COLOUR : "transparent", boxShadow: `inset 0 0 0 1.5px ${GHOST_COLOUR}` }}
-              />
-              {fixName(fix.id)}
-              {!off && <span className={cn(look.value, "font-normal text-muted-foreground")}>{formatValue(fix.amount, fix.unit)}</span>}
-              {fix.id === coachPick && (
-                <Badge variant="secondary" className="h-5 rounded-full">
-                  Coach&apos;s pick
-                </Badge>
-              )}
-              {flagged && (
-                <Badge variant="secondary" className="h-5 rounded-full">
-                  Coach flagged
-                </Badge>
-              )}
-              {off && (
-                <Badge variant="outline" className="h-5 rounded-full">
-                  Unavailable
-                </Badge>
-              )}
-            </Button>
-          );
-        })}
+        <div className={look.phoneRow}>
+          {fixes.map((fix) => {
+            const on = fix.id === selected;
+            const off = fix.unavailable !== null;
+            const flagged = fix.id !== coachPick && faults.some((f) => f.fix === fix.id);
+            return (
+              <Button
+                key={fix.id}
+                variant="outline"
+                aria-pressed={on}
+                aria-busy={on && loading}
+                aria-describedby={off ? `fix-why-${fix.id}` : undefined}
+                disabled={off}
+                focusableWhenDisabled
+                onClick={() => onSelect(fix.id)}
+                className={cn(
+                  "rounded-full px-3.5",
+                  look.phoneRowItem,
+                  on && "bg-(--media) dark:bg-(--media)",
+                  off && "line-through decoration-muted-foreground/60",
+                )}
+                style={on ? { borderColor: GHOST_COLOUR } : undefined}
+              >
+                <span
+                  aria-hidden
+                  className={cn("size-2 rounded-full", on && loading && "motion-safe:animate-pulse")}
+                  style={{ backgroundColor: on ? GHOST_COLOUR : "transparent", boxShadow: `inset 0 0 0 1.5px ${GHOST_COLOUR}` }}
+                />
+                {fixName(fix.id)}
+                {!off && <span className={cn(look.value, "font-normal text-muted-foreground")}>{formatValue(fix.amount, fix.unit)}</span>}
+                {fix.id === coachPick && (
+                  <Badge variant="secondary" className="h-5 rounded-full">
+                    Coach&apos;s pick
+                  </Badge>
+                )}
+                {flagged && (
+                  <Badge variant="secondary" className="h-5 rounded-full">
+                    Coach flagged
+                  </Badge>
+                )}
+                {off && (
+                  <Badge variant="outline" className="h-5 rounded-full">
+                    Unavailable
+                  </Badge>
+                )}
+              </Button>
+            );
+          })}
+        </div>
       </div>
       {unavailable.length > 0 && (
         <ul className="flex flex-col gap-1 text-[13px] leading-relaxed">
