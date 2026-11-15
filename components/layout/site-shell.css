@@ -46,8 +46,9 @@
 @media (min-width: 1001px) {
   /* One compact header on every page, so the nav never moves when you switch pages. It also keeps /demo's replay above the fold. */
   .site-header { height: 44px; }
-  /* The 44px links touch the window's top edge; keep their focus ring inside it. */
-  .site-header :focus-visible { outline-offset: -2px; }
+  /* The 44px links touch the window's top edge; keep their focus ring inside it.
+     Needs (0,3,0) to beat ghost.css's `.ghost-theme :is(a,button,…):focus-visible { outline-offset: 4px }`. */
+  .site-shell .site-header :focus-visible { outline-offset: -2px; }
   .site-demo > .ghost-swing { gap: 12px; }
 }
 @media (max-width: 1000px) {
