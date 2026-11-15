@@ -79,6 +79,8 @@ to do on the next swing, in plain words they can act on mid-session.
 - Keep the coach's fix. Don't add a second fix or change it.
 - You may say the measured number, but only exactly as written in `measured`, as digits.
   Never invent, round or calculate a number.
+- If you quote the measured number, copy its measured phrase word for word, once
+  (for "Over-rotation: hips turn 157 degrees", say "hips turn 157 degrees").
 - No lists, quotes, emoji or stage directions."""
 
 
@@ -267,47 +269,56 @@ def check_number_context(cue: str, facts: dict[str, str]) -> None:
             raise CoachError(f"Cue puts {number} next to a change {words}: the coach only measured it")
 
 
-# A quoted number must stay in its measured phrase: it shares a neighbouring word with the
-# label ("stance 80 degrees open" -> "80 degrees open"). Keyword lists kept missing new
-# ways to turn a measurement into a target ("at 109 degrees", "aim for ... 109 degrees").
+# A quoted number must keep its measured phrase, word for word, and appear only once: the
+# label's words from up to two before the number through up to one after its unit ("hips
+# turn 157 degrees" from "Over-rotation: hips turn 157 degrees"). Keyword lists kept missing
+# new ways to turn a measurement into a target ("at 109 degrees", "aim for ... 109 degrees").
 _UNIT_TOKENS = sorted((tuple(re.findall(r"[a-z]+", u)) for u in UNIT_ALIASES if re.search(r"[a-z]", u)),
                       key=len, reverse=True)
+PHRASE_WORDS_BEFORE = 2
+PHRASE_WORDS_AFTER_UNIT = 1
 
 
-def _neighbours(tokens: list[str], number: str) -> list[tuple[Optional[str], Optional[str]]]:
-    """(word before, word after its unit) for each `number` in tokens (words and numbers only).
+def _measured_phrase(tokens: list[str], i: int) -> list[str]:
+    """The label's words around the number at tokens[i]: up to PHRASE_WORDS_BEFORE words
+    before it and up to PHRASE_WORDS_AFTER_UNIT after its unit, clipped at the label's
+    start or end or a clause break (, ; :)."""
+    start = i
+    while start > 0 and i - start < PHRASE_WORDS_BEFORE and tokens[start - 1] not in _CLAUSE_BREAK:
+        start -= 1
+    end = i + 1
+    for unit in _UNIT_TOKENS:
+        if tuple(tokens[end:end + len(unit)]) == unit:
+            end += len(unit)
+            break
+    after = 0
+    while end < len(tokens) and after < PHRASE_WORDS_AFTER_UNIT and tokens[end] not in _CLAUSE_BREAK:
+        end += 1
+        after += 1
+    return tokens[start:end]
 
-    The word after skips the number's unit ("80 degrees open" -> "open"; "80 open" when
-    the unit was a symbol like ° that isn't a word). None at the start or end.
-    """
-    out = []
-    for i, tok in enumerate(tokens):
-        if tok != number:
-            continue
-        j = i + 1
-        for unit in _UNIT_TOKENS:
-            if tuple(tokens[j:j + len(unit)]) == unit:
-                j += len(unit)
-                break
-        out.append((tokens[i - 1] if i > 0 else None, tokens[j] if j < len(tokens) else None))
-    return out
+
+def _contains_run(tokens: list[str], run: list[str]) -> bool:
+    n = len(run)
+    return any(tokens[k:k + n] == run for k in range(len(tokens) - n + 1))
 
 
 def check_number_anchor(cue: str, facts: dict[str, str]) -> None:
-    """Raise CoachError if a quoted number has left the measured phrase it came from.
+    """Raise CoachError unless every quoted number keeps its measured phrase, once.
 
-    For every number in the cue, some occurrence must share a neighbour with some
-    occurrence in facts["measured"]: the word right before the number, or the word right
-    after its unit. "80 degrees open" passes for "stance 80 degrees open to the shot";
-    "at 109 degrees" or "of 109 degrees" fail for "never bends past 109 degrees before contact".
+    - A number from facts["measured"] may appear at most once in the cue ("Cue repeats 157").
+    - The cue must contain the number's measured phrase (_measured_phrase) as an exact,
+      unbroken run of words: label "Over-rotation: hips turn 157 degrees" needs "hips turn
+      157 degrees", so "Turn 157 degrees." fails ("Cue moves 157 out of its measured phrase").
+    Word for word means the unit is spelled as in the label: "157°" or "157 deg" fail.
     """
-    words = lambda text: [t for t in _tokens(text) if t not in _CLAUSE_BREAK]  # noqa: E731
-    cue_words, label_words = words(cue), words(facts.get("measured", ""))
+    cue_tokens, label_tokens = _tokens(cue), _tokens(facts.get("measured", ""))
     for _, number, _ in quoted_numbers(cue):
-        label = _neighbours(label_words, number.lower())
-        ok = any((b is not None and b == lb) or (a is not None and a == la)
-                 for b, a in _neighbours(cue_words, number.lower()) for lb, la in label)
-        if not ok:
+        n = number.lower()
+        if n in label_tokens and cue_tokens.count(n) > 1:
+            raise CoachError(f"Cue repeats {number}")
+        phrases = [_measured_phrase(label_tokens, i) for i, tok in enumerate(label_tokens) if tok == n]
+        if not any(_contains_run(cue_tokens, phrase) for phrase in phrases):
             raise CoachError(f"Cue moves {number} out of its measured phrase")
 
 
@@ -317,8 +328,8 @@ def check_worded_cue(cue: str, facts: dict[str, str]) -> str:
     Every number must match one in the coach facts EXACTLY: same sign, same digits as
     written and same unit (80 degrees is fine; -80 degrees, 80.0 degrees, 80 percent or
     a bare 80 aren't). No number words, no negations (don't, never, stop...), no number
-    next to a change word (check_number_context), every number kept in its measured
-    phrase (check_number_anchor), and the coach's fix direction kept
+    next to a change word (check_number_context), every number quoted once inside its
+    measured phrase, word for word (check_number_anchor), and the coach's fix direction kept
     (check_direction).
     Raises CoachError otherwise (the caller then uses the plain caption).
     """

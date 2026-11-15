@@ -113,10 +113,17 @@ def test_claude_words_the_cue_from_the_real_coach_result(env, result: dict) -> N
     assert call["fallbacks"] == "default" and call["output_config"] == {"effort": "low"}
 
 
-def test_claude_may_quote_the_measured_number(env, result: dict) -> None:
+def test_claude_may_quote_the_measured_number_inside_its_phrase(env, result: dict) -> None:
+    env.keys("ANTHROPIC_API_KEY")
+    env.claude.cue = "Your stance 80 degrees open lets your hips fly, so close it."  # "stance 80 degrees open", word for word
+    assert voice_for_swing("sample", result)["source"] == "claude"
+
+
+def test_claude_quoting_the_number_outside_its_phrase_falls_back(env, result: dict) -> None:
+    # Passed before the exact-phrase rule: "stance is 80 degrees open" isn't "stance 80 degrees open".
     env.keys("ANTHROPIC_API_KEY")
     env.claude.cue = "Your stance is 80 degrees open, so close it and hold the turn."
-    assert voice_for_swing("sample", result)["source"] == "claude"
+    assert voice_for_swing("sample", result) == {"cue": result["cue"], "audioUrl": None, "source": "caption"}
 
 
 @pytest.mark.parametrize("bad", [
@@ -151,10 +158,11 @@ def test_a_refusal_falls_back_to_the_caption(env, result: dict) -> None:
 
 def test_check_worded_cue_only_allows_numbers_from_the_facts() -> None:
     facts = {"measured": "Straight arm: elbow never bends past 109 degrees before contact"}
-    # 109 keeps its measured phrase ("bends past 109 degrees"); "below 109 degrees" would make it a
-    # target, which check_number_anchor rejects.
-    assert (check_worded_cue("  Bend   the elbow, it bends past 109 degrees. ", facts)
-            == "Bend the elbow, it bends past 109 degrees.")
+    # 109 keeps its measured phrase word for word ("bends past 109 degrees before").
+    assert (check_worded_cue("  Bend   the elbow: it bends past 109 degrees before contact. ", facts)
+            == "Bend the elbow: it bends past 109 degrees before contact.")
+    with pytest.raises(CoachError, match="out of its measured phrase"):  # passed before: drops "before"
+        check_worded_cue("Bend the elbow, it bends past 109 degrees.", facts)
     with pytest.raises(CoachError, match="didn't measure"):
         check_worded_cue("Bend it to 90 degrees.", facts)
 
@@ -323,20 +331,9 @@ def test_a_unit_change_or_reformatted_number_falls_back(cue: str) -> None:
         check_worded_cue(cue, STANCE_FACTS)
 
 
-@pytest.mark.parametrize("cue", [
-    "Your stance is 80 degrees open, so close it and hold the turn.",
-    "Your stance is 80 deg open, so close it and hold the turn.",
-    "Your stance is 80° open to the shot, so close it.",  # "close" kept >3 words from 80
-    "An 80-degree open stance lets the hips fly, so close it.",
-])
-def test_the_same_number_and_unit_in_another_spelling_passes(cue: str) -> None:
-    assert check_worded_cue(cue, STANCE_FACTS) == cue
-
-
 def test_a_negative_measurement_quoted_with_its_sign_passes() -> None:
-    for cue in ("You release -20 milliseconds before contact, so hold the cock.",
-                "You release minus 20 ms before contact, so hold the cock."):
-        assert check_worded_cue(cue, RELEASE_FACTS) == cue
+    cue = "Your wrist releases -20 milliseconds before contact, so hold the cock."  # its measured phrase
+    assert check_worded_cue(cue, RELEASE_FACTS) == cue
 
 
 def test_spelled_out_numbers_with_a_unit_fall_back() -> None:
@@ -375,9 +372,9 @@ def test_open_stance_fix_cannot_become_open_it_further(result: dict) -> None:
     assert "open" in facts["coach_cue"] and "Close" in facts["coach_cue"]
     with pytest.raises(CoachError, match="reverses"):
         check_worded_cue("Open your stance further so your hips can turn.", facts)
-    # Restating the fault while giving the fix is fine (the real cue Claude gave live).
-    live = "Close your stance on this backhand, it's 80 degrees open, so your hips hold the turn longer."
-    assert check_worded_cue(live, facts) == live
+    # Restating the fault while giving the fix is fine, with the number in its measured phrase.
+    # (The live cue "...it's 80 degrees open..." now fails the exact-phrase rule instead.)
+    assert check_worded_cue("Your stance 80 degrees open lets your hips fly, so close it.", facts) == "Your stance 80 degrees open lets your hips fly, so close it."
 
 
 def test_a_reversed_cue_falls_back_to_the_caption_and_is_not_cached(env, result: dict) -> None:
@@ -461,7 +458,6 @@ def test_any_spelled_out_number_is_rejected(cue: str) -> None:
     (OVER_FACTS, "Turn a little less, one smooth swing."),
     # ("one more swing" against a "less" fix is still rejected, by the direction guard's "more")
     (STANCE_LIVE_FACTS, "One more swing with a closed stance, so your hips hold the turn."),
-    (STANCE_LIVE_FACTS, LIVE_CUE),  # the cue Claude gave live
     (STANCE_LIVE_FACTS, "Close your stance so your hips can hold the turn."),
     (STANCE_LIVE_FACTS, "Hold one closed stance so your hips keep the turn."),
 ])
@@ -604,7 +600,7 @@ def test_a_number_next_to_a_change_word_is_rejected() -> None:
 
 
 def test_restating_the_measurement_is_not_a_change() -> None:
-    assert check_worded_cue(LIVE_CUE, STANCE_LIVE_FACTS) == LIVE_CUE  # "80 degrees open" is the label's own phrase
+    assert check_worded_cue("Your stance 80 degrees open lets your hips fly, so close it.", STANCE_LIVE_FACTS) == "Your stance 80 degrees open lets your hips fly, so close it."  # "open" is the label's own word
     ok = "Your hips turn 95 degrees, so turn a little less."  # "less" is more than 3 words from 95
     assert check_worded_cue(ok, OVER95_FACTS) == ok
 
@@ -681,9 +677,8 @@ def test_a_measured_number_as_a_target_is_rejected(facts: dict, cue: str) -> Non
 
 
 @pytest.mark.parametrize("cue", [
-    "Your stance is 80 degrees open to the shot, so close it.",  # "to" after the number restates the label
-    "Your stance is 80 degrees open, so close it and hold the turn.",  # the fix is in the next clause
-    LIVE_CUE,
+    "Your stance 80 degrees open to the shot lets the hips fly, so close it.",  # "to" after the number
+    "Your stance 80 degrees open lets your hips fly, so close it and hold the turn.",  # fix in the next clause
 ])
 def test_restating_the_measurement_still_passes_with_the_wider_window(cue: str) -> None:
     assert check_worded_cue(cue, STANCE_LIVE_FACTS) == cue
@@ -715,11 +710,9 @@ def test_a_number_moved_out_of_its_measured_phrase_is_rejected(cue: str) -> None
 
 
 @pytest.mark.parametrize("facts, cue", [
-    (STANCE_FACTS, "Your stance is 80 degrees open, so close it a little."),  # shares "open"
-    (STANCE_LIVE_FACTS, LIVE_CUE),  # "it's 80 degrees open, so ...": the comma is skipped
-    (STANCE_LIVE_FACTS, "Your stance is 80° open to the shot, so close it."),  # a symbol unit
-    (OVER95_FACTS, "Your hips turn 95 degrees, so turn a little less."),  # shares "turn"
-    (RELEASE_FACTS, "You release minus 20 ms before contact, so hold the cock."),  # "before", after the unit
+    (STANCE_FACTS, "Your stance 80 degrees open lets your hips fly, so close it a little."),  # "stance 80 degrees open"
+    (OVER95_FACTS, "Your hips turn 95 degrees, so turn a little less."),  # "hips turn 95 degrees"
+    (RELEASE_FACTS, "Your wrist releases -20 milliseconds before contact, so hold the cock."),  # "...before"
 ])
 def test_a_number_in_its_measured_phrase_passes(facts: dict, cue: str) -> None:
     assert check_worded_cue(cue, facts) == cue
@@ -732,3 +725,60 @@ def test_a_moved_number_falls_back_to_the_caption_end_to_end(env) -> None:
         "label": "Straight arm, no elbow lead: elbow never bends past 109 deg before contact",
         "cue": FAULTS["straight_arm"]["cue"]}}
     assert voice_for_swing("arm", result)["source"] == "caption"
+
+
+# ---- A quoted number must keep its measured phrase, word for word, once ---------------------
+# The phrase is the label's words from up to two before the number through up to one after its
+# unit, clipped at a clause break: "Over-rotation: hips turn 157 degrees" -> "hips turn 157 degrees".
+
+OVER157_FACTS = {"measured": "Over-rotation: hips turn 157 degrees",
+                 "coach_cue": "Turn a little less and stay balanced through the ball."}
+STANCE_SHORT_FACTS = {"measured": "Stance 80 degrees open to the shot",
+                      "coach_cue": FAULTS["stance_too_open"]["cue"]}
+
+
+def test_the_measured_phrase_word_for_word_passes() -> None:
+    assert check_worded_cue("Your hips turn 157 degrees, so turn less.", OVER157_FACTS)
+
+
+def test_a_number_without_its_measured_phrase_fails() -> None:
+    with pytest.raises(CoachError, match="out of its measured phrase"):
+        check_worded_cue("Turn 157 degrees.", OVER157_FACTS)
+
+
+def test_a_number_quoted_twice_fails() -> None:
+    with pytest.raises(CoachError, match="repeats 157"):
+        check_worded_cue("Your hips turn 157 degrees; turn 157 degrees.", OVER157_FACTS)
+
+
+def test_stance_is_80_degrees_open_now_falls_back_to_the_coach_cue(env) -> None:
+    cue = "Your stance is 80 degrees open, so close it."  # "stance is 80" isn't "stance 80"
+    with pytest.raises(CoachError, match="out of its measured phrase"):
+        check_worded_cue(cue, STANCE_SHORT_FACTS)
+    env.keys("ANTHROPIC_API_KEY")
+    env.claude.cue = cue
+    coach_cue = FAULTS["stance_too_open"]["cue"]
+    result = {"stroke": "backhand", "cue": coach_cue,
+              "fault": {"label": "Stance 80 deg open to the shot", "cue": coach_cue}}
+    assert voice_for_swing("short", result) == {"cue": coach_cue, "audioUrl": None, "source": "caption"}
+
+
+@pytest.mark.parametrize("facts, cue", [
+    # Cues existing tests expected to pass; the exact-phrase rule now rejects them (see the PR).
+    (STANCE_FACTS, "Your stance is 80 degrees open, so close it and hold the turn."),
+    (STANCE_FACTS, "Your stance is 80 deg open, so close it and hold the turn."),
+    (STANCE_FACTS, "Your stance is 80° open to the shot, so close it."),
+    (STANCE_FACTS, "An 80-degree open stance lets the hips fly, so close it."),
+    (STANCE_FACTS, "Your stance is 80 degrees open, so close it a little."),
+    (STANCE_LIVE_FACTS, "Your stance is 80 degrees open to the shot, so close it."),
+    (STANCE_LIVE_FACTS, LIVE_CUE),  # the cue Claude gave live: "it's 80 degrees open"
+    (RELEASE_FACTS, "You release -20 milliseconds before contact, so hold the cock."),
+    (RELEASE_FACTS, "You release minus 20 ms before contact, so hold the cock."),
+])
+def test_cues_the_exact_phrase_rule_now_rejects(facts: dict, cue: str) -> None:
+    with pytest.raises(CoachError, match="out of its measured phrase"):
+        check_worded_cue(cue, facts)
+
+
+def test_the_prompt_asks_for_the_measured_phrase_word_for_word_once() -> None:
+    assert "copy its measured phrase word for word, once" in live_voice.SYSTEM_PROMPT
