@@ -4,7 +4,7 @@
 // Worded as a reference check, not a claim about the ball on screen, so the court view's
 // "There is no real ball" lines stay true beside it.
 
-import { CircleCheck } from "lucide-react";
+import { Info } from "lucide-react";
 import type { BallValidation } from "./compare";
 import { look } from "./look";
 
@@ -27,7 +27,7 @@ export function ValidationBadge({ validation }: { validation: BallValidation }) 
   return (
     <div className="flex max-w-full flex-col gap-1 rounded-2xl border border-primary/40 bg-background/90 px-3.5 py-2.5 text-[13px] shadow-[0_8px_30px_rgb(0_0_0/0.35)]">
       <p className="flex items-start gap-2">
-        <CircleCheck aria-hidden className="mt-0.5 size-4 shrink-0 text-primary" />
+        <Info aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
         <span>
           Reference check against a real ball: <span className={look.value}>{predicted} m</span> predicted,{" "}
           <span className={look.value}>{tracked} m</span> tracked

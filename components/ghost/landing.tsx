@@ -36,7 +36,7 @@ export function LandingHero() {
       <div className={styles.flyingGhost} ref={ghost}><div className={styles.ghostAsset}><Image src="/ghost/ghost.svg" width={194} height={124} alt="" priority /></div></div>
     </div>
     <div className={styles.heroMessage}>
-      <p className={styles.heroEyebrow}>AI-powered squash analysis</p><h1 id="hero-title">See your swing. Find your edge.</h1>
+      <p className={styles.heroEyebrow}>Pose-tracked squash analysis</p><h1 id="hero-title">See your swing. Find your edge.</h1>
       <div className={styles.heroActions}>
         <Button nativeButton={false} role="link" render={<Link href="/demo?swing=7178110a0b06-swing-0027" />} className={styles.heroCta}>See the demo <ArrowRight aria-hidden /></Button>
         <Button nativeButton={false} role="link" variant="outline" render={<Link href="/upload" />} className={styles.heroCta}>Analyse your swing <ArrowRight aria-hidden /></Button>
