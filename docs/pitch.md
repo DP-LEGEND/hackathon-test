@@ -5,8 +5,8 @@ version (2:51 spoken), so only 1 s to spare; rehearse with a stopwatch and cut, 
 are on main ("Hear the coach"), so judge questions 3 and 4 claim them. Not on main, so not
 claimed: an Adaption fine-tune. If that changes, update the script and docs/devpost.md together.
 WRIST BEAT: the only wrist results on main are mock (the mock run gives 62.1° vs 16.5° medians).
-About 50 real shadow swings without a ball were recorded on 14 Nov and are tuned in PR #74 (not
-merged), so no number from them is said on stage. Say numbers only from the morning sample's
+About 50 real shadow swings without a ball were recorded on 14 Nov and tuned the real-data
+rolled-wrist lines (#74, merged), but no number from them is said on stage. Say numbers only from the morning sample's
 `wrist.tune` output on screen, as printed. Without that sample, use the spoken version (no number).
 -->
 
@@ -93,7 +93,7 @@ Same clicks as the runbook's beats 1–4, faster. The wrist sensor (runbook beat
 |---|---|---|---|
 | The top card, **Forehand · over-rotation** | The coach's call: *"Over-rotation: hips turn 157°"* | A real forehand, filmed in slow motion and rebuilt in 3D. Our code measured it: the hips turn 157 degrees. Too much. That's the one fix. | 13 (incl. 2 s click) |
 | **Show the ghost**, then **0.25× slow-mo** (it's already playing) | Orange swing, cyan ghost. *Turn shoulders less*, *Coach's pick* | Orange is the swing they played. Cyan is their ghost: same body, same swing, shoulders turning less. | 9 (incl. 2 s click) |
-| **Show the court** | Two paths, each *PREDICTED*: orange goes cross-court, cyan goes straight down the right wall. Front wall height 1.45 → 1.44 m | Where each ball goes: predicted, not tracked. Theirs goes cross-court; the ghost's goes straight down the wall. In the real video, the tracked ball hit the front wall at 1.17 metres; Ghost predicted 1.45 from body motion alone: 0.28 off, launch angle assumed. | 20 (incl. 2 s click) |
+| **Show the court**. No scroll: at 1440 × 900 full screen the court, both paths and the real-ball badge fit the first screen | Two paths, each *PREDICTED*: orange goes cross-court, cyan goes straight down the right wall. Front wall height 1.45 → 1.44 m (in the *Ball* card, below the first screen; the badge shows 1.45 m predicted, 1.17 m tracked) | Where each ball goes: predicted, not tracked. Theirs goes cross-court; the ghost's goes straight down the wall. In the real video, the tracked ball hit the front wall at 1.17 metres; Ghost predicted 1.45 from body motion alone: 0.28 off, launch angle assumed. | 20 (incl. 2 s click) |
 
 ### Backhand (1:16–1:34, 18 s)
 
@@ -159,7 +159,7 @@ Two sentences each. Say less rather than more, and never a number that isn't in 
 We tracked the real ball in the two demo clips: on the forehand the tracked ball hit the front wall at 1.17 metres and Ghost predicted 1.45 from body motion alone, 0.28 off, with the launch angle assumed and set from those same clips, so that's a check on two swings, not validation. The coach's four tuned rules come from a small set of labelled swings, so expect misses on new players until we label more.
 
 **2. What's measured and what's guessed?**
-Joints, angles, wrist timing and stance come from the pose; with one camera the depth is estimated, and the screen says so. Racket speed is estimated, shot direction is estimated when the wrist motion is clear and otherwise assumed straight, the launch angle is assumed, every ball path is predicted, and the screen labels each one. When a joint the camera couldn't see would decide a fault, the coach skips that fault and lists it as not checked instead of guessing, like the right elbow on the backhand.
+Joints, angles, wrist timing and stance come from the pose; with one camera the depth is estimated, and the screen says so. Racket speed is estimated, shot direction is estimated when the wrist motion is clear and otherwise assumed straight; every ghost aims the straight drive the player meant, and with mock wrist-sensor data, or real data timed at the gyro peak, both aims come from an assumed racket face; the launch angle is assumed, every ball path is predicted, and the screen labels each one. When a joint the camera couldn't see would decide a fault, the coach skips that fault and lists it as not checked instead of guessing, like the right elbow on the backhand.
 
 **3. Why Claude?**
 Measuring and picking the fix are plain code, so the coach gives the same answer every time and works offline. Claude does the one thing code does badly, turning that fix into a natural spoken sentence for the **Hear the coach** button, and it only sees the coach's fault, cue and tip, never the raw metrics.
