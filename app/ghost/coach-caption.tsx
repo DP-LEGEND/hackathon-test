@@ -1,4 +1,4 @@
-// Coach caption under the 3D view, like a subtitle: the top fault, its cue and, when the
+// The coach's call beside the 3D view (under it on phones): the top fault, its cue and, when the
 // ghost shows a different fix, the coach's ghost_note. Orange = what the player did (the
 // fault), cyan = the fix (the cue). "No fault" never claims more than the coach checked.
 // Once the coach's voice (#60) loads, its cue replaces the plain one, with a play button when
@@ -58,7 +58,8 @@ export function CoachCaptionBar({
   size: "large" | "compact";
   /**
    * Physics' chain from body to ball for the coach's fix (compare `fix.explain`); null hides it.
-   * Shown after "Physics:", outside the quoted cue, so it never reads as the coach's words.
+   * Shown after "Physics:", outside the quoted cue, so it never reads as the coach's words, and
+   * folded behind "How physics got this" so the call stays short enough to fit beside the view.
    */
   explain?: string | null;
 }) {
@@ -69,7 +70,7 @@ export function CoachCaptionBar({
   const partial = state.kind === "ready" && noFaultInWhatWasChecked(state.caption);
   const voice = state.kind === "ready" && !partial ? (state.voice ?? null) : null;
   return (
-    <div className="flex justify-center px-3 pb-3 sm:px-5 sm:pb-5">
+    <div className="flex justify-center">
       <figure
         className={cn(
           "w-full max-w-3xl rounded-[20px] border bg-background/92 text-center shadow-[0_12px_40px_rgb(0_0_0/0.4)]",
@@ -115,9 +116,14 @@ export function CoachCaptionBar({
               “{partial ? PARTIAL_CHECK_CUE : (voice?.cue ?? state.caption.cue)}”
             </blockquote>
             {explain && !partial && (
-              <p className={cn("mt-1.5 text-pretty text-muted-foreground", large ? "text-sm sm:text-base" : "text-xs sm:text-sm")}>
-                Physics: {explain}
-              </p>
+              <details className="mt-1.5 text-muted-foreground">
+                <summary className="mx-auto w-fit cursor-pointer rounded-sm text-xs underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
+                  How physics got this
+                </summary>
+                <p className={cn("mt-1.5 text-left text-pretty", large ? "text-sm sm:text-base" : "text-xs sm:text-sm")}>
+                  Physics: {explain}
+                </p>
+              </details>
             )}
             {voice && (voice.audioUrl || voice.wordedByClaude) && (
               <div className="mt-2 flex flex-wrap items-center justify-center gap-x-3 gap-y-1">

@@ -345,7 +345,7 @@ export function GhostDemo({ requestedSwing }: { requestedSwing: string | null })
           </StateCard>
         ) : (
           // As tall as the stage that replaces it, so the page doesn't jump when the swing arrives.
-          <StateCard tone="loading" role="status" className={cn("justify-center", look.stageHeight)}>
+          <StateCard tone="loading" role="status" className={cn("justify-center", look.stageView, look.stageWide)}>
             Loading swings…
           </StateCard>
         )
@@ -406,7 +406,7 @@ export function GhostDemo({ requestedSwing }: { requestedSwing: string | null })
                 {onCourt && compare?.validation && <ValidationBadge validation={compare.validation} />}
               </>
             }
-            below={
+            call={
               // Keyed by swing, so a new swing never keeps the last one's clip playing.
               <CoachCaptionBar
                 key={entry.key}

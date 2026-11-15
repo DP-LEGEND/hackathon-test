@@ -63,7 +63,7 @@ export function GhostStage({
   onViewChange,
   status,
   legend,
-  below,
+  call,
   children,
 }: {
   you: LoadedSwing | null;
@@ -79,8 +79,11 @@ export function GhostStage({
   status: StageStatus;
   /** The key to the view, top left under the view's name. */
   legend?: ReactNode;
-  /** Drawn in the stage under the 3D view, above the timeline, so it never covers the view (the coach's call). */
-  below?: ReactNode;
+  /**
+   * The coach's call: in a right-hand column beside the 3D view on wide screens, under it on
+   * phones, and never over it, so it can't hide the player or where the ball lands.
+   */
+  call?: ReactNode;
   /** Other overlays drawn over the view (the court note). */
   children?: ReactNode;
 }) {
@@ -264,9 +267,9 @@ export function GhostStage({
   return (
     <section aria-label="Swing replay" className="flex flex-col gap-3">
       <div className="overflow-hidden rounded-[24px] border bg-(--media)">
-        {/* The 3D view takes what `below` (the coach's call) leaves of the stage's height. */}
-        <div className={cn("flex flex-col", look.stageHeight)}>
-          <div className="relative min-h-60 flex-1">
+        {/* Below lg the call sits under the view; from lg up it's a column beside it, at the stage's height. */}
+        <div className={cn("flex flex-col lg:flex-row", look.stageWide)}>
+          <div className={cn("relative lg:h-auto lg:min-w-0 lg:flex-1", look.stageView)}>
             <div
               ref={viewportRef}
               role="img"
@@ -309,7 +312,12 @@ export function GhostStage({
             )}
             {ready && !error && children}
           </div>
-          {ready && !error && below}
+          {ready && !error && call && (
+            // From lg up: centred in its column while it fits, scrolling from the top when it doesn't.
+            <div className="px-3 pb-3 sm:px-5 sm:pb-5 lg:flex lg:w-[26rem] lg:shrink-0 lg:flex-col lg:overflow-y-auto lg:py-5 lg:pr-5 lg:pl-0">
+              <div className="lg:my-auto">{call}</div>
+            </div>
+          )}
         </div>
 
         <div className="flex flex-col gap-3 border-t bg-(--panel) px-3 py-3 sm:px-5 sm:py-4">
