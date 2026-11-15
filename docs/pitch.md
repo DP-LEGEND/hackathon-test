@@ -140,7 +140,7 @@ Two sentences each. Say less rather than more, and never a number that isn't in 
 On the two swings we checked against video, the predicted front-wall height landed within about 0.1 to 0.3 metres, but the launch angle is assumed and we set it from those same clips, so that's a sanity check, not validation. The coach's four tuned rules come from a small set of labelled swings, so expect misses on new players until we label more.
 
 **2. What's measured and what's guessed?**
-Joints, angles, wrist timing and stance are measured from the pose; racket speed and shot direction are estimated, the launch angle is assumed, every ball path is predicted, and the screen labels each one. When a joint the camera couldn't see would decide a fault, the coach skips that fault and lists it as not checked instead of guessing, like the right elbow on the backhand.
+Joints, angles, wrist timing and stance come from the pose; with one camera the depth is estimated, and the screen says so. Racket speed is estimated, shot direction is estimated when the wrist motion is clear and otherwise assumed straight, the launch angle is assumed, every ball path is predicted, and the screen labels each one. When a joint the camera couldn't see would decide a fault, the coach skips that fault and lists it as not checked instead of guessing, like the right elbow on the backhand.
 
 **3. Why Claude?**
 Measuring and picking the fix are plain code, so the coach gives the same answer every time and works offline. Claude does the one thing code does badly, turning that fix into a natural spoken sentence for the **Hear the coach** button, and it only sees the coach's fault, cue and tip, never the raw metrics.
