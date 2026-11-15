@@ -17,8 +17,9 @@ export const metadata: Metadata = {
 export default function GhostPage() {
   return (
     <main className="dark flex flex-1 flex-col bg-background text-foreground">
-      {/* Full width up to the site header's 1600 px, with its 64 px edges from lg up, so the 3D view grows with the window. */}
-      <div className="mx-auto flex w-full max-w-[1600px] flex-1 flex-col gap-6 px-4 py-6 sm:px-6 lg:px-16 lg:py-4">
+      {/* Full width up to the site header's 1600 px, with its 64 px edges from lg up, so the 3D view grows with the window.
+          No top padding: the site shell's --site-page-top sets the gap below the header on every page. */}
+      <div className="mx-auto flex w-full max-w-[1600px] flex-1 flex-col gap-6 px-4 pb-6 sm:px-6 lg:px-16 lg:pb-4">
         <header className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
           <div className="flex flex-col gap-1">
             <p className="text-sm font-semibold tracking-[0.14em] text-muted-foreground uppercase">Ghost</p>
