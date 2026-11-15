@@ -1,12 +1,15 @@
-// Explicit live check: node tests/upload-live.mjs C:\clips\a-squash-swing.mov
+// Explicit live check: node tests/upload-live.mjs C:\clips\a-squash-swing.mov [auto|1|4|8]
 // Processes one real clip through the local service. Never commit the clip or generated data.
 import assert from 'node:assert/strict';
 import { mkdir, stat, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { basename, resolve } from 'node:path';
 import { chromium, expect } from '@playwright/test';
 
 if(!process.argv[2]) throw new Error('Supply the absolute path to an authorized real squash clip outside this repository.');
 const clip=resolve(process.argv[2]);
+const slowdownValue=process.argv[3] || 'auto';
+assert.ok(['auto','1','4','8'].includes(slowdownValue),'Slowdown must be auto, 1, 4 or 8');
+const slowdownLabel=slowdownValue==='auto'?'Auto':`${slowdownValue}×`;
 assert.ok((await stat(clip)).isFile(),'Clip exists');
 const baseURL=process.env.GHOST_TEST_URL || 'http://localhost:3000';
 const output='build/browser-tests/design-review/shell-upload/live';
@@ -25,25 +28,27 @@ try {
     await slowdown.locator('label').filter({hasText:'1×'}).click();
     await expect(page.getByText('Normal-speed video, such as 60 fps.')).toBeVisible();
   }).toPass({timeout:15000});
-  await slowdown.locator('label').filter({hasText:'Auto'}).click();
-  await expect(page.getByText('Auto reads the clip’s timing. Slow-motion clips often need it set.')).toBeVisible();
+  await slowdown.locator('label').filter({hasText:new RegExp(`^${slowdownLabel}$`)}).click();
+  await expect(slowdown.getByRole('radio',{name:slowdownLabel,exact:true})).toBeChecked();
   const chooser=page.waitForEvent('filechooser');
   await page.getByRole('button',{name:'Choose a video'}).click();
   await (await chooser).setFiles(clip);
   await expect(page.getByRole('button',{name:'Build my ghost'})).toBeEnabled();
-  for(const name of ['Hitting hand','Stroke','Slowdown']) await expect(page.getByRole('radiogroup',{name}).getByRole('radio',{name:'Auto',exact:true})).toBeChecked();
+  for(const name of ['Hitting hand','Stroke']) await expect(page.getByRole('radiogroup',{name}).getByRole('radio',{name:'Auto',exact:true})).toBeChecked();
+  await expect(slowdown.getByRole('radio',{name:slowdownLabel,exact:true})).toBeChecked();
   const responsePromise=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/process' && r.request().method()==='POST',{timeout:660000});
   void responsePromise.catch(()=>{});
-  console.log('Submitting the supplied real clip with Auto settings.');
+  console.log(`Submitting ${basename(clip)} with Slowdown ${slowdownLabel}.`);
   await page.getByRole('button',{name:'Build my ghost'}).click();
   console.log('Submission started; waiting for the pipeline response.');
   const response=await responsePromise;
   const body=await response.json();
-  result={passed:false,status:response.status(),elapsedSeconds:Math.round((Date.now()-started)/1000),swingId:body.swingId ?? null,detail:body.detail ?? body.error ?? null};
+  result={passed:false,clip:basename(clip),slowdown:slowdownValue,status:response.status(),elapsedSeconds:Math.round((Date.now()-started)/1000),swingId:body.swingId ?? null,detail:body.detail ?? body.error ?? null};
   assert.equal(response.status(),201,JSON.stringify(result));
   assert.ok(body.swingId,'Service returned a saved swing');
   await expect(page).toHaveURL(new RegExp(`/ghost\\?swing=${body.swingId}`),{timeout:30000});
   await expect(page.getByRole('button',{name:'Show the ghost',exact:true})).toBeVisible({timeout:60000});
+  await expect(page.locator('blockquote')).toBeVisible();
   await expect(page.locator('canvas')).toHaveCount(1);
   await page.getByRole('button',{name:'Show the ghost',exact:true}).click();
   await page.getByRole('button',{name:'Show the court',exact:true}).click();
