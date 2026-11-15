@@ -177,11 +177,20 @@ Then, only if the morning wrist sample is ready (pre-flight step 6), print it la
 ```
 cd ~/hackathon-demo/services
 ```
+
+Edit the path to the morning `wrist_metrics.json` and the run name in the next two lines before you press Enter on each:
+
+```
+WRIST_JSON=~/path/to/morning/wrist_metrics.json
+```
+```
+RUN=your_run_name
+```
 ```
 clear
 ```
 ```
-~/ghost-env/bin/python -m wrist.tune <morning wrist_metrics.json> ../data/labels/labels.csv --run <run>
+~/ghost-env/bin/python -m wrist.tune "$WRIST_JSON" ../data/labels/labels.csv --run "$RUN"
 ```
 
 Beat 4 shows this tab only if **all three** hold. Otherwise beat 4 is spoken and this tab stays hidden:
@@ -238,11 +247,11 @@ As in `docs/pitch.md`, this beat now runs between beats 2 and 3. There's no wris
 
 | Click | Screen shows | PRESENTER says |
 |---|---|---|
-| Switch to terminal tab 3 | The morning `wrist.tune` output: `roll_change_abs_deg (deg)`, the normal and rolled medians, the in-sample line | The camera can't see wrist roll — it says so on screen. So we strapped a phone to the forearm. It's an estimate from one session: normal backhands turned [normal median]° through contact, rolled ones [rolled median]°, and every swing was sorted correctly. *(Read both medians exactly as printed. Say "estimate". Don't subtract them out loud. Only say "every swing sorted correctly" if the in-sample line shows 100% of rolled and 0% of normal.)* |
+| Switch to terminal tab 3 | The morning `wrist.tune` output: `roll_change_abs_deg (deg)`, the normal and rolled medians, the in-sample line | The camera can't see wrist roll, which is why the coach couldn't check it. So we strapped a phone to the forearm. It's an estimate from one session: normal backhands turned [normal median]° through contact, rolled ones [rolled median]°, and every swing was sorted correctly. *(Read both medians exactly as printed. Say "estimate". Don't subtract them out loud. Only say "every swing sorted correctly" if the in-sample line shows 100% of rolled and 0% of normal.)* |
 
 **Otherwise, including whenever tab 3 prints *MOCK DATA*, don't show the tab** (13 s, 1:36–1:49). Switch nothing and say no number:
 
-> The camera can't see wrist roll — it says so on screen. So we strapped a phone to the forearm to measure it. So far we've only tested that on mock data.
+> The camera can't see wrist roll, which is why the coach couldn't check it. So we strapped a phone to the forearm to measure it. We've tried it on real practice swings, but the numbers aren't solid enough to quote yet.
 
 Then go straight on to beat 3. After the spoken version it starts at 1:49, and every later time is 10 s earlier.
 
