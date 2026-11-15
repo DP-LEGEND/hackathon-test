@@ -209,10 +209,38 @@ def test_a_real_hit_is_wrist_checked_with_gyro_peak_timing_and_not_with_impact_t
         entry.update(mock=False, roll_change_abs_deg=roll)  # a real forearm's rolled roll
         result = coach_swing({**sample, "wrist": entry}, stroke)
         fired = [result["fault"]["id"], *result["other_faults"]] if result["fault"] else []
+        line = mss.rolled_wrist_line(result, stroke)
         if timing == "gyro-peak":
             assert "rolled_wrist" in fired and "rolled_wrist" not in result["not_measured"]
+            assert line.startswith(f"rolled_wrist: checked, ROLLED, past the real {stroke} line: forearm roll {roll:.1f}")
         else:
             assert "rolled_wrist" not in fired and result["disabled_faults"]["rolled_wrist"] == NOT_GYRO_PEAK
+            assert line == f"rolled_wrist: NOT CHECKED, so don't quote a wrist call: {NOT_GYRO_PEAK}"
+
+
+def test_the_rolled_wrist_line_says_checked_and_not_rolled_and_names_the_line(mss, mock_session):
+    """The 14 Nov dry run: a backhand at 117.7 deg, under the real 124.3 line. And mock data says MOCK."""
+    import json
+    from coach.agent import coach_swing
+    rec, sync, sid = mock_session
+    sample = json.loads((SCRIPT.parents[1] / "data" / "samples" / "swing_sample.json").read_text())
+    entry = dict(mss.wrist_for_sample(rec, sync, "y", sid, None)[0]["swings"][sid])
+    real = coach_swing({**sample, "wrist": {**entry, "mock": False, "roll_change_abs_deg": 117.7}}, "backhand")
+    assert mss.rolled_wrist_line(real, "backhand").startswith(
+        "rolled_wrist: checked, not rolled, under the real backhand line: forearm roll 117.7 deg vs 124.3 deg (ESTIMATE")
+    mock = coach_swing({**sample, "wrist": {**entry, "mock": True, "roll_change_abs_deg": 62.0}}, "backhand")
+    assert mss.rolled_wrist_line(mock, "backhand").startswith(
+        "rolled_wrist: checked, ROLLED, past the MOCK line: forearm roll 62.0 deg vs 39.2 deg")
+    none = coach_swing(sample, "backhand")
+    assert mss.rolled_wrist_line(none, "backhand").startswith("rolled_wrist: NOT CHECKED")
+
+
+def test_the_open_line_names_the_folder_whose_web_app_lists_the_sample(mss, tmp_path):
+    swings = tmp_path / "checkout" / "public" / "swings"
+    assert mss.open_line(swings, "s1") == (f"open: /ghost?swing=s1 on the web app run from {tmp_path / 'checkout'} "
+                                           "(Wrist sensor panel on the coach's call step)")
+    other = mss.open_line(tmp_path / "dryrun", "s1")
+    assert "no web app lists this sample" in other and other.endswith(f"--swings-dir {tmp_path / 'dryrun'}")
 
 
 def test_the_cli_defaults_to_gyro_peak_timing(mss, tmp_path, monkeypatch):

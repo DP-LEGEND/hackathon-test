@@ -101,7 +101,7 @@ sys.path.insert(0, str(REPO / "services"))
 import numpy as np  # noqa: E402
 
 from coach.agent import coach_swing  # noqa: E402
-from coach.faults import WRIST_MOCK, detect_faults, measure_swing  # noqa: E402
+from coach.faults import MOCK_ROLLED_WRIST, THRESHOLDS, WRIST_MOCK, detect_faults, measure_swing  # noqa: E402
 from physics.compare import compare  # noqa: E402
 from physics.ghost import FIXES  # noqa: E402
 from physics.skeleton import ARM, L_SH, R_SH  # noqa: E402
@@ -513,6 +513,37 @@ def mock_rule_warnings(faults: list[dict], sensor_is_mock: bool) -> list[str]:
             for f in faults if f.get("source") == WRIST_MOCK]
 
 
+def rolled_wrist_line(coach: dict, stroke: str) -> str:
+    """One line saying what the coach did with rolled_wrist: checked (rolled or not, against which
+    line) or not checked (and why). The line to read before using a real sample."""
+    m = coach.get("metrics") or {}
+    roll = m.get("forearm_roll_deg")
+    why = ((coach.get("disabled_faults") or {}).get("rolled_wrist")
+           or ("rolled_wrist" in (coach.get("not_measured") or []) and (m.get("wrist_sensor_skipped")
+                                                                        or "no usable wrist-sensor entry")))
+    if why or not isinstance(roll, (int, float)) or not math.isfinite(roll):
+        return f"rolled_wrist: NOT CHECKED, so don't quote a wrist call: {why or 'no forearm roll'}"
+    mock = m.get("wrist_sensor") == "mock sensor"
+    rule = MOCK_ROLLED_WRIST if mock else THRESHOLDS[stroke]["rolled_wrist"]
+    fired = {f["id"] for f in coach.get("faults") or []} | set(coach.get("other_faults") or [])
+    if isinstance(coach.get("fault"), dict):
+        fired.add(coach["fault"]["id"])
+    verdict = "ROLLED, past" if "rolled_wrist" in fired else "not rolled, under"
+    line = "the MOCK line" if mock else f"the real {stroke} line"
+    return (f"rolled_wrist: checked, {verdict} {line}: forearm roll {roll:.1f} deg vs {rule['threshold']:g} deg "
+            f"({rule['source']})")
+
+
+def open_line(out_dir: Path, sample_id: str) -> str:
+    """Where to see the sample: /ghost lists only the public/swings of the folder its web app runs from."""
+    out = out_dir.resolve()
+    if out.name == "swings" and out.parent.name == "public":
+        return (f"open: /ghost?swing={sample_id} on the web app run from {out.parent.parent} "
+                "(Wrist sensor panel on the coach's call step)")
+    return (f"{out} isn't a public/swings folder, so no web app lists this sample. Check its files with: "
+            f"python scripts/demo_smoke.py --swings-dir {out}")
+
+
 def shadow_contact_warning(shadow: bool, contact_method: str | None) -> str | None:
     """--shadow says there was no ball, but the pipeline timed contact from a sound: it wasn't the ball."""
     if shadow and contact_method == "audio-transient":
@@ -793,6 +824,7 @@ def make_sample(args: argparse.Namespace) -> int:
             fixes[fix] = row
         print(f"coach: fault {(coach.get('fault') or {}).get('id') if isinstance(coach.get('fault'), dict) else coach.get('fault')}; "
               f"all faults {[f['id'] for f in coach['faults']]}; ghosts {len(compares)}/{len(fixes)}")
+        print(rolled_wrist_line(coach, stroke))
 
         # 6. files: checked with the browser's parsers before anything is written
         round_swing(swing)
@@ -846,7 +878,7 @@ def make_sample(args: argparse.Namespace) -> int:
 
     print(f"\nwrote {len(text)} files to {out_dir} and {'replaced' if existing is not None else 'appended'} "
           f"catalogue entry {sample_id!r} (other samples and defaultSwing unchanged)")
-    print(f"open: http://localhost:3000/ghost?swing={sample_id}  (Wrist sensor panel on the coach's call step)")
+    print(open_line(out_dir, sample_id))
     return 0
 
 
