@@ -21,6 +21,10 @@ Gates: don't trust a list of PRs here. The morning of recording, run `git log` o
 - Closest product: SwingVision (tennis and pickleball, tracks shot speed, depth and accuracy;
   no squash found, web search 15 Nov).
 - Adaption: if the Qwen3.5-4B run beats 66%, update this file and docs/devpost.md together.
+- Phones caption (upload row): the in-app upload of a second angle or a sensor file is #107,
+  still open, and it also needs Dev's `/process/multi` route, which isn't on main either. Keep
+  the caption's *"in progress"* line until both are on main and a two-file upload works on the
+  demo Mac. The run itself is one phone either way.
 -->
 
 # Ghost: demo video script (1:55)
@@ -51,6 +55,7 @@ This decides the voiceover and the small caption chip on each step. There is no 
 | Step | How it's done | Chip |
 |---|---|---|
 | Upload: swing, slow motion, hand, stroke, 3D skeleton | Automated, live | AUTOMATED |
+| Phones 2 and 3: a second angle, a forearm phone | Named in the upload row's caption, not run in this video. On main they run from the command line (the pipeline's two-camera mode, `wrist.run`). Uploading them in the app is in progress (#107) | IN PROGRESS (in the caption) |
 | The coach's call, *"Over-rotation: hips turn 157°"* | Automated: code measures and picks the fix | AUTOMATED |
 | Claude's wording and the voice | Automated: Claude words the cue, code checks it, ElevenLabs speaks it. Needs both keys and the Mac online | AUTOMATED |
 | Ask the coach (2a, gated) | Live: a real-time ElevenLabs voice agent answers Aryan's spoken "Why?". Its numbers come only from Ghost's tools (`get_coach_call`, `get_swing_metrics`, `get_ghost_result`, `simulate_fix`), and the answer is shown in the panel's transcript | AUTOMATED |
@@ -79,7 +84,7 @@ Use this version (A) only if the live call reads exactly *"Over-rotation: hips t
 
 | Time | Screen | Voiceover |
 |---|---|---|
-| 0:15–0:27 | `/upload`: **Choose a video** (the one-swing hero clip). **Hitting hand**, **Stroke** and **Slowdown** on **Auto**, then **Build my ghost**. The progress panel (*Uploading your clip → Finding your swing… → Measuring… → Building your ghost…*) sped up, captioned *"[k]x · real run time [N] s"*. It opens `/ghost` at the coach's call. Chip: AUTOMATED. | *We upload that one swing. From here it runs by itself: it finds the swing, the hand, the stroke, and every joint in 3D.* |
+| 0:15–0:27 | `/upload`: **Choose a video** (the one-swing hero clip). **Hitting hand**, **Stroke** and **Slowdown** on **Auto**, then **Build my ghost**. The progress panel (*Uploading your clip → Finding your swing… → Measuring… → Building your ghost…*) sped up, captioned *"[k]x · real run time [N] s"*. It opens `/ghost` at the coach's call. Chip: AUTOMATED. **Phones caption** for the whole row, one line each: *"1 phone on a tripod: a 3D swing, depth estimated"* · *"+ a second angle: triangulated depth, synced on the ball-hit sound"* · *"+ a forearm phone: wrist roll, and racket-face aim (ASSUMED face model)"*. Under it: *"Adding phones 2 and 3 in the app: in progress"* (see the note at the top). | *One phone on a tripod gives a 3D swing, depth estimated. A second angle triangulates depth. A forearm phone adds wrist roll and racket-face aim.* |
 | 0:27–0:39 | **The coach's call:** *"Over-rotation: hips turn 157°"*. A few seconds later the cue changes to Claude's wording, *"worded by Claude"*. Click **Hear the coach**. | *The coach's call: hips turn 157 degrees, too much. Code measured that. Claude words the fix, code checks every number, and ElevenLabs speaks it.* |
 | 0:39–0:45 | Hold the frame. **The ElevenLabs audio plays on its own**, with no voiceover. Fade it out at 0:45 if it runs longer. | *(the coach's voice)* |
 | 0:45–0:58 | **Seam caption, 3 s:** *"Same swing, saved copy: adds the hit spot measured from the court lines (offline, not in the upload yet)"*. Then the saved hero forehand, **The ghost** step, **Side by side**, **0.25× slow-mo**, then **Contact**. Chip: AUTOMATED. | *Same swing, saved copy, with its hit spot measured offline. Orange is Aryan. Cyan is Aryan's ghost: same body, turning less.* |
@@ -203,11 +208,12 @@ Upload the shot-2 clips into a separate `GHOST_SWINGS_DIR`, never `~/ghost-stage
   git -C ~/hackathon-demo fetch origin
   ```
   ```
-  git -C ~/hackathon-demo log --oneline origin/main | grep -E "pull request #(85|86|94) "
+  git -C ~/hackathon-demo log --oneline origin/main | grep -E "pull request #(85|86|94|107) "
   ```
   - **#86:** already merged.
   - **#85:** needed for the real-ball row. The hero court step should then show the badge *"Reference check against a real ball: 1.45 m predicted, 1.17 m tracked"*.
   - **#94:** needed for the Ask beat.
+  - **#107:** the in-app upload of phones 2 and 3. Until it's merged, and Dev's `/process/multi` route with it, the phones caption keeps *"Adding phones 2 and 3 in the app: in progress"*.
 
   If a needed line is missing, follow *If the gates aren't met*.
 - [ ] Make the one-swing hero clip from IMG_2115. Ask Dev for the safest cut: sharing can change the frame rate, and the hit sound must survive. Rehearse its upload: the call must read exactly *"Over-rotation: hips turn 157°"*. Otherwise use version B. If Auto picks the wrong speed, set **Slowdown** by hand.
@@ -240,6 +246,7 @@ Upload the shot-2 clips into a separate `GHOST_SWINGS_DIR`, never `~/ghost-stage
 **Before you upload**
 - [ ] The cut is 1:55, and never past 2:00. No logo, title or end card, and no music.
 - [ ] Every sped-up part shows its speed and real run time. The seam caption is on screen for at least 3 s.
+- [ ] The phones caption shows *ASSUMED face model*, and its *in progress* line unless the #107 gate above is met.
 - [ ] Every number in the voiceover is on screen at that moment. *PREDICTED* is visible on both ball paths.
 - [ ] Ask beat: the caption *"Real-time ElevenLabs voice agent: numbers only from Ghost's tools"* stays up for the whole beat, and every number the agent says is in the transcript on screen.
 - [ ] Burn in the captions: judges often watch muted.
