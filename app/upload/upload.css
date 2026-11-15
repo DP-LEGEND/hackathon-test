@@ -12,6 +12,15 @@
 .upload-selected > div:first-child { width: 100%; max-height: 260px; }
 .upload-selected [data-slot=button] { border-radius: 999px; min-height: 44px; padding: 10px 18px; }
 .upload-tips { line-height: 1.6; padding: 0 4px; }
+.upload-extras { gap: 20px; }
+.upload-extra-zone { display: flex; align-items: center; gap: 14px; padding: 12px 12px 12px 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--background); transition: background-color .2s, border-color .2s; }
+.upload-extra-empty { border-style: dashed; }
+.upload-extra-zone [data-slot=button] { flex-shrink: 0; min-height: 44px; border-radius: 999px; padding: 10px 18px; }
+.upload-advanced summary { width: fit-content; padding: 12px 0; cursor: pointer; font-size: 13px; color: var(--muted-foreground); }
+.upload-advanced summary:hover { color: var(--foreground); }
+.upload-advanced summary:focus-visible { outline: 2px solid var(--ring); outline-offset: 4px; border-radius: 4px; }
+.upload-page .upload-offset { max-width: 10rem; min-height: 44px; }
+.upload-warnings { border-top: 1px solid var(--border); padding-top: 14px; }
 .upload-settings { gap: 24px; min-height: 340px; }
 .upload-settings h2 { font-size: 20px; }
 .upload-settings > div:first-child { gap: 10px; }
@@ -52,6 +61,7 @@
   .upload-flow { gap: 24px; }
   .upload-clip-card, .upload-settings { padding: 20px; border-radius: 20px; }
   .upload-dropzone { padding: 20px 12px; min-height: 246px; }
+  .upload-extra-zone { flex-wrap: wrap; }
   .upload-selected { flex-direction: column; align-items: stretch; }
   .upload-selected > div:first-child { width: 100%; }
   .upload-setting { grid-template-columns: 1fr; }
