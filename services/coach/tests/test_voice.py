@@ -57,3 +57,61 @@ def test_network_failure_is_a_voice_error(monkeypatch: pytest.MonkeyPatch, fake_
 
 def test_default_voice_is_free_plan_voice() -> None:
     assert voice.DEFAULT_VOICE_ID == "JBFqnCBsd6RMkjVDRZzb"  # "George"; "Rachel" 402s on free plans
+
+
+# ---- The ElevenLabs HTTPS call trusts certifi's CA bundle ---------------------------------
+# On the python.org macOS Python the system CA store is empty until "Install Certificates" is
+# run, so the call failed certificate checks and reported "Could not reach ElevenLabs".
+
+def test_ssl_context_is_built_with_certifis_ca_bundle(monkeypatch: pytest.MonkeyPatch) -> None:
+    import certifi
+
+    seen: dict = {}
+
+    def fake_context(*args, **kwargs):
+        seen.update(kwargs)
+        return "context"
+
+    monkeypatch.setattr(voice.ssl, "create_default_context", fake_context)
+    assert voice._ssl_context() == "context"
+    assert seen == {"cafile": certifi.where()}
+
+
+def test_the_elevenlabs_request_uses_that_context(monkeypatch: pytest.MonkeyPatch, fake_key: str) -> None:
+    seen: dict = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self) -> bytes:
+            return b"ID3fake"
+
+    def urlopen(request, **kwargs):
+        seen.update(kwargs)
+        return Response()
+
+    monkeypatch.setattr(voice, "_ssl_context", lambda: "certifi-context")
+    monkeypatch.setattr(voice.urllib.request, "urlopen", urlopen)
+    assert voice.synthesize("Close your stance.") == b"ID3fake"
+    assert seen["context"] == "certifi-context"
+
+
+def test_without_certifi_the_system_store_is_used(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict = {}
+
+    def fake_context(*args, **kwargs):
+        seen["kwargs"] = kwargs
+        return "default"
+
+    monkeypatch.setattr(voice, "certifi", None)
+    monkeypatch.setattr(voice.ssl, "create_default_context", fake_context)
+    assert voice._ssl_context() == "default" and seen["kwargs"] == {}
+
+
+def test_the_real_context_loads_certifis_certificates() -> None:
+    context = voice._ssl_context()
+    assert context.verify_mode.name == "CERT_REQUIRED" and context.cert_store_stats()["x509_ca"] > 0
