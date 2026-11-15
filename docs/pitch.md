@@ -101,7 +101,7 @@ Mark it **ESTIMATE (sensor)**. The coach's call above already lists the wrist as
 
 | OPERATOR clicks | On screen | PRESENTER says | s |
 |---|---|---|---|
-| Switch to browser tab 2 | The new swing at the coach's call: *"Reading the coach's call…"*, then the call, or *"No fault found"* or *"No fault found in what was checked"* (see below) | This one we filmed today, on one phone. Slow motion, hand and stroke are detected automatically, and the coach measures it live. *(Read the caption exactly as shown.)* | 15 (incl. 6 s to read the caption) |
+| Switch to browser tab 2 *(if it says "Your ghost is ready." but hasn't moved on, click **Open it in Ghost**)* | The new swing at the coach's call: *"Reading the coach's call…"*, then the call, or *"No fault found"* or *"No fault found in what was checked"* (see below) | This one we filmed today, on one phone. Slow motion, hand and stroke are detected automatically, and the coach measures it live. *(Read the caption exactly as shown.)* | 15 (incl. 6 s to read the caption) |
 | If the coach named a fault: **Show the ghost** | *"Making the … ghost…"*, then the ghost and its fix | *(Say nothing yet; look at the badge.)* | |
 | If the fix shows the badge *Coach's pick*: **Show the court** | Both *PREDICTED* paths | And there's their ghost, computed just now. | 7 (incl. 4 s loading) |
 
