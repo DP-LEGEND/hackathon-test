@@ -25,9 +25,10 @@ they become ready automatically once FIXES has them. firm_wrist isn't planned ye
 
 rolled_wrist is the one fault the camera can't see: it reads forearm roll from a phone
 strapped to the forearm (services/wrist, coach/wrist_sensor.py) and is skipped (listed
-in not_measured) for swings without usable sensor data. The real lines were tuned with
-contact at the forearm's fastest turn ("gyro peak"), so a real swing timed any other way
-(impact spike, double tap) is not checked either: listed in not_measured and
+in not_measured) for swings without usable sensor data. Mock recordings (wrist.synth) are
+judged by MOCK_ROLLED_WRIST, never the real lines, and say MOCK. The real lines were tuned
+with contact at the forearm's fastest turn ("gyro peak"), so a real swing timed any other
+way (impact spike, double tap) is not checked either: listed in not_measured and
 disabled_faults with NOT_GYRO_PEAK, never judged and never passed.
 """
 
@@ -76,6 +77,7 @@ NOT_GYRO_PEAK = "threshold tuned on gyro-peak-timed practice swings; not checked
 # The MOCK rule, for synthetic sessions only (wrist.synth): what python -m wrist.tune picks on
 # the mock run, 5 normal (16.5 deg) vs 5 rolled (62.0 deg), with the gyro-integral roll
 # (feat/wrist-shadow). Not used on real swings: the synthetic forearm rolls far less.
+# detect_faults uses it for mock sensor data (wrist_sensor == "mock sensor").
 MOCK_ROLLED_WRIST: dict[str, Any] = {"measurement": "forearm_roll_deg", "threshold": 39.2,
                                      "severe_at": 62.0, "target": 16.5, "source": WRIST_MOCK}
 
@@ -365,6 +367,8 @@ def detect_faults(swing: dict, stroke: Optional[Stroke] = None, fps_real: Option
     m = metrics if metrics is not None else measure_swing(swing, stroke, fps_real)
     found: list[Fault] = []
     for fault_id, rule in THRESHOLDS[m["stroke"]].items():
+        if fault_id == "rolled_wrist" and m.get("wrist_sensor") == "mock sensor":
+            rule = MOCK_ROLLED_WRIST  # synthetic forearms roll far less than real ones
         if rule.get("disabled"):
             continue  # switched off: its measurement can't tell good from faulty swings
         if (rule["measurement"] == "stance_open_deg"
