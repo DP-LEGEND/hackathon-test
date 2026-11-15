@@ -2,8 +2,10 @@
 TODO (9 AM feature freeze): these are under "In progress / demoed from branch" because they
 aren't on main yet. When each one merges, move it into the built sections and delete its line.
 - Anam avatar lines (coach/avatar.py) are on main but only run from the command line
-- Adaption: physics/synth.py writes a local adaption.jsonl; no fine-tune has been run or used yet
-- Sponsor tracks: the Adaption section is a TODO (see its comment).
+- Adaption: generator, data prep, eval and status script are on main (#78 merged).
+- Adaption win rate: the AutoScientist run on Qwen3.5-2B succeeded (15 Nov 04:30, 3 of 3 rounds):
+  66% vs the base model, below its 70% target; filled in below. If a later run beats it before
+  submission, update the model and the number (check with `python -m physics.adaption_status`).
 - Figma: before submitting, set the Figma file's share link to "anyone with the link can view", or
   judges can't open the case study.
 Delete this comment before pasting into Devpost.
@@ -92,7 +94,7 @@ These work on their own branches or from the command line and are being merged i
 
 **Anam avatar.** The coach writes the two or three short lines a talking avatar would say (`coach/avatar.py`). It runs from the command line; the web app doesn't show an avatar.
 
-**Adaption.** Training-data export ready for Adaption fine-tuning. `physics/synth.py` adds faults of known size to real swings, re-measures them, and writes labelled rows to a local `adaption.jsonl`, all marked SIMULATED. We haven't run a fine-tune yet, and nothing in Ghost uses a fine-tuned model.
+**Adaption.** A fault-injection data generator built from our own real swings, exported in Adaption's format, and fine-tuned Qwen3.5-2B with AutoScientist: 66% win rate vs the base model on Adaption's own eval, below its 70% target. The data is SIMULATED, and Ghost's live coach doesn't use the tuned model yet. See *Adaption* under *Sponsor tracks*.
 
 ## Built with
 
@@ -110,7 +112,7 @@ These work on their own branches or from the command line and are being merged i
 | **Claude Code** and **Codex** | How four people built it in parallel in one weekend |
 | **Figma** | Designing the landing page, upload page and swing view; the build follows its frames |
 
-In progress: **Anam** (avatar), see *Anam avatar* above, and **Adaption** (training-data export), see *Adaption* above.
+In progress: **Anam** (avatar), see *Anam avatar* above, and **Adaption** (AutoScientist fine-tune on our fault-injection data), see *Adaption* above.
 
 ## Sponsor tracks
 
@@ -159,12 +161,21 @@ The data, the coach's wording and the PREDICTED labels didn't change; only the d
 
 ### Adaption
 
-<!--
-TODO (Adaption): write this once a fine-tune has actually run and Ghost uses it: which model,
-trained on which rows, and what it does in the app. Until then, keep the one line below (or
-delete this heading). Never claim a fine-tune that hasn't happened.
--->
-Training-data export is ready; no fine-tune has been run yet. See *Adaption* under *In progress* above.
+We built a fault-injection data generator on 94 real swings, then fine-tuned Qwen3.5-2B on its output with AutoScientist (66% win rate vs the base model on Adaption's own eval, below its 70% target). All of it is **SIMULATED**: the faults are injected by code into real swings.
+
+- **A fault-injection data generator** (`services/physics/synth.py`). It takes a real swing, injects one fault of known size into the 3D skeleton (a more bent elbow at contact, less shoulder turn, or an earlier wrist release), then re-measures it with the same code the coach uses. Labels come from the re-measured change, not the requested one. From our 94 real swings it wrote 2,758 labelled rows.
+- **Cleaned for training** (`services/physics/adaption_prep.py`).
+  - Only the 24 swings that every label marks clean are used, so "none" really means no fault. Re-generated from those, that's 1,414 rows: 1,048 for training and 366 for testing.
+  - The answer is the fault's name, never a number, so the model can't invent measurements.
+  - Train and test are split by source swing (18 swings for training, 6 for testing), so no swing appears on both sides.
+- **Exported in Adaption's format.** The training split is 1,048 rows from 18 swings. Faults outnumber "none" (18 rows), so we repeated the "none" rows up to 343, about the size of each fault class, giving the 1,373 prompt/completion rows we uploaded in raw mode. The 366 test rows from the other 6 swings were never uploaded (the export script checks this).
+- **Fine-tuned Qwen3.5-2B with AutoScientist.** Qwen3.5-2B is a small 2-billion-parameter model; the run used LoRA and Adaption's defaults: up to 3 rounds, stopping early at a 0.7 win rate. It ran all 3 rounds, and the best came in the first. `services/physics/adaption_status.py` tracked the run.
+  - **66% win rate vs the base model on Adaption's own eval, below its 70% target.** This is Adaption's own measure, judged on evaluations it derives from our training data. It isn't accuracy on our held-out swings, so it isn't comparable with the 34% / 37% / 33% below.
+- **What the data taught us** (`services/physics/adaption_eval.py`). We scored a code rule and Claude Opus 5.5 on the same held-out swings.
+  - **The injector is reliable.** Compared with the unedited copy of the same swing, all 366 test rows, from the 6 test swings, are named correctly (366 of 366).
+  - **A player's average swing isn't a tight enough baseline.** Compared with the average of 8 to 10 of the player's clean swings, the code rule scores 34% on those 366 test rows and Claude 37% on a 200-row sample of them, against 33% for always answering the most common fault. The injected faults (median 16 to 19°, and 45 ms) are smaller than one player's own swing-to-swing spread (about 30°, and 65 to 82 ms).
+  - That tells us what the next data has to be: more clean swings per player, so the baseline gets tight enough for faults to stand out.
+- **Not in the live demo yet.** Ghost's coach is still the code-plus-Claude flow above. The aim is a small model that can name the fault without calling a large model.
 
 ## Team
 
@@ -192,3 +203,4 @@ Training-data export is ready; no fine-tune has been run yet. See *Adaption* und
 - **The retest loop.** Swing again and see how much of the gap to your ghost you closed.
 - **Two fixes at once**, for example close the stance and turn the shoulders less, now that the coach can pair them.
 - **More labelled swings**, so every fault rule is tuned on data and none use defaults.
+- **A tighter per-player baseline**: more clean swings per player, so injected faults stand out from the player's own variation and the small model has a real signal to learn.
