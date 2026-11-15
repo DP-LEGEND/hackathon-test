@@ -21,11 +21,14 @@ faulty swings' value, threshold = halfway between.
 Fix names match physics/ghost.py apply_fix. A fault is ghost_ready only if its fix
 exists in physics.ghost.FIXES today, the amount is in that edit's unit, and the
 swing allows the edit. aryan is adding close_stance, bend_elbow, turn_shoulders_less;
-they become ready automatically once FIXES has them. firm_wrist isn't planned yet.
+they become ready automatically once FIXES has them. firm_wrist (rolled_wrist's fix) is
+ready only with wrist-sensor data: its ghost lowers the forearm roll to the good median, which
+squares the racket face in physics/compare.py (physics/wrist_face.py, an assumed face model).
 
 rolled_wrist is the one fault the camera can't see: it reads forearm roll from a phone
 strapped to the forearm (services/wrist, coach/wrist_sensor.py) and is skipped (listed
-in not_measured) for swings without usable sensor data.
+in not_measured) for swings without usable sensor data. Mock recordings (wrist.synth) are
+judged by MOCK_ROLLED_WRIST, never the real lines, and say MOCK.
 """
 
 from __future__ import annotations
@@ -38,6 +41,7 @@ import numpy as np
 from physics.ghost import EDITS, FIXES
 from physics.metrics import measure, real_fps
 from physics.skeleton import L_SH, R_SH, to_array
+from physics.wrist_face import GOOD_ROLL_DEG, MOCK_GOOD_ROLL_DEG  # rolled_wrist targets = face-square roll
 from pipeline.features import swing_features
 
 from coach.measure_extra import (
@@ -67,8 +71,9 @@ WRIST_SESSION_FH = "ESTIMATE, tuned on one session (n=21 shadow forehands: 10 go
 # The MOCK rule, for synthetic sessions only (wrist.synth): what python -m wrist.tune picks on
 # the mock run, 5 normal (16.5 deg) vs 5 rolled (62.0 deg), with the gyro-integral roll
 # (feat/wrist-shadow). Not used on real swings: the synthetic forearm rolls far less.
+# detect_faults uses it for mock sensor data (wrist_sensor == "mock sensor").
 MOCK_ROLLED_WRIST: dict[str, Any] = {"measurement": "forearm_roll_deg", "threshold": 39.2,
-                                     "severe_at": 62.0, "target": 16.5, "source": WRIST_MOCK}
+                                     "severe_at": 62.0, "target": MOCK_GOOD_ROLL_DEG, "source": WRIST_MOCK}
 
 # ---- Tune here ---------------------------------------------------------------------
 THRESHOLDS: dict[str, dict[str, dict[str, Any]]] = {
@@ -104,7 +109,8 @@ THRESHOLDS: dict[str, dict[str, dict[str, Any]]] = {
         # good 119.8-144.8 deg (median 136.75, target 136.8), rolled 146.7-165.0 (median 158.8).
         # Replaces MOCK_ROLLED_WRIST (above); real forearms roll far more than the mock.
         "rolled_wrist": {"measurement": "forearm_roll_deg", "threshold": 145.75,
-                         "severe_at": 158.8, "target": 136.8, "source": WRIST_SESSION_FH},
+                         "severe_at": 158.8, "target": GOOD_ROLL_DEG["forehand"],  # 136.8
+                         "source": WRIST_SESSION_FH},
     },
     "backhand": {
         # Fastest wrist OPENING before contact; a fast cocking move never counts.
@@ -123,7 +129,8 @@ THRESHOLDS: dict[str, dict[str, dict[str, Any]]] = {
         # rolled 128.3-149.7 (median 137.3). A good forehand rolls more than a rolled
         # backhand, so each stroke needs its own line.
         "rolled_wrist": {"measurement": "forearm_roll_deg", "threshold": 124.3,
-                         "severe_at": 137.3, "target": 99.3, "source": WRIST_SESSION_BH},
+                         "severe_at": 137.3, "target": GOOD_ROLL_DEG["backhand"],  # 99.3
+                         "source": WRIST_SESSION_BH},
     },
 }
 # ------------------------------------------------------------------------------------
@@ -173,7 +180,7 @@ FAULTS: dict[str, dict[str, Any]] = {
     "early_wrist_snap": {"title": "Early wrist snap", "fix": "hold_wrist_cock", "priority": 4,
                          "cue": "Keep your wrist cocked until the racket meets the ball."},
     "rolled_wrist": {"title": "Rolled wrist", "fix": "firm_wrist", "priority": 5,
-                     "cue": "Keep your wrist firm and the racket face steady through the ball."},
+                     "cue": "Keep your wrist firm through contact."},
 }
 
 # Smallest shoulder turn the shoulder edits in physics/ghost.py can work from.
@@ -348,6 +355,8 @@ def detect_faults(swing: dict, stroke: Optional[Stroke] = None, fps_real: Option
     m = metrics if metrics is not None else measure_swing(swing, stroke, fps_real)
     found: list[Fault] = []
     for fault_id, rule in THRESHOLDS[m["stroke"]].items():
+        if fault_id == "rolled_wrist" and m.get("wrist_sensor") == "mock sensor":
+            rule = MOCK_ROLLED_WRIST  # synthetic forearms roll far less than real ones
         if rule.get("disabled"):
             continue  # switched off: its measurement can't tell good from faulty swings
         if (rule["measurement"] == "stance_open_deg"

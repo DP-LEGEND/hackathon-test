@@ -13,7 +13,10 @@ from pathlib import Path
 import pytest
 
 from coach.agent import coach_swing, main as agent_main
-from coach.faults import MOCK_SENSOR_NOTE, THRESHOLDS, WRIST_MOCK, detect_faults, measure_swing, severity
+from physics.compare import compare
+from coach.faults import (
+    MOCK_ROLLED_WRIST, MOCK_SENSOR_NOTE, THRESHOLDS, WRIST_MOCK, detect_faults, measure_swing, severity,
+)
 from coach.wrist_sensor import NO_SENSOR, attach_wrist, sensor_metrics
 from wrist.load import load_recording
 from wrist.metrics import wrist_metrics
@@ -56,7 +59,8 @@ def test_a_big_roll_fires_with_the_measured_number(sample: dict, stroke: str) ->
     assert f["value"] == value and f["unit"] == "deg" and f["threshold"] == rule["threshold"]
     assert f["severity"] == pytest.approx(severity(value, rule)) == 1.0
     assert f["label"] == f"Rolled wrist: forearm rolls {value:.0f} deg through contact (wrist sensor)"
-    assert f["fix"] == "firm_wrist" and f["ghost_ready"] is False, "no ghost edit for the wrist yet"
+    assert f["fix"] == "firm_wrist" and f["ghost_ready"] is True, "the ghost squares the face (physics/wrist_face.py)"
+    assert f["cue"] == "Keep your wrist firm through contact."
     assert f["source"] == rule["source"] and f["confidence"] == "low"
     assert f["fix_amount"] == pytest.approx(round(value - rule["target"], 1))
 
@@ -119,23 +123,42 @@ def test_agent_cli_attaches_the_wrist_file(sample: dict, tmp_path: Path, monkeyp
     assert "rolled_wrist" in [result["fault"]["id"], *result["other_faults"]]
 
 
-def test_end_to_end_from_a_mock_sensor_export(sample: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_end_to_end_from_a_mock_sensor_export(sample: dict, tmp_path: Path) -> None:
     """Synthetic export -> wrist metrics -> coach: rolled swings fire, normal ones don't.
 
-    The synthetic forearm rolls far less than a real one (rolled ~62 deg vs real 128-165), so
-    it's judged by the rule wrist.tune picks on this same mock session, not the real-tuned one.
+    The synthetic forearm rolls far less than a real one (rolled ~62 deg vs real 128-165), so the
+    coach judges mock data by MOCK_ROLLED_WRIST (what wrist.tune picks on this mock session), not
+    the real-tuned lines, and the fix amount runs down to the mock good median.
     """
     truth = make_session(tmp_path)
     rec = load_recording(truth["export"])
     sync = synchronise(rec, read_contacts(truth["contacts"]), video_tap_s=truth["video_tap_s"])
     metrics, _ = wrist_metrics(rec, sync)
     mock_rule = tune(metrics, {sid: t["label"] for sid, t in truth["swings"].items()})["verdict"]["rule"]
-    assert mock_rule["source"] == WRIST_MOCK
-    monkeypatch.setitem(THRESHOLDS["backhand"], "rolled_wrist", mock_rule)
+    assert mock_rule == MOCK_ROLLED_WRIST and mock_rule["source"] == WRIST_MOCK
     for swing_id, t in truth["swings"].items():
         swing = attach_wrist({**sample, "id": swing_id}, metrics)
         f = rolled(swing)
         if t["label"] == "rolled_wrist":
             assert f is not None and f["label"].endswith(MOCK_SENSOR_NOTE), swing_id
+            assert f["source"] == WRIST_MOCK and f["threshold"] == MOCK_ROLLED_WRIST["threshold"]
+            assert f["fix_amount"] == pytest.approx(round(f["value"] - MOCK_ROLLED_WRIST["target"], 1))
         else:
             assert f is None, swing_id
+
+
+@pytest.mark.parametrize(("stroke", "roll", "mock"), [("backhand", 137.6, False), ("forehand", 157.2, False),
+                                                       ("forehand", 60.8, True)])
+def test_the_coach_amount_squares_the_face_so_the_ghost_goes_straight(sample: dict, stroke: str, roll: float,
+                                                                       mock: bool) -> None:
+    """Coach -> physics: firm_wrist at the coach's amount brings the roll to the good median."""
+    swing = {**sample, "wrist": wrist(roll, mock=mock)}
+    f = rolled(swing, stroke)
+    assert f is not None and f["fix"] == "firm_wrist" and f["ghost_ready"] is True
+    assert f["cue"] == "Keep your wrist firm through contact."
+    r = compare(swing, "firm_wrist", f["fix_amount"], side=stroke)
+    launch, face = r["assumptions"]["launch"], r["assumptions"]["face"]
+    assert launch["ghost"]["azimuth"]["value"] == 0.0 and face["ghost"]["faceDeg"] == 0.0
+    assert abs(launch["you"]["azimuth"]["value"]) == face["you"]["faceDeg"] > 0
+    assert launch["you"]["azimuth"]["label"] == ("MOCK (sensor)" if mock else "ASSUMED")
+
