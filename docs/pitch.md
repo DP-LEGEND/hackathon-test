@@ -41,7 +41,24 @@ Seconds are speaking time at 150 words a minute plus the click and loading gaps 
 **Before you start** (the runbook has the full checks):
 - **Terminal tab 1:** `cd ~/hackathon-demo/services`, then `mkdir -p ~/ghost-stage` (it must be empty), then `GHOST_SWINGS_DIR=~/ghost-stage ~/ghost-env/bin/python -m uvicorn pipeline.server:app --port 8000`
 - **Terminal tab 2:** `cd ~/hackathon-demo`, then `npm run dev`
-- **Terminal tab 3 (only if the morning sensor sample is ready):** `cd ~/hackathon-demo/services`, then `~/ghost-env/bin/python -m wrist.tune <morning wrist_metrics.json> ../data/labels/labels.csv --run <run>`, already printed. Show this tab only if **all four** hold; otherwise use the spoken wrist beat:
+- **Terminal tab 3 (only if the morning sensor sample is ready):** already printed, as in the runbook's *Tab 3*:
+  ```
+  cd ~/hackathon-demo/services
+  ```
+  Edit the path to the morning `wrist_metrics.json` and the run name in the next two lines before you press Enter on each:
+  ```
+  WRIST_JSON=~/path/to/morning/wrist_metrics.json
+  ```
+  ```
+  RUN=your_run_name
+  ```
+  ```
+  clear
+  ```
+  ```
+  ~/ghost-env/bin/python -m wrist.tune "$WRIST_JSON" ../data/labels/labels.csv --run "$RUN"
+  ```
+  Show this tab only if **all four** hold; otherwise use the spoken wrist beat:
   1. The first line does **not** say *MOCK DATA*, and it shows **at least 5 normal and 5 rolled** usable swings (wrist.tune's own minimum).
   2. There's a `roll_change_abs_deg (deg)` block with a `normal median …` line, a `rolled median …` line and an `in-sample: …` line. If it says *"roll_change_abs_deg: not measured in both groups"*, there are no medians to read.
   3. The rolled median is larger than the normal median.
