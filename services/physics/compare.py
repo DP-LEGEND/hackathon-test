@@ -797,6 +797,7 @@ def compare(swing: dict, fix_name: str, amount: float, fps_real: float | None = 
     """The swing as played next to its ghost (one fix applied), in court coordinates. Never mutates `swing`.
 
     fix_name: one of physics.ghost.FIXES, e.g. compare(swing, "straighten_elbow", 12).
+    amount: the fix's size, 0 or more (0 = your swing unchanged); the fix's name gives the direction.
     fps_real: real capture rate (120 for a 4x slow-mo clip stored at 30 fps). Default: swing["fps"].
     hand: "R" or "L". Default: the hand the pipeline recorded, else whichever wrist moves fastest.
     elevation_deg: the ASSUMED launch angle for this swing's two PREDICTED ball paths.
@@ -821,6 +822,10 @@ def compare(swing: dict, fix_name: str, amount: float, fps_real: float | None = 
         uses = [fix for fix, (edit, _) in FIXES.items() if edit == fix_name]
         tip = f" ({fix_name!r} is an edit; the fixes that use it are {', '.join(map(repr, uses))})" if uses else ""
         raise ValueError(f"unknown fix {fix_name!r}{tip}; known fixes: {', '.join(FIXES)}")
+    if float(amount) < 0:
+        # The fix's name says which way it goes (straighten, turn less...): a negative amount would
+        # reverse it while fix.explain and the legend still name it.
+        raise ValueError("amount must be 0 or more")
     if hand not in (None, "R", "L"):
         raise ValueError(f"hand must be 'R' or 'L', got {hand!r}")
     stated = intent is not _TARGET
