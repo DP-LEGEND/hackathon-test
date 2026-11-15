@@ -3,13 +3,21 @@ the Wrist sensor panel. Owner: aryan.
 
 Run from the repo root with the services Python environment active:
 
-  python scripts/make_sensor_sample.py <clip.MOV> <sensor.zip> --tap 12.40 --window 81.0 88.0 --stroke backhand
+  python scripts/make_sensor_sample.py <clip.MOV> --sheet 2:46 2:47.5     # find the first tap's frame
+  python scripts/make_sensor_sample.py <clip.MOV> <sensor.zip> --tap f4998 --window 3:16 3:22.5 --stroke backhand
 
-  --tap        Playback second (as QuickTime shows it) of the frame where the hand first lands on
-               the strapped phone, for the first tap at the start of the recording.
-  --window     Playback seconds around ONE hit, START END (at most 30 real seconds; 6-8 playback
-               seconds is plenty: about one second before contact to one after, at 4x).
+  --sheet      Only saves data/raw/sheet_<clip>_<start>-<end>.jpg: every frame from START to END
+               (at most 48, so about 1.5 playback seconds: scrub QuickTime to the second the hand
+               lands, then sheet around it), zoomed on the hands, each labelled with its playback
+               time and frame number. Needs no sensor file and writes nothing else. Pick the first
+               frame where the hand touches the phone.
+  --tap        That frame, for the first tap at the start of the recording: a frame number from
+               the sheet (f4998), playback seconds (166.6) or minutes:seconds (2:46.6).
+  --window     Playback times around ONE hit, START END, same formats (at most 30 real seconds;
+               6-8 playback seconds is plenty: about one second before contact to one after, at 4x).
   --stroke     forehand or backhand (the pipeline's guess is not trusted for a saved sample).
+
+MediaPipe's own log lines go to data/raw/pipeline_<id>.log (git-ignored), not the terminal.
 
 What it does, in order (nothing is written until every step has passed):
  1. Clock. The clip's playback seconds become real seconds: real = playback / slowdown. The
@@ -23,8 +31,10 @@ What it does, in order (nothing is written until every step has passed):
  3. Pose + physics. The window is cut from the clip (frame-accurate re-encode, sound kept for
     the pipeline's audio contact) and run through the live pipeline (pipeline.live), the same
     path as an upload: MediaPipe pose, swing detection, contact, stroke and hand.
-    CHECK THE TAP: the tool saves data/raw/tapcheck_<id>.jpg (git-ignored), the frame where
-    each sensor tap should land if --tap is right. The hand must be on the phone in every one.
+    CHECK THE TAP: the tool saves data/raw/tapcheck_<id>.jpg (git-ignored), one row per sensor
+    tap: the frame where it should land if --tap is right, and (when the pose finds the player)
+    a zoom on the hands at that frame and 3 frames earlier. The hand must be on the phone in
+    every row, and on tap 1 not yet 3 frames before. Only the later taps off = wrong --slowdown.
     Nothing in the data can catch a misread tap: a tap one swing-interval off pairs the hit with
     the neighbouring swing's impact just as neatly.
  4. Wrist. The hit's impact spike (the nearest within 300 ms of the pipeline's contact, through
@@ -60,9 +70,11 @@ stay PREDICTED; on a shadow swing (no ball) the court numbers mean nothing, and 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib.util
 import json
 import math
+import os
 import re
 import shutil
 import subprocess
@@ -77,9 +89,10 @@ sys.path.insert(0, str(REPO / "services"))
 import numpy as np  # noqa: E402
 
 from coach.agent import coach_swing  # noqa: E402
-from coach.faults import detect_faults, measure_swing  # noqa: E402
+from coach.faults import WRIST_MOCK, detect_faults, measure_swing  # noqa: E402
 from physics.compare import compare  # noqa: E402
 from physics.ghost import FIXES  # noqa: E402
+from physics.skeleton import ARM, L_SH, R_SH  # noqa: E402
 from pipeline.live import LiveOptions, process_live_clip  # noqa: E402
 from wrist.fuse import LEVER_M, attach_wrist_entries  # noqa: E402
 from wrist.impact import G  # noqa: E402
@@ -97,22 +110,66 @@ import wrist.metrics as _wm  # noqa: E402
 # while the gyro integral's SD was 5-10 deg. Commit af0b423 (feat/wrist-shadow, not merged yet)
 # makes the gyro integral the default; until then this script asks for it. Same signature, so
 # this is a no-op once that commit is in main.
-_swing_metrics, _roll_series = _wm.swing_metrics, _wm.roll_series
 GYRO_ROLL = "gyro integrated about the forearm axis"
 
 
-def _gyro_swing_metrics(rec, slerp, impact_s, axis, roll_from="gyro", gyro_bias=None):
-    m = _swing_metrics(rec, slerp, impact_s, axis, "gyro", gyro_bias)
-    if m is not None:
-        m["roll_method"] = GYRO_ROLL
-    return m
+@contextlib.contextmanager
+def gyro_roll():
+    """Inside: wrist.metrics integrates the gyro about the forearm for the roll. Restored on exit, so
+    importing this script (the tests do) never changes the roll method for anything else."""
+    swing_metrics, roll_series = _wm.swing_metrics, _wm.roll_series
+
+    def gyro_swing_metrics(rec, slerp, impact_s, axis, roll_from="gyro", gyro_bias=None):
+        m = swing_metrics(rec, slerp, impact_s, axis, "gyro", gyro_bias)
+        if m is not None:
+            m["roll_method"] = GYRO_ROLL
+        return m
+
+    def gyro_roll_series(rec, slerp, impact_s, axis, roll_from="gyro", gyro_bias=None):
+        return roll_series(rec, slerp, impact_s, axis, "gyro", gyro_bias)
+
+    _wm.swing_metrics, _wm.roll_series = gyro_swing_metrics, gyro_roll_series
+    try:
+        yield
+    finally:
+        _wm.swing_metrics, _wm.roll_series = swing_metrics, roll_series
 
 
-def _gyro_roll_series(rec, slerp, impact_s, axis, roll_from="gyro", gyro_bias=None):
-    return _roll_series(rec, slerp, impact_s, axis, "gyro", gyro_bias)
+@contextlib.contextmanager
+def native_log(path: Path):
+    """Send whatever is written to file descriptor 2 to `path` instead of the terminal: MediaPipe and
+    LiteRT's C++ logs ("Sparsity tensors may not yet be fully supported", dozens per run), which
+    buried this script's own lines. The script prints to stdout; its errors print after this exits."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    sys.stderr.flush()
+    saved = os.dup(2)
+    try:
+        with open(path, "ab") as log:
+            os.dup2(log.fileno(), 2)
+            try:
+                yield path
+            finally:
+                sys.stderr.flush()
+                os.dup2(saved, 2)
+    finally:
+        os.close(saved)
 
 
-_wm.swing_metrics, _wm.roll_series = _gyro_swing_metrics, _gyro_roll_series
+# ---- times as you read them off the video ----
+
+def playback_seconds(text: str, fps: float) -> float:
+    """A playback time: seconds ("166.6"), minutes:seconds as QuickTime shows it ("2:46.6"), or a
+    frame number as the --sheet and tap-check images label frames ("f4998" = frame 4998 / fps)."""
+    s = str(text).strip()
+    if s[:1] in ("f", "F"):
+        if not s[1:].isdigit():
+            raise SampleError(f"can't read the frame {text!r}: write it like f4998")
+        return int(s[1:]) / fps
+    m = re.fullmatch(r"(?:(\d+):)?(\d+(?:\.\d+)?)", s)
+    if not m or (m.group(1) is not None and float(m.group(2)) >= 60):
+        raise SampleError(f"can't read the time {text!r}: use seconds (166.6), minutes:seconds (2:46.6) "
+                          "or a frame number (f4998)")
+    return int(m.group(1) or 0) * 60 + float(m.group(2))
 
 # Tap detection (the same constants as the shadow-session code, services/wrist/shadow.py on
 # feat/wrist-shadow): a tap knocks at least MIN_TAP_G with the arm still; spikes closer than
@@ -180,33 +237,127 @@ def first_tap_event(rec: Recording, spikes: list) -> list[float] | None:
     return [round(tap_onset(rec, s.t, hp), 3) for s in run]
 
 
-def tap_check_image(clip: Path, tap_play: float, taps: list[float], slowdown: float, out: Path) -> list[float]:
-    """The frame at each sensor tap's predicted playback time, 3 per row: a misread --tap shows."""
+TILE_H = 360  # px: tap-check and sheet rows
+BEFORE_FRAMES = 3  # the tap check's zoom also shows this many frames earlier: on tap 1 the hand is still in the air
+MAX_SHEET_FRAMES = 48
+
+
+def hands_box(joints_px: np.ndarray, size: tuple[int, int]) -> tuple[int, int, int, int] | None:
+    """Square crop (x0, y0, x1, y1) in pixels around both wrists, at least three shoulder widths across,
+    from one frame's pose (33 x 2+ image coordinates). None if a wrist or shoulder is missing."""
+    pts = np.asarray(joints_px, dtype=float)[[L_SH, R_SH, ARM["L"]["wr"], ARM["R"]["wr"]], :2]
+    if not np.isfinite(pts).all():
+        return None
+    shoulders = float(np.linalg.norm(pts[0] - pts[1]))
+    half = max(1.5 * shoulders, 0.5 * float(np.linalg.norm(pts[2] - pts[3])) + 0.5 * shoulders, 40.0)
+    w, h = size
+    half = min(half, w / 2, h / 2)
+    cx = min(max(float(pts[2:, 0].mean()), half), w - half)
+    cy = min(max(float(pts[2:, 1].mean()), half), h - half)
+    return int(cx - half), int(cy - half), int(cx + half), int(cy + half)
+
+
+def find_hands_box(clip: Path, play_s: float, fps: float, log: Path) -> tuple[int, int, int, int] | None:
+    """hands_box from the pose (the pipeline's MediaPipe model) on the few frames around play_s."""
+    from pipeline.pose import extract_raw
+
+    try:
+        with native_log(log):
+            raw = extract_raw(str(clip), max(0.0, play_s - 3 / fps), play_s + 2 / fps)
+    except Exception as e:  # noqa: BLE001 - a zoom is a convenience: the full frames still show
+        print(f"  (no zoom on the hands: pose failed: {e})")
+        return None
+    boxes = [b for b in (hands_box(p, raw["size"]) for p in raw["img"]) if b is not None]
+    if not boxes:
+        print("  (no zoom on the hands: pose found no player there; the full frames still show)")
+    return boxes[len(boxes) // 2] if boxes else None
+
+
+def _label(img: np.ndarray, text: str) -> np.ndarray:
+    import cv2
+
+    for colour, width in (((0, 0, 0), 5), ((61, 138, 255), 2)):  # dark outline, then the orange text
+        cv2.putText(img, text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, colour, width, cv2.LINE_AA)
+    return img
+
+
+def _tile(img: np.ndarray, box: tuple[int, int, int, int] | None = None) -> np.ndarray:
+    """One row tile, TILE_H tall: the whole frame, or the box zoomed to a square."""
+    import cv2
+
+    if box is not None:
+        x0, y0, x1, y1 = box
+        return cv2.resize(img[y0:y1, x0:x1], (TILE_H, TILE_H), interpolation=cv2.INTER_LINEAR)
+    h, w = img.shape[:2]
+    return cv2.resize(img, (int(round(w * TILE_H / h)), TILE_H), interpolation=cv2.INTER_AREA)
+
+
+def _read(cap, frame: int) -> np.ndarray | None:
+    import cv2
+
+    if frame < 0:
+        return None
+    cap.set(cv2.CAP_PROP_POS_FRAMES, frame)
+    ok, img = cap.read()
+    return img if ok else None
+
+
+def _grid(tiles: list[np.ndarray], cols: int) -> np.ndarray:
+    tiles = tiles + [np.zeros_like(tiles[0])] * (-len(tiles) % cols)
+    return np.vstack([np.hstack(tiles[i:i + cols]) for i in range(0, len(tiles), cols)])
+
+
+def tap_check_image(clip: Path, tap_play: float, taps: list[float], slowdown: float, out: Path,
+                    box: tuple[int, int, int, int] | None = None) -> list[float]:
+    """For each sensor tap, the frame at its predicted playback time: the whole frame, and with `box`
+    (find_hands_box) a zoom on the hands at that frame and BEFORE_FRAMES earlier. A misread --tap,
+    or a wrong --slowdown (taps 2+ drift off the phone), shows."""
     import cv2
 
     times = [tap_play + (t - taps[0]) * slowdown for t in taps]
     cap = cv2.VideoCapture(str(clip))
     fps = cap.get(cv2.CAP_PROP_FPS)
-    tiles = []
+    rows = []
     for k, play_s in enumerate(times):
-        cap.set(cv2.CAP_PROP_POS_FRAMES, int(round(play_s * fps)))
-        ok, frame = cap.read()
-        if not ok:
+        i = int(round(play_s * fps))
+        img = _read(cap, i)
+        if img is None:
             continue
-        h, w = frame.shape[:2]
-        tile = cv2.resize(frame, (640, int(round(h * 640 / w))), interpolation=cv2.INTER_AREA)
-        cv2.putText(tile, f"sensor tap {k + 1}: video {play_s:.3f} s", (12, 34), cv2.FONT_HERSHEY_SIMPLEX, 0.9,
-                    (61, 138, 255), 2, cv2.LINE_AA)
-        tiles.append(tile)
+        row = [_label(_tile(img), f"sensor tap {k + 1}: video {play_s:.3f} s (f{i})")]
+        if box is not None:
+            before = _read(cap, i - BEFORE_FRAMES)
+            row.append(_label(_tile(img, box), "hand on the phone?"))
+            row.append(_label(_tile(before if before is not None else np.zeros_like(img), box),
+                              f"{BEFORE_FRAMES} frames before"))
+        rows.append(np.hstack(row))
+    cap.release()
+    if not rows:
+        raise SampleError("couldn't read the tap frames from the clip: check --tap")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(out), _grid(rows, 1 if box is not None else 3))
+    return times
+
+
+def frame_sheet(clip: Path, start: float, end: float, step: int, out: Path, log: Path) -> int:
+    """Every `step`-th frame from START to END playback seconds, zoomed on the hands when the pose finds
+    them, each labelled with its playback seconds and frame number: to find the first tap's frame."""
+    import cv2
+
+    fps = video_fps(clip)
+    first, last = int(round(start * fps)), int(round(end * fps))
+    frames = list(range(first, last + 1, max(1, step)))
+    if not frames or len(frames) > MAX_SHEET_FRAMES:
+        raise SampleError(f"--sheet would show {len(frames)} frames (1 to {MAX_SHEET_FRAMES}): narrow START END "
+                          "or raise --sheet-step")
+    box = find_hands_box(clip, (first + last) / 2 / fps, fps, log)
+    cap = cv2.VideoCapture(str(clip))
+    tiles = [_label(_tile(img, box), f"{f / fps:.3f} s  f{f}") for f in frames if (img := _read(cap, f)) is not None]
     cap.release()
     if not tiles:
-        raise SampleError("couldn't read the tap frames from the clip: check --tap")
-    while len(tiles) % 3:
-        tiles.append(np.zeros_like(tiles[0]))
-    rows = [np.hstack(tiles[i:i + 3]) for i in range(0, len(tiles), 3)]
+        raise SampleError("couldn't read those frames from the clip: check START END")
     out.parent.mkdir(parents=True, exist_ok=True)
-    cv2.imwrite(str(out), np.vstack(rows))
-    return times
+    cv2.imwrite(str(out), _grid(tiles, 6 if box is not None else 4))
+    return len(tiles)
 
 
 # ---- 3. pose + physics ----
@@ -272,12 +423,17 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("clip", type=Path, help="the slow-motion clip (copy it out of Downloads first)")
-    ap.add_argument("sensor", type=Path, help="Sensor Logger export (.zip or folder)")
-    ap.add_argument("--tap", type=float, required=True,
-                    help="playback s of the frame where the hand first lands on the phone (first tap)")
-    ap.add_argument("--window", type=float, nargs=2, required=True, metavar=("START", "END"),
-                    help="playback s around one hit")
-    ap.add_argument("--stroke", choices=["forehand", "backhand"], required=True)
+    ap.add_argument("sensor", type=Path, nargs="?", help="Sensor Logger export (.zip or folder)")
+    ap.add_argument("--tap", help="the frame where the hand first lands on the phone (first tap): playback "
+                                  "seconds 166.6, minutes:seconds 2:46.6, or a frame number f4998")
+    ap.add_argument("--window", nargs=2, metavar=("START", "END"),
+                    help="playback times around one hit (same formats as --tap)")
+    ap.add_argument("--stroke", choices=["forehand", "backhand"])
+    ap.add_argument("--sheet", nargs=2, metavar=("START", "END"),
+                    help="only save a frame sheet from START to END (zoomed on the hands, each frame labelled "
+                         "with its time and frame number) to data/raw/sheet_<clip>.jpg, to find the first tap; "
+                         "needs no sensor file and writes nothing else")
+    ap.add_argument("--sheet-step", type=int, default=1, help="frames between --sheet tiles (default 1)")
     ap.add_argument("--shadow", action="store_true", help="a swing with no ball: contact from the tap, spikes ignored")
     ap.add_argument("--contact-from-impact", action="store_true",
                     help="move a wrist-speed contact to the sensor's impact (only after the tap check is right)")
@@ -295,12 +451,53 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--check-image", type=Path, default=None,
                     help="where to save the tap check (default data/raw/tapcheck_<id>.jpg, git-ignored)")
     args = ap.parse_args(argv)
+    if args.sheet is None:
+        missing = [name for name, value in (("sensor", args.sensor), ("--tap", args.tap), ("--window", args.window),
+                                            ("--stroke", args.stroke)) if value is None]
+        if missing:
+            ap.error(f"missing {', '.join(missing)} (only --sheet runs without them)")
 
     try:
-        return make_sample(args)
+        if args.sheet is not None:
+            return make_sheet(args)
+        with gyro_roll():
+            return make_sample(args)
     except SampleError as e:
         print(f"\nSTOPPED, nothing written: {e}", file=sys.stderr)
         return 1
+
+
+def make_sheet(args: argparse.Namespace) -> int:
+    clip = args.clip.resolve()
+    if not clip.exists():
+        raise SampleError(f"{clip} doesn't exist")
+    fps = video_fps(clip)
+    start, end = (playback_seconds(t, fps) for t in args.sheet)
+    if not start < end:
+        raise SampleError("--sheet must be START END with START < END")
+    out = REPO / "data" / "raw" / f"sheet_{re.sub(r'[^A-Za-z0-9_-]', '_', clip.stem)}_{start:.1f}-{end:.1f}.jpg"
+    n = frame_sheet(clip, start, end, args.sheet_step, out, out.with_suffix(".log"))
+    print(f"sheet: {n} frames of {clip.name} from {start:.3f} to {end:.3f} playback s -> {out}\n"
+          "Find the first frame where the hand touches the phone and pass its label, e.g. --tap f4998.")
+    return 0
+
+
+def mock_rule_warnings(faults: list[dict], sensor_is_mock: bool) -> list[str]:
+    """A real recording judged with a threshold tuned on MOCK swings: say so, the coach's call isn't real."""
+    if sensor_is_mock:
+        return []
+    return [f"the coach judges {f['id']} with a MOCK threshold ({f.get('threshold')} {f.get('unit', '')}, tuned on "
+            f"'{f['source']}'), not on real swings: real forearms roll 95-145 deg through contact, so it flags "
+            "almost every real swing. Don't quote this call until the real-swing thresholds are on this branch."
+            for f in faults if f.get("source") == WRIST_MOCK]
+
+
+def shadow_contact_warning(shadow: bool, contact_method: str | None) -> str | None:
+    """--shadow says there was no ball, but the pipeline timed contact from a sound: it wasn't the ball."""
+    if shadow and contact_method == "audio-transient":
+        return ("the pipeline timed contact from a sound, but --shadow says there was no ball: the sound was "
+                "something else (a tap, a footstep, the racket), so contact sits on that sound, not on the swing")
+    return None
 
 
 def make_sample(args: argparse.Namespace) -> int:
@@ -310,12 +507,13 @@ def make_sample(args: argparse.Namespace) -> int:
             raise SampleError(f"{p} doesn't exist")
     if not (out_dir / "catalogue.json").is_file():
         raise SampleError(f"{out_dir} has no catalogue.json")
-    start, end = args.window
-    if not 0 <= start < end:
-        raise SampleError("--window must be START END with 0 <= START < END")
 
     # 1. clock
     fps = video_fps(clip)
+    start, end = (playback_seconds(t, fps) for t in args.window)
+    tap_play = playback_seconds(args.tap, fps)
+    if not 0 <= start < end:
+        raise SampleError("--window must be START END with 0 <= START < END")
     if args.slowdown is None:
         if fps > 60:
             raise SampleError(f"the clip is encoded at {fps:g} fps, so its playback timing isn't the 4x export's: "
@@ -342,19 +540,25 @@ def make_sample(args: argparse.Namespace) -> int:
         raise SampleError("no run of two or more taps found in the sensor recording: pass --sensor-tap")
     else:
         sensor_tap = taps[0]
-    video_tap_real = args.tap / slowdown
+    video_tap_real = tap_play / slowdown
     offset = sensor_tap - video_tap_real
     print(f"sensor: {rec.source}, {rec.rate_hz:.0f} Hz, {rec.t[0]:.1f}-{rec.t[-1]:.1f} s{' (MOCK)' if rec.mock else ''}")
-    print(f"tap sync: sensor first tap onset {sensor_tap:.3f} s ({len(taps)} taps), video tap {args.tap:.3f} playback s "
-          f"= {video_tap_real:.3f} real s -> offset {offset:+.3f} s (sensor = real video + offset)")
+    print(f"tap sync: sensor first tap onset {sensor_tap:.3f} s ({len(taps)} taps), video tap {tap_play:.3f} playback s "
+          f"(f{int(round(tap_play * fps))}) = {video_tap_real:.3f} real s -> offset {offset:+.3f} s "
+          "(sensor = real video + offset)")
 
     sample_id = args.id or re.sub(r"[^A-Za-z0-9_-]", "_", f"sensor_{clip.stem}_{start:.0f}s")
     if not ID_RE.fullmatch(sample_id):
         raise SampleError("--id may only use letters, digits, _ and -")
     check_path = (args.check_image or REPO / "data" / "raw" / f"tapcheck_{sample_id}.jpg").resolve()
-    tap_times = tap_check_image(clip, args.tap, taps, slowdown, check_path)
+    log_path = check_path.with_name(f"pipeline_{sample_id}.log")
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text("")  # this run's MediaPipe / LiteRT logs only
+    box = find_hands_box(clip, tap_play, fps, log_path)
+    tap_times = tap_check_image(clip, tap_play, taps, slowdown, check_path, box)
     print(f"TAP CHECK: the hand should land on the phone at video {', '.join(f'{t:.3f}' for t in tap_times)} s "
-          f"-> look at {check_path}")
+          f"-> open {check_path}\n  Every row: the hand on the phone in the zoom, and on tap 1 not yet "
+          f"{BEFORE_FRAMES} frames before. If not, fix --tap (or --slowdown if only the later taps are off).")
 
     catalogue_path = out_dir / "catalogue.json"
     catalogue = json.loads(catalogue_path.read_text(encoding="utf-8"))
@@ -371,7 +575,11 @@ def make_sample(args: argparse.Namespace) -> int:
         # 3. pose + physics
         window = work / "window.mp4"
         cut_window(clip, start, end, window)
-        swings = run_pipeline(window, work, slowdown, args.hand, args.stroke)
+        try:
+            with native_log(log_path):
+                swings = run_pipeline(window, work, slowdown, args.hand, args.stroke)
+        except SampleError as e:
+            raise SampleError(f"{e} (MediaPipe's log: {log_path})") from e
 
         # 4. wrist: pair the hit's impact with the pipeline's contact through the tap clock
         events = [(s, start / slowdown + s["metadata"]["sourceContactSeconds"]) for s in swings]
@@ -387,10 +595,13 @@ def make_sample(args: argparse.Namespace) -> int:
         md["sourceClip"] = clip.name
         md["sourceWindowPlaybackSeconds"] = [start, end]
         md["wristSync"] = {"method": "first tap's onset matched to the video frame where the hand lands",
-                           "slowdown": slowdown, "videoTapPlaybackSeconds": args.tap,
+                           "slowdown": slowdown, "videoTapPlaybackSeconds": round(tap_play, 4),
                            "sensorTapSeconds": round(sensor_tap, 3), "offsetSeconds": round(offset, 4)}
+        warnings = []
         if args.shadow:
             impact_t = np.array([])
+            if (w := shadow_contact_warning(True, md.get("contactMethod"))) is not None:
+                warnings.append(w)  # printed with the wrist report's warnings below
         else:
             predicted = contact_real + offset
             near = impact_t[np.abs(impact_t - predicted) <= IMPACT_SEARCH_S]
@@ -436,7 +647,6 @@ def make_sample(args: argparse.Namespace) -> int:
         alignment = align(list(impact_t), [(sample_id, contact_real)], sensor_tap, video_tap_real, 1.0,
                           args.tolerance_ms, swinging)
         pair = next((p for p in alignment["pairs"] if p["swing"] == sample_id), None)
-        warnings = []
         if pair is not None:
             if not pair["ok"]:
                 raise SampleError(f"the nearest impact is {pair['error_ms']:+.0f} ms from where the video puts contact "
@@ -445,9 +655,10 @@ def make_sample(args: argparse.Namespace) -> int:
             print(f"contact: video {(contact_real * slowdown):.3f} playback s ({swing['metadata'].get('contactMethod')}); "
                   f"sensor impact {pair['impact_s']:.3f} s, alignment error {pair['error_ms']:+.1f} ms")
         elif alignment["tap_only"]:
-            warnings.append("no impact near this swing (shadow swing?): contact timed from the tap alone, so its "
-                            "window carries the sync and video-contact error")
-            print(f"contact: video {(contact_real * slowdown):.3f} playback s, NO impact: timed from the tap alone")
+            warnings.append("no impact near this swing (shadow swing?): the sensor's contact is the video's contact "
+                            "carried over by the tap clock, so it has the sync error and the video contact's error")
+            print(f"contact: video {(contact_real * slowdown):.3f} playback s ({swing['metadata'].get('contactMethod')}); "
+                  "no impact on the sensor, so the sensor's contact is that time through the tap clock")
         else:
             raise SampleError("no impact paired with this swing, and the forearm wasn't swinging at the tap-predicted "
                               "contact: check --tap, --slowdown and --window")
@@ -473,6 +684,8 @@ def make_sample(args: argparse.Namespace) -> int:
         swing["stroke"] = swing["metadata"]["stroke"] = stroke
         coach = coach_swing(swing, stroke, fps_real)
         coach["faults"] = detect_faults(swing, metrics=measure_swing(swing, stroke, fps_real))
+        for w in mock_rule_warnings(coach["faults"], rec.mock):
+            print(f"  WARNING: {w}")
         flagged = {f["fix"]: f for f in coach["faults"]}
         demo = {**DEMO_AMOUNT, **(catalogue.get("demoAmounts") or {})}
         fixes: dict[str, dict] = {}
@@ -499,7 +712,7 @@ def make_sample(args: argparse.Namespace) -> int:
         round_swing(swing)
         shadow = pair is None
         label = args.label or (f"{stroke.capitalize()} · wrist sensor · "
-                               f"{'shadow swing (no ball), contact from the tap' if shadow else 'real hit'} · "
+                               f"{'shadow swing (no ball), tap-synced' if shadow else 'real hit'} · "
                                f"iPhone {fps * slowdown:g} fps ({clip.stem} {int(contact_real * slowdown // 60):02d}:"
                                f"{contact_real * slowdown % 60:04.1f})" + (" · MOCK sensor" if rec.mock else ""))
         new_entry = {"id": sample_id, "label": label, "stroke": stroke, "swing": f"swing_{sample_id}.json",
