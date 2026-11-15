@@ -20,8 +20,9 @@ usable sensor data skip `rolled_wrist` (it shows under `not_measured`). Nothing 
 A **shadow swing** (no ball, so no impact) is timed from the double tap; its impact fields
 are null. Without the phone's own orientation, the integrated gyro takes over.
 
-**Everything here so far is tested on MOCK data** (`synth.py`). The threshold in
-`coach/faults.py` comes from mock swings and must be retuned on real ones.
+**Tested on MOCK data** (`synth.py`) **and one real shadow session** (no ball: see
+[Shadow sessions](#shadow-sessions-no-ball)). The threshold in `coach/faults.py` comes from
+mock swings and must be retuned on real hits.
 
 ## Recording (tonight)
 
@@ -82,15 +83,17 @@ Windows: same commands, `python` inside the activated venv.
 
 | Key in `wrist_metrics.json` | Coach measurement | Meaning |
 |---|---|---|
-| `roll_change_deg` / `roll_change_abs_deg` | `forearm_roll_deg` (the size) | Forearm roll over the window. With the phone's orientation: the twist about the forearm axis, so the swing itself doesn't count. With the integrated-gyro fallback: the gyro integrated about the forearm axis. `roll_method` says which. |
-| `roll_change_gyro_deg` | (cross-check) | The same roll, from integrating the gyro about the forearm axis (on the integrated-gyro fallback, with the estimated still bias removed first). It should agree with the orientation number. |
+| `roll_change_deg` / `roll_change_abs_deg` | `forearm_roll_deg` (the size) | Forearm roll over the window: the gyro integrated about the forearm axis (on the integrated-gyro fallback, with the estimated still bias removed first). `roll_method` says so. |
+| `roll_change_gyro_deg` | (same number) | Kept for readers of older files; equal to `roll_change_deg`. |
+| `roll_change_twist_deg` | (cross-check only) | The twist of the orientation over the window about the forearm axis. Ill-conditioned when the swing turns near a half-turn, which real swings do (Known limits), so it is never coached. |
 | `peak_roll_rate_dps` / `_abs_dps` | `forearm_roll_rate_dps` | Fastest gyro rate about the forearm axis |
 | `peak_angular_speed_dps` | `forearm_speed_dps` | Fastest total turn rate of the forearm (context only) |
 
 Contact = the sensor's own impact spike, so sync error doesn't move these numbers.
 Sync only decides which swing each impact belongs to. The exception is a swing with no
 impact (`contact_source: "double tap"`): its contact is the double tap's prediction, so the
-sync error does move its window.
+sync error does move its window. In a shadow session (`shadow.py`, no ball at all) contact is
+each swing's fastest forearm turn (`contact_source: "gyro peak"`, an ESTIMATE).
 
 Built-in checks, all reported in the output:
 - **Orientation.** Sensor Logger doesn't document its quaternion's direction, so the code
@@ -211,8 +214,8 @@ carries your `wrist` entry.
  "estimates": {"label": "ESTIMATE", "lever_m": 0.55, "camera_swings": 10, "note": "..."},
  "swings": {"<swing id>": {"usable": true, "skip_reason": null, "mock": false,
    "contact_source": "impact spike", "align_error_ms": 7.0, "impact_s": 41.406, "contact_s": 41.406,
-   "roll_change_deg": 58.5, "roll_change_abs_deg": 58.5, "roll_change_gyro_deg": 58.6,
-   "roll_method": "twist of the phone's orientation over the window",
+   "roll_change_deg": 58.6, "roll_change_abs_deg": 58.6, "roll_change_gyro_deg": 58.6,
+   "roll_change_twist_deg": 58.5, "roll_method": "gyro integrated about the forearm axis",
    "peak_roll_rate_dps": 460, "peak_roll_rate_abs_dps": 460,
    "peak_angular_speed_dps": 1321, "window_ms": [-150, 100], "orientation_source": "phone",
    "tempo": {"label": "ESTIMATE", "backswing_start_ms": -719, "forward_start_ms": -163,
@@ -293,8 +296,66 @@ the threshold. Its fix is `firm_wrist`, which the ghost can't animate yet, so it
 It only says "set" with at least 5 swings in each group and leave-one-out of 80% or more.
 With 5 vs 5 swings from one player, even a clean split is provisional.
 
-The mock run gives normal 16.5 deg vs rolled 62.1 deg, threshold 39.3 deg, leave-one-out
-100%. That only proves the code works, not that real swings split this cleanly.
+The mock run gives normal 16.5 deg vs rolled 62.0 deg, threshold 39.2 deg, leave-one-out
+100%. That only proves the code works, not that real swings split this cleanly. On the
+first real session (below) even GOOD drives rolled 96-145 deg in the window, so this mock
+threshold would flag every real swing: retune per stroke on real labelled swings.
+
+## Shadow sessions (no ball)
+
+`shadow.py` handles a session of blocks with no ball, e.g. good backhands, then backhands
+with a rolled wrist. Tap the strapped phone two or more times before each block, in view of
+a camera. With no impacts, each swing's contact is its fastest forearm turn (`"contact_source":
+"gyro peak"`, an ESTIMATE), and the summary compares each faulty block with the good one of
+the same stroke (mean, SD, Cohen's d, AUC, overlap). The module docstring has the details.
+
+```
+python -m wrist.shadow ../data/raw/wrist/<export>.zip --segments segments.csv --video-taps 140.333,279.550,377.400,503.967
+```
+
+`segments.csv` has one row per block: `segment,stroke,fault,video_start_s,video_end_s` (or
+`start_s,end_s` in sensor seconds); a blank end runs to the next block. `--video-taps` takes
+the playback second of the frame where the hand first touches the phone, one per tap event.
+A tap is timed from its onset (the first sample of the knock), not its peak, which is often
+the phone's rebound 10-20 ms later.
+
+### First real session (14 Nov, one player, all ESTIMATE (sensor))
+
+- **Video time base.** Both iPhone slow-motion exports ran at **4x** (each 30 fps frame is
+  1/120 s of real time), not the 8x a 240 fps capture suggests. The taps fit scale 0.24998,
+  so timestamps read off those files are playback time.
+- **Sync.** Four tap events (5, 2, 2, 2 taps), matched to the frames where the hand lands
+  on the phone. All 11 taps fit within 13 ms (front camera, rms 6 ms) and 4 ms (behind,
+  rms 2 ms). A clock from correlating pose speed with the gyro was 255 ms off on the front
+  camera, one tap interval, so sync on the taps.
+- **Swings:** 15 good backhands, 10 good forehands, 14 rolled backhands, and 5 rolled
+  forehands inside the marked block (11 to the end of the recording).
+- **Separation.** Roll through contact (size, mean ± SD, range):
+
+  | Stroke | Good | Rolled wrist | Difference |
+  |---|---|---|---|
+  | Backhand | 105.3 ± 9.3 deg (96-120) | 137.6 ± 6.3 deg (128-150) | +32.3 deg, d 4.0, AUC 1.00, no overlap |
+  | Forehand | 134.2 ± 9.8 deg (120-145) | 159.8 ± 3.9 deg (154-165) | +25.6 deg, d 3.0, AUC 1.00, no overlap |
+
+  With all 11 rolled forehands: +22.9 deg, d 2.9, AUC 1.00, no overlap.
+- **Contact placement matters on forehands.** The swing-only turn rate peaks 10-20 ms
+  before the total turn rate on backhands, and 50-80 ms before it on forehands. With
+  contact at that earlier peak, backhands still separate (90.5 ± 7.7 vs 126.5 ± 6.9 deg)
+  but forehands overlap (86.9 ± 4.6 vs 94.6 ± 7.1 deg). Real hits, timed from the impact,
+  should settle it.
+- **Racket speed, rotation part only** (no camera): backhand 9.0 ± 1.2 good vs 10.0 ± 1.0
+  rolled; forehand 4.9 ± 0.8 vs 3.5 ± 0.4 m/s. One backhand fused with the camera: 8.9 m/s.
+- **Occlusion fill on a real swing (one good backhand).** Stereo failed the pipeline's
+  gates, so the swing is the behind camera's mono pose. That camera lost the right elbow
+  and wrist on 57 of 97 frames. Alignment on the 40 seen frames: median 9.9 deg, holdout
+  16.1 deg, strap axis 27 deg off nominal (near the 30 deg limit). On the 57 frames, the
+  front camera saw the arm. Fitting phone to front camera on the 40 frames and testing on
+  the 57, the phone's forearm direction is 18 deg off (median); the pipeline's straight-line
+  fill is 44 deg off. **Limit:** when the elbow is hidden too, the phone can't place it, so
+  the rebuilt forearm hangs from the pipeline's interpolated elbow. In the front image
+  that elbow is about 1.5 forearm lengths off.
+- **Coach threshold.** Don't copy these numbers into `coach/faults.py`: contact here is the
+  gyro peak of a swing with no ball. Retune per stroke on labelled real hits.
 
 ## Known limits
 
@@ -310,10 +371,11 @@ The mock run gives normal 16.5 deg vs rolled 62.1 deg, threshold 39.3 deg, leave
 - **Roll near a half-turn.** The forearm turns about 180 deg about another axis in the roll
   window (178.7 deg on the mock). There the twist of the window's rotation is
   ill-conditioned: on the mock, a 0.5 deg error in the rotation moved it 20-30 deg. The
-  phone path still uses the twist, and only matches the truth because the mock's
-  quaternions are exact; real ones are about a degree off. The gyro fallback uses the axial
-  gyro integral (`roll_change_gyro_deg`) instead, which matches the truth. Compare the two
-  on the first real recording before trusting `roll_change_deg`.
+  first real recording settled it: the twist scattered over +-180 deg (SD 86-156 deg per
+  block) while the axial gyro integral's SD was 5-10 deg. So `roll_change_deg` is now the
+  axial gyro integral on every path, and the twist is only reported as
+  `roll_change_twist_deg`. The integral reads the forearm's whole turn about its own
+  axis, so shoulder rotation with a straight elbow counts as roll too.
 - **Integrated gyro.** Its offset is measured on the still stretch around the taps, so any
   arm sway there leaks in (on the mock, 2.3 deg/s on one axis). That moves roll over 250 ms
   by about 0.5 deg, and the per-swing camera fit absorbs most of the drift (fill within 2 cm).

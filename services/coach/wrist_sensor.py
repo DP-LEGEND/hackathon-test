@@ -7,7 +7,8 @@ carries its own entry as the optional field swing["wrist"] (attach_wrist does it
 Only an entry marked "usable" is read. Anything else (no sensor, sync off, orientation
 failing the gyro check, a missing number) leaves every wrist-sensor measurement None, so
 rolled_wrist is skipped and listed in not_measured, never guessed. wrist_sensor_skipped
-says why.
+says why. A usable entry also carries wrist_contact_source (what its roll window is centred
+on); coach/faults.py measure_swing skips real entries the real lines weren't tuned for.
 """
 
 from __future__ import annotations
@@ -49,6 +50,7 @@ def sensor_metrics(wrist: Optional[dict[str, Any]]) -> dict[str, Any]:
         out[name] = float(wrist[key])
     out["wrist_sensor"] = "mock sensor" if wrist.get("mock") else "sensor"
     out["wrist_sensor_skipped"] = None
+    out["wrist_contact_source"] = wrist.get("contact_source")  # usable entries only: no-sensor output unchanged
     return out
 
 

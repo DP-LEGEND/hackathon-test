@@ -72,7 +72,8 @@ def coach_swing(swing: dict, stroke: Optional[Stroke] = None, fps_real: Optional
     ghost_fix, ghost_fix_amount, ghost_note (None when the ghost shows the top fix),
     ghost_fixes ([{fix, amount}], the primary first plus any paired fix) and
     ghost_edits (the same as physics.ghost.edit_swing edits). Also tip (a second
-    coaching point, or None) and disabled_faults ({id: why} switched off for this stroke).
+    coaching point, or None) and disabled_faults ({id: why} switched off for this stroke, or for
+    this swing: rolled_wrist on a real swing not timed at the gyro peak).
 
     `fault` stays the overall worst one for the caption; the ghost animates `ghost_fault`.
     ghost_fixes / ghost_edits describe the pair the ghost SHOULD show, but the live path
@@ -101,7 +102,7 @@ def coach_swing(swing: dict, stroke: Optional[Stroke] = None, fps_real: Optional
         "other_faults": [f["id"] for f in faults[1:]],
         "not_measured": unmeasured_faults(metrics),
         "notes": [n for n in (metrics.get("stance_note"),) if n],
-        "disabled_faults": disabled_faults(metrics["stroke"]),
+        "disabled_faults": disabled_faults(metrics["stroke"], metrics),
         "ghost_fault": ghost,
         "ghost_fix": ghost["fix"] if ghost else None,
         "ghost_fix_amount": ghost["fix_amount"] if ghost else None,
