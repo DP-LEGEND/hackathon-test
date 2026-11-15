@@ -488,3 +488,50 @@ from services/. Proxy tests (Node 26) run from the repository root:
 ```sh
 node --experimental-strip-types "app/api/[...path]/route.test.mjs"
 ```
+
+### Optional two-camera and wrist upload
+
+`POST /process/multi` (web proxy: `POST /api/process/multi`) accepts multipart:
+
+| Field | Meaning |
+|---|---|
+| `video_a` | Required primary MOV, MP4, M4V or AVI clip |
+| `video_b` | Optional second camera, recording the same swing |
+| `sensor_csv` | Optional Sensor Logger ZIP or combined wrist-sensor CSV, up to 10 MiB |
+| `slowdown_a`, `slowdown_b` | Optional playback slowdown factors, positive and at most 16. Omit for Auto; B inherits A's override when omitted |
+| `offset_b_s` | Optional B playback seconds at A's beginning; replaces automatic audio sync |
+
+With constant slowdown, `B_playback = A_playback * slowdown_b / slowdown_a + offset_b_s`.
+Auto uses the existing video timing detection (edit list, capture tag or AirDrop
+playback-intent). The one-camera path also retains the live worker's 2/4/8 retry
+when capture timing is absent and no swing is initially found. With both fields
+omitted, each camera's metadata is detected independently.
+Both clips are normalized to real time before stereo. Without an explicit offset,
+matching hit-audio transients establish the clock offset. Missing or ambiguous
+audio, failed stereo, or an unusable second clip falls back to the primary video
+with a warning. A partial stereo reconstruction labels each swing separately:
+`metadata.depth` is `triangulated (2 cameras)` or `estimated (1 camera)`; existing
+`source` and `metadata.reconstruction` remain `stereo` or `mono`.
+
+Sensor Logger ZIP exports are detected by ZIP signature or filename extension and
+passed to the same wrist reader as `scripts/make_sensor_sample.py`. The export
+needs Accelerometer.csv (or TotalAcceleration.csv) and Gyroscope.csv; Orientation.csv
+and Metadata.csv are optional. Archives are read without extraction, with a 25 MiB
+expanded-size limit and bounded sensor timestamps. Unreadable exports only add a warning.
+
+Single-file CSV columns are `seconds_elapsed` (seconds) or `time` (Unix nanoseconds),
+`accel_x`, `accel_y`, `accel_z` (m/s²), and `gyro_x`, `gyro_y`, `gyro_z` (rad/s).
+Aliases `ax/ay/az` and `gx/gy/gz` are accepted. Optional `qx/qy/qz/qw` supply
+orientation; `mock=true` marks synthetic sensor data. Strap the phone's long edge
+(y axis) along the hitting forearm and record an audible still-arm double tap
+before swinging. The tap interval and subsequent contact must align with video A.
+Failed or ambiguous tap sync, malformed CSV/ZIP or unusable wrist measurements only
+add warnings; the video result still loads. Wrist roll uses the gyro peak, while
+sensor-assisted camera fill and racket speed retain their impact timing.
+
+The 201 response has the same report, `swingId`, `swingIds`, `coach`, `compare` and
+`webPath` fields as `/process`, with an additional `warnings` array. Every swing,
+coach and comparison is ready before its manifest is published. The aggregate
+upload limit is 250 MiB; each video has the live path's 30-real-second limit.
+The existing `/process` route and `process_live_clip` are unchanged. Both servers
+remain local-only and need no provider keys for these measurements.

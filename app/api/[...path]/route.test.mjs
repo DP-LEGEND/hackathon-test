@@ -275,3 +275,145 @@ for (const path of [["swings"], ["coach", "sample"], ["compare", "sample"], ["pr
     assert.deepEqual(await response.json(), { error: "Ghost API is still processing; the proxy stopped waiting." });
   });
 }
+
+for (const scenario of ["one video", "two videos", "two videos and CSV", "bad CSV"]) {
+  test(`multi upload streams ${scenario} and preserves the service response`, async (t) => {
+    const videoA = new Uint8Array([0, 255, 1, 128, 13, 10, 42]);
+    const videoB = new Uint8Array([10, 0, 255, 192, 11]);
+    const csv = scenario === "bad CSV" ? "this is not sensor data" : "time,gx,gy,gz\n0,1,2,3\n";
+    const hasB = scenario !== "one video";
+    const hasCsv = scenario.endsWith("CSV");
+    const form = new FormData();
+    form.append("video_a", new Blob([videoA], { type: "video/quicktime" }), "a.mov");
+    if (hasB) form.append("video_b", new Blob([videoB], { type: "video/mp4" }), "b.mp4");
+    if (hasCsv) form.append("sensor_csv", new Blob([csv], { type: "text/csv" }), "sensor.csv");
+    form.append("slowdown_a", "4");
+    form.append("slowdown_b", "1");
+    form.append("offset_b_s", "-0.35");
+    const encoded = new Request("http://localhost:3000/api/process/multi", { method: "POST", body: form });
+    const payload = Buffer.from(await encoded.arrayBuffer());
+    const multiContentType = encoded.headers.get("content-type");
+    const firstChunk = Promise.withResolvers();
+    const finishUpload = Promise.withResolvers();
+    const result = {
+      swingId: "multi-swing", swingIds: ["multi-swing"], webPath: "/ghost",
+      warnings: scenario === "bad CSV" ? ["Wrist CSV ignored: tap sync failed"] : [],
+    };
+    const seen = {};
+    await pythonEndpoint(t, (request, response) => {
+      seen.url = request.url;
+      seen.headers = request.headers;
+      const chunks = [];
+      request.on("data", (chunk) => { chunks.push(chunk); firstChunk.resolve(); });
+      request.on("end", () => {
+        seen.body = Buffer.concat(chunks);
+        response.writeHead(201, { "Content-Type": "application/json" });
+        response.end(JSON.stringify(result));
+      });
+    });
+    let started = false;
+    const body = new ReadableStream({
+      async pull(controller) {
+        if (!started) {
+          started = true;
+          controller.enqueue(payload.subarray(0, 100));
+        } else {
+          await finishUpload.promise;
+          controller.enqueue(payload.subarray(100));
+          controller.close();
+        }
+      },
+    });
+    const request = new Request("http://localhost:3000/api/process/multi", {
+      method: "POST", body, duplex: "half",
+      headers: { "Content-Type": multiContentType, "Content-Length": String(payload.length) },
+    });
+    for (const method of ["arrayBuffer", "formData", "json", "text", "blob"]) {
+      request[method] = () => { throw new Error("The proxy must not buffer/parse multi uploads"); };
+    }
+    const forwarding = POST(request, context(["process", "multi"]));
+    const timer = setTimeout(() => firstChunk.reject(new Error("Proxy buffered the multi upload")), 5_000);
+    try {
+      await firstChunk.promise;
+    } finally {
+      clearTimeout(timer);
+      finishUpload.resolve();
+    }
+    const response = await forwarding;
+    assert.equal(response.status, 201);
+    assert.deepEqual(await response.json(), result);
+    assert.equal(seen.url, "/process/multi");
+    assert.equal(seen.headers["content-type"], multiContentType);
+    assert.equal(seen.headers["content-length"], String(payload.length));
+    assert.deepEqual(seen.body, payload);
+    const received = await new Response(seen.body, { headers: { "Content-Type": multiContentType } }).formData();
+    assert.deepEqual(Buffer.from(await received.get("video_a").arrayBuffer()), Buffer.from(videoA));
+    assert.equal(received.get("slowdown_a"), "4");
+    assert.equal(received.get("slowdown_b"), "1");
+    assert.equal(received.get("offset_b_s"), "-0.35");
+    if (hasB) assert.deepEqual(Buffer.from(await received.get("video_b").arrayBuffer()), Buffer.from(videoB));
+    else assert.equal(received.get("video_b"), null);
+    if (hasCsv) assert.equal(await received.get("sensor_csv").text(), csv);
+    else assert.equal(received.get("sensor_csv"), null);
+  });
+}
+
+test("multi upload rejects a declared aggregate over 250 MiB before reading it", async () => {
+  globalThis.fetch = () => assert.fail("Oversized multi upload must not be forwarded");
+  let reads = 0;
+  const body = new ReadableStream({ pull() { reads++; } }, { highWaterMark: 0 });
+  const response = await POST(new Request("http://localhost:3000/api/process/multi", {
+    method: "POST", body, duplex: "half",
+    headers: { "Content-Type": contentType, "Content-Length": String(250 * 1024 * 1024 + 1) },
+  }), context(["process", "multi"]));
+  assert.equal(response.status, 413);
+  assert.equal(reads, 0);
+});
+
+test("multi upload counts the aggregate streaming body without Content-Length", async () => {
+  const chunk = new Uint8Array(1024 * 1024);
+  let remaining = 250;
+  let forwarded = 0;
+  const body = new ReadableStream({
+    pull(controller) {
+      if (remaining-- > 0) controller.enqueue(chunk);
+      else { controller.enqueue(new Uint8Array(1)); controller.close(); }
+    },
+  });
+  globalThis.fetch = async (_url, init) => {
+    const reader = init.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      forwarded += value.byteLength;
+    }
+    return Response.json({ swingId: "large-multi-swing" }, { status: 201 });
+  };
+  const response = await POST(new Request("http://localhost:3000/api/process/multi", {
+    method: "POST", body, duplex: "half", headers: { "Content-Type": contentType },
+  }), context(["process", "multi"]));
+  assert.equal(response.status, 413);
+  assert.equal(forwarded, 250 * 1024 * 1024);
+});
+
+for (const cancel of [false, true]) {
+  test(`multi upload keeps its 600-second timeout and ${cancel ? "client cancellation" : "timeout response"}`, async (t) => {
+    const client = new AbortController();
+    const timeout = new AbortController();
+    t.mock.method(AbortSignal, "timeout", (milliseconds) => {
+      assert.equal(milliseconds, 600_000);
+      return timeout.signal;
+    });
+    globalThis.fetch = async (_url, init) => {
+      (cancel ? client : timeout).abort();
+      throw init.signal.reason;
+    };
+    const response = await POST(new Request("http://localhost:3000/api/process/multi", {
+      method: "POST", body: multipart, headers: { "Content-Type": contentType }, signal: client.signal,
+    }), context(["process", "multi"]));
+    assert.equal(response.status, cancel ? 499 : 504);
+    assert.deepEqual(await response.json(), {
+      error: cancel ? "Request cancelled." : "Ghost API is still processing; the proxy stopped waiting.",
+    });
+  });
+}
