@@ -140,7 +140,7 @@ function Panel({ series, caption }: { series: WristSeries; caption: CaptionState
   const speedAtContact = sampleAt(series.turnRate, 0);
   const coachSensor = caption.kind === "ready" ? caption.caption.wristSensor : null;
   const rollRate = coachSensor?.rollRateDps ?? null;
-  const tagFor = (mock: boolean) => (mock ? "MEASURED (sensor) · MOCK" : "MEASURED (sensor)");
+  const tagFor = (mock: boolean) => (mock ? "SAMPLE (sensor) · MOCK" : "MEASURED (sensor)");
   const tag = tagFor(series.mock);
   const [w0, w1] = series.windowMs;
 
@@ -151,7 +151,7 @@ function Panel({ series, caption }: { series: WristSeries; caption: CaptionState
           Wrist sensor
         </h3>
         <Badge variant="outline" className="h-5 rounded-full font-mono tracking-wide">
-          MEASURED (sensor)
+          {series.mock ? "SAMPLE (sensor)" : "MEASURED (sensor)"}
         </Badge>
         {series.mock && (
           <Badge variant="outline" className="h-5 rounded-full border-amber-400/50 text-amber-300">
