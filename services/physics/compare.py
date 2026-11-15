@@ -56,6 +56,17 @@ Where the ball model's inputs come from (physics/ball.py):
 - fix.explain says in plain words how the fix gets from body to ball, quoting only the numbers
   above with their labels. `validation` (when a validate_ball result is passed as `tracked`) puts
   your PREDICTED ball next to the real ball tracked in the clip.
+- With usable wrist-sensor data the coach can judge (wrist_face.aim_roll: mock data, or a real
+  roll timed at the gyro peak), both aims come from the racket face instead (wrist_face.py):
+  your stated straight drive, turned cross-court by FACE_PER_ROLL_DEG (an ASSUMPTION) per
+  degree of forearm roll above the stroke's good median, capped at FACE_CAP_DEG. The ghost's
+  face comes from its roll, which only the firm_wrist fix changes (it lowers the roll by its
+  amount; no joint moves), so at the coach's amount the ghost's face is square and its ball
+  goes straight. The camera's aims (yours from the wrist, the ghost's from the racket line)
+  stay as cameraAim, a cross-check, and no shoulder turn is held for the TARGET (assumptions.aim
+  says why). firm_wrist without such data raises GuessedFixError. A real roll timed from the
+  impact or a double tap keeps everything above (the camera's aims, the TARGET hold), and both
+  azimuths' method and assumptions.face (applied false) say why.
 - Elevation (launch angle) is ASSUMED: DEFAULT_ELEVATION_DEG for the stroke (12 forehand,
   3 backhand) unless you pass one for the swing. A swing's path at contact is too noisy to
   give the launch angle, and the face angle needs racket tracking.
@@ -82,6 +93,10 @@ import numpy as np
 
 from physics.ball import COURT_LENGTH_M, COURT_WIDTH_M, DEFAULT_CONTACT, predict_ball_path
 from physics.ghost import EDITS, FIXES, apply_fix
+from physics.wrist_face import (
+    FACE_CAP_DEG, FACE_PER_ROLL_DEG, INTENT, INTENT_AZIMUTH_DEG, aim_roll, cross_court_wall, face_aim, face_note,
+    good_roll,
+)
 from physics.metrics import contact_frame, measure, real_fps, shoulder_coil, shoulder_yaw
 from physics.skeleton import (
     ARM, L_HIP, R_HIP, RACKET_HEAD_M, court_axes, court_shift, from_array, mid, racket_head, speed, swing_hand,
@@ -135,6 +150,9 @@ TARGET_INTENT = "straight drive"
 # (a shoulder fix is capped at its own size). The aim itself is clamped to this too.
 AIM_HOLD_LIMIT_DEG = AZIMUTH_LIMIT_DEG
 _TARGET = object()  # compare()'s default intent: TARGET_INTENT, labelled TARGET
+# assumptions.aim.why when usable wrist-sensor data aims both balls by the racket face (wrist_face.py).
+FACE_AIMS_WHY = ("the wrist sensor's forearm roll aims both balls by the racket face (ASSUMED face model), "
+                 "so no shoulder turn is held at contact")
 
 SIDES = ("forehand", "backhand")
 
@@ -534,13 +552,16 @@ def _in_court_frame(swing: dict) -> bool:
 
 
 def _on_court(swing: dict, fps_real, hand: str, contact: int, shift: np.ndarray,
-              elevation_deg: float, racket: dict, azimuth: dict | None = None) -> tuple[dict, dict]:
+              elevation_deg: float, racket: dict, azimuth: dict | None = None,
+              aim: dict | None = None) -> tuple[dict, dict]:
     """One swing: metrics, the swing on the court, its PREDICTED ball (from `racket`), and its launch.
 
     `shift` is the player's court_shift, so you and the ghost stand in exactly the same place.
     `azimuth` is the aim to use (the ghost's, from ghost_azimuth); None measures it from this
     swing's wrist (estimate_azimuth), as for yours.
     Metrics are measured on the swing as given; they don't depend on where it stands.
+    `aim`: the wrist-sensor aim (wrist_face.face_aim) to use instead of the wrist's direction,
+    which is then kept only as `cameraAim`, a cross-check. None (no sensor data) = as before.
     """
     m = measure(swing, fps_real, hand)
     metrics = {k: _num(m[k]) for k in METRICS}
@@ -551,6 +572,8 @@ def _on_court(swing: dict, fps_real, hand: str, contact: int, shift: np.ndarray,
                          "the ball model needs 0 to 3 m")
     if azimuth is None:
         azimuth = estimate_azimuth(Pc, hand, contact)
+    if aim is not None:
+        azimuth = {**aim, "cameraAim": {"value": azimuth["value"], "label": azimuth["label"]}}
     ball = predict_ball_path(racket["value"], elevation_deg, azimuth["value"], tuple(point))
     side = {"swing": _court_swing(swing, Pc), "metrics": metrics, "racketSpeed": racket, "ball": ball}
     return side, {"point": point, "azimuth": azimuth}
@@ -727,13 +750,17 @@ def explain_fix(fix_name: str, amount: float, stroke: str, you: dict, ghost: dic
     (measured), the aims (ESTIMATE or ASSUMED), the held turn (solved), the PREDICTED balls, and
     the ASSUMED launch angle and spot. The coach's own wording is never touched.
     """
-    metric = FIX_TARGETS[fix_name][0]
-    unit, words = METRICS[metric]
-    u = "°" if unit == "deg" else f" {unit}"
-    mine, theirs = you["metrics"].get(metric), ghost["metrics"].get(metric)
     you_az, ghost_az = you_launch["azimuth"], ghost_launch["azimuth"]
     x_you, x_ghost = you_launch["point"][0], ghost_launch["point"][0]
-    body = f"Your {words} was {mine:g}{u} (measured)" if mine is not None else f"Your {words} couldn't be measured"
+    if fix_name in FIX_TARGETS:
+        metric = FIX_TARGETS[fix_name][0]
+        unit, words = METRICS[metric]
+        u = "°" if unit == "deg" else f" {unit}"
+        mine, theirs = you["metrics"].get(metric), ghost["metrics"].get(metric)
+        body = f"Your {words} was {mine:g}{u} (measured)" if mine is not None else f"Your {words} couldn't be measured"
+    else:  # firm_wrist without a roll the coach can judge: compare allows only amount 0 here
+        metric, u, mine, theirs = None, "", None, None
+        body = "Your forearm roll wasn't measured (no wrist-sensor roll the coach can judge)"
     if you_az["label"] == "ASSUMED":
         line = "your aim is ASSUMED straight (the wrist moves sideways at contact)"
     else:
@@ -754,6 +781,47 @@ def explain_fix(fix_name: str, amount: float, stroke: str, you: dict, ghost: dic
                   f"which points its racket line {_aim_words(ghost_az['value'], x_ghost)}")
         text += (f" The ghost {change}{hold}, {points}, so its PREDICTED ball goes "
                  f"{_path_words(ghost_az['value'], x_ghost)}: {_ball_words(ghost['ball'])}.")
+    text += (f" Ball speed {you['ball']['speedKmh']:g} → {ghost['ball']['speedKmh']:g} km/h, {racket_note['label']}."
+             f" ASSUMED: the {elevation:g}° launch angle{'' if spot_measured else ' and the spot on court'}.")
+    if spot_measured:
+        text += " The spot on court is MEASURED from the video."
+    return text
+
+
+def _face_words(face_deg: float, cross: str) -> str:
+    return "square" if face_deg == 0 else f"{face_deg:g}° open, {cross} (cross-court)"
+
+
+def explain_face_fix(fix_name: str, amount: float, stroke: str, you: dict, ghost: dict, you_launch: dict,
+                     ghost_launch: dict, face: dict, elevation: float, spot_measured: bool,
+                     racket_note: dict) -> str:
+    """fix.explain when the racket face aims both balls (assumptions.face applied): the chain from
+    the forearm roll to the ball. Same rules as explain_fix: only numbers compare() measured or
+    computed, each with its label; the face model is ASSUMED, the balls PREDICTED, mock data MOCK."""
+    src = "MOCK sensor data" if face["mock"] else "measured by the wrist sensor"
+    you_az, ghost_az = you_launch["azimuth"], ghost_launch["azimuth"]
+    x_you, x_ghost = you_launch["point"][0], ghost_launch["point"][0]
+    roll, g_roll = face["you"]["rollDeg"], face["ghost"]["rollDeg"]
+    text = (f"Your forearm rolled {roll:g}° through contact ({src}). ASSUMED: the racket face turns "
+            f"{face['facePerRollDeg']:g}° per degree of roll above the {stroke}'s good median "
+            f"({face['goodRollDeg']:g}°), so your face was {_face_words(face['you']['faceDeg'], face['crossCourt'])} "
+            f"and your PREDICTED ball goes {_path_words(you_az['value'], x_you)}: {_ball_words(you['ball'])}.")
+    if amount == 0:
+        text += " The ghost is your swing unchanged."
+    else:
+        if fix_name == "firm_wrist":
+            change = f"rolls its forearm {abs(amount):g}° less through contact ({roll:g}° → {g_roll:g}°)"
+        else:
+            metric = FIX_TARGETS[fix_name][0]
+            unit, _ = METRICS[metric]
+            u = "°" if unit == "deg" else f" {unit}"
+            mine, theirs = you["metrics"].get(metric), ghost["metrics"].get(metric)
+            change = FIX_WORDS[fix_name].format(a=abs(amount))
+            if mine is not None and theirs is not None:
+                change += f" ({mine:g}{u} → {theirs:g}{u})"
+            change += " and keeps your forearm roll"
+        text += (f" The ghost {change}, so its face is {_face_words(face['ghost']['faceDeg'], face['crossCourt'])}"
+                 f" and its PREDICTED ball goes {_path_words(ghost_az['value'], x_ghost)}: {_ball_words(ghost['ball'])}.")
     text += (f" Ball speed {you['ball']['speedKmh']:g} → {ghost['ball']['speedKmh']:g} km/h, {racket_note['label']}."
              f" ASSUMED: the {elevation:g}° launch angle{'' if spot_measured else ' and the spot on court'}.")
     if spot_measured:
@@ -854,11 +922,21 @@ def compare(swing: dict, fix_name: str, amount: float, fps_real: float | None = 
         side_name = "right" if hand == "R" else "left"
         raise GuessedFixError(f"Not available on this swing: the camera couldn't see the {side_name} {target[1]} "
                               "around contact (guessed joints), so a ghost of this fix would edit a guess.")
+    edit, sign = FIXES[fix_name]
+    roll, aim_skip = aim_roll(swing)
+    if edit == "wrist_roll" and roll is None and float(amount) != 0.0:
+        raise GuessedFixError("Not available on this swing: a firm-wrist ghost needs the forearm roll from a "
+                              + (f"wrist sensor timed as the coach judges it. {aim_skip}" if aim_skip else
+                                 "wrist sensor, and this swing has no usable wrist-sensor data."))
     Pc = court_axes(P)
     you_aim = estimate_azimuth(Pc + shift, hand, contact)  # as _on_court measures it
     ghost_swing = apply_fix(played, fix_name, amount, fps_real, hand)  # the fix alone
     aim, contact_turn = None, 0.0
-    if intent is not None:
+    if intent is not None and roll is not None:
+        # The racket face aims both balls (below), so no shoulder turn is held for the line.
+        aim = {"intent": intent, "label": "STATED" if stated else "TARGET", "targetDeg": INTENT_AIMS[intent],
+               "applied": False, "why": FACE_AIMS_WHY}
+    elif intent is not None:
         aim, contact_turn = contact_turn_for_intent(
             P, Pc, hand, contact, you_aim, intent, fix_name, amount, stated=stated,
             arm_guessed=guessed_arm_at_contact(played, hand, contact),
@@ -867,29 +945,61 @@ def compare(swing: dict, fix_name: str, amount: float, fps_real: float | None = 
         ghost_swing = apply_fix(played, fix_name, amount, fps_real, hand, contact_turn_deg=contact_turn)
     ghost_swing.pop("wrist", None)  # your forearm phone's data isn't the ghost's: nothing may coach it
 
+    # Wrist sensor: both balls are aimed by the racket face from the forearm roll (wrist_face.py).
+    # Only the wrist_roll edit (firm_wrist) changes the ghost's roll. No sensor data: as before.
+    you_face = ghost_face = face = None
+    if roll is not None:
+        good = good_roll(stroke, roll["mock"])
+        ghost_roll = max(0.0, roll["roll"] + sign * float(amount)) if edit == "wrist_roll" else roll["roll"]
+        you_face = face_aim(roll["roll"], good, anchor[0], roll["mock"])
+        ghost_face = face_aim(ghost_roll, good, anchor[0], roll["mock"])
+        face = {
+            "applied": True, "label": you_face["label"], "assumed": True, "mock": roll["mock"],
+            "facePerRollDeg": FACE_PER_ROLL_DEG, "capDeg": FACE_CAP_DEG, "goodRollDeg": good,
+            "intent": {"value": INTENT, "azimuthDeg": INTENT_AZIMUTH_DEG, "label": "STATED"},
+            "crossCourt": f"towards the {cross_court_wall(anchor[0])} wall",
+            "you": {"rollDeg": you_face["rollDeg"], "faceDeg": you_face["faceDeg"]},
+            "ghost": {"rollDeg": ghost_face["rollDeg"], "faceDeg": ghost_face["faceDeg"]},
+            "method": (f"ASSUMPTION (not measured): the racket face turns {FACE_PER_ROLL_DEG:g} deg per degree of "
+                       f"forearm roll above the {stroke}'s good median ({good:g} deg), capped at {FACE_CAP_DEG:g}, "
+                       f"and the ball leaves along the face, from your stated {INTENT}. The roll is "
+                       + ("MOCK sensor data." if roll["mock"] else "measured by the wrist sensor.")),
+        }
+
     you_racket, ghost_racket, racket_note = racket_speeds(
         swing, estimate_racket_speed(played, fps_real, hand), estimate_racket_speed(ghost_swing, fps_real, hand))
-    you, you_launch = _on_court(played, fps_real, hand, contact, shift, elevation, you_racket, you_aim)
-    ghost_aim = ghost_azimuth(you_aim, Pc, court_axes(to_array(ghost_swing)), hand, contact)
-    ghost, ghost_launch = _on_court(ghost_swing, fps_real, hand, contact, shift, elevation, ghost_racket, ghost_aim)
+    you, you_launch = _on_court(played, fps_real, hand, contact, shift, elevation, you_racket, you_aim, you_face)
+    ghost_cam = ghost_azimuth(you_aim, Pc, court_axes(to_array(ghost_swing)), hand, contact)
+    ghost, ghost_launch = _on_court(ghost_swing, fps_real, hand, contact, shift, elevation, ghost_racket,
+                                    ghost_cam, ghost_face)
+    if aim_skip:  # a real roll the coach can't judge: the camera's aim, saying why
+        for launch in (you_launch, ghost_launch):
+            az = launch["azimuth"]
+            launch["azimuth"] = {**az, "method": f"{az['method']}. {aim_skip}", "wristRollUsed": False}
+        face = {"applied": False, "reason": aim_skip, "contactSource": swing["wrist"].get("contact_source")}
     # The ghost inherits your frames' flags, so the same metrics are left out on both sides.
     _drop_guessed(you, guessed)
     _drop_guessed(ghost, guessed)
     delta = _delta(you, ghost)
-    edit, _ = FIXES[fix_name]
     where = ("The launch angle is assumed; the spot on court is measured from the video (court lines "
              "and the hitting-side foot)" if spot else "The launch angle and the spot on court are assumed")
     note = (f"Ball paths are PREDICTED. {where}; racket "
             "speed (from the forearm phone when the swing has usable wrist data, else the video), "
             "racket head and aim are estimated from the wrist and forearm until racket tracking exists.")
+    if roll is not None:
+        note += face_note(roll["mock"])
     fix = {"id": fix_name, "amount": float(amount), "unit": EDITS[edit]["unit"]}
     if aim is not None and aim["applied"]:
         note += _intent_note(aim)
         fix["aiming"] = aim["intent"]  # for the ghost legend: "turn shoulders less · aiming: straight drive"
-    fix["explain"] = explain_fix(fix_name, float(amount), stroke, you, ghost, you_launch, ghost_launch,
-                                 aim, elevation, spot is not None, racket_note)
+    if face is not None and face["applied"]:
+        fix["explain"] = explain_face_fix(fix_name, float(amount), stroke, you, ghost, you_launch, ghost_launch,
+                                          face, elevation, spot is not None, racket_note)
+    else:
+        fix["explain"] = explain_fix(fix_name, float(amount), stroke, you, ghost, you_launch, ghost_launch,
+                                     aim, elevation, spot is not None, racket_note)
     validation = None if tracked is None else _validation(swing, you["ball"], you_launch["azimuth"], tracked)
-    return {
+    out = {
         "fix": fix,
         "hand": hand,
         "contactFrame": contact,
@@ -930,6 +1040,9 @@ def compare(swing: dict, fix_name: str, amount: float, fps_real: float | None = 
         },
         **({} if validation is None else {"validation": validation}),
     }
+    if face is not None:
+        out["assumptions"]["face"] = face
+    return out
 
 
 def _measured_spot(spot: dict | None) -> dict | None:
