@@ -67,6 +67,9 @@ wrist?: {
   roll_change_abs_deg?: number;    // size of the forearm roll, -150..+100 ms around contact
   peak_roll_rate_abs_dps?: number; // fastest roll rate about the forearm axis in that window
   peak_angular_speed_dps?: number; // fastest total forearm turn rate in that window
+  contact_source?: "gyro peak" | "impact spike" | "double tap"; // what the window is centred on:
+                                   // the forearm's fastest turn, the ball's impact, or the tap clock
+                                   // (a shadow swing). Only "gyro peak" REAL entries are judged.
 };
 ```
 
@@ -89,9 +92,21 @@ a sensor:
 | `wrist_sensor_skipped` | why the sensor wasn't used, or null when it was |
 
 When `mock` is true, sensor fault labels end in "(MOCK sensor data)", and screens must
-show the data as mock. The `rolled_wrist` thresholds come from mock swings (source
-"mock wrist-sensor swings") until `python -m wrist.tune` is rerun on real ones. Its fix,
-`firm_wrist`, isn't animated, so it is never `ghost_ready`.
+show the data as mock. Mock entries are judged by the mock line (`MOCK_ROLLED_WRIST`).
+Real entries are judged by per-stroke lines from one real shadow session, and only when
+the roll is timed at the forearm's fastest turn (`contact_source: "gyro peak"`). A real
+entry timed any other way isn't checked: `rolled_wrist` is in `not_measured`, and
+`wrist_sensor_skipped` says why.
+
+The PREDICTED aim follows the same rule: `physics/wrist_face.py` uses the roll for the racket
+face only when the coach judges it (the same three fields, finite; mock, or real and
+`"gyro peak"`). Otherwise compare keeps the camera's aim, and `assumptions.face` says why.
+
+Its fix, `firm_wrist`, is animated by physics (`physics/ghost.py`, the `wrist_roll` edit).
+So for a sensor-backed `rolled_wrist` the coach returns `ghost_fix: "firm_wrist"`, with
+`ghost_ready: true` and `ghost_fix_amount` set (the roll above the stroke's good median).
+`/ghost` offers `firm_wrist` only when the coach names it (`COACH_ONLY_FIXES` in
+`app/ghost/compare.ts`, #85), not from `public/swings/catalogue.json`.
 
 ## Swing label join
 

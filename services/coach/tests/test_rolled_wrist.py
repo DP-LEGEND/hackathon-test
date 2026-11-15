@@ -13,8 +13,9 @@ from pathlib import Path
 import pytest
 
 from coach.agent import coach_swing, main as agent_main
+from physics.compare import compare
 from coach.faults import (
-    MOCK_ROLLED_WRIST, MOCK_SENSOR_NOTE, THRESHOLDS, WRIST_MOCK, detect_faults, measure_swing, severity,
+    FAULTS, MOCK_ROLLED_WRIST, MOCK_SENSOR_NOTE, THRESHOLDS, WRIST_MOCK, detect_faults, measure_swing, severity,
 )
 from coach.wrist_sensor import NO_SENSOR, attach_wrist, sensor_metrics
 from wrist.load import load_recording
@@ -60,7 +61,8 @@ def test_a_big_roll_fires_with_the_measured_number(sample: dict, stroke: str) ->
     assert f["value"] == value and f["unit"] == "deg" and f["threshold"] == rule["threshold"]
     assert f["severity"] == pytest.approx(severity(value, rule)) == 1.0
     assert f["label"] == f"Rolled wrist: forearm rolls {value:.0f} deg through contact (wrist sensor)"
-    assert f["fix"] == "firm_wrist" and f["ghost_ready"] is False, "no ghost edit for the wrist yet"
+    assert f["fix"] == "firm_wrist" and f["ghost_ready"] is True, "the ghost squares the face (physics/wrist_face.py)"
+    assert f["cue"] == "Keep your wrist firm through contact."
     assert f["source"] == rule["source"] and f["confidence"] == "low"
     assert f["fix_amount"] == pytest.approx(round(value - rule["target"], 1))
 
@@ -108,8 +110,7 @@ def test_attach_wrist_by_swing_id_without_mutating(sample: dict) -> None:
 def test_coach_result_stays_valid_json_with_wrist_data(sample: dict) -> None:
     result = coach_swing({**sample, "wrist": wrist(RULE["severe_at"])}, stroke="backhand")
     json.dumps(result, allow_nan=False)
-    ids = [result["fault"]["id"], *result["other_faults"]]
-    assert "rolled_wrist" in ids
+    assert result["fault"]["id"] == "rolled_wrist"  # the sensor fault leads
     assert result["metrics"]["forearm_roll_deg"] == RULE["severe_at"]
 
 
@@ -120,7 +121,7 @@ def test_agent_cli_attaches_the_wrist_file(sample: dict, tmp_path: Path, monkeyp
     agent_main()
     result = json.loads(capsys.readouterr().out)
     assert result["metrics"]["wrist_sensor"] == "sensor"
-    assert "rolled_wrist" in [result["fault"]["id"], *result["other_faults"]]
+    assert result["fault"]["id"] == "rolled_wrist"
 
 
 def test_end_to_end_from_a_mock_sensor_export(sample: dict, tmp_path: Path) -> None:
@@ -145,6 +146,67 @@ def test_end_to_end_from_a_mock_sensor_export(sample: dict, tmp_path: Path) -> N
             assert f["fix_amount"] == pytest.approx(round(f["value"] - MOCK_ROLLED_WRIST["target"], 1))
         else:
             assert f is None, swing_id
+
+
+@pytest.mark.parametrize(("stroke", "roll", "mock"), [("backhand", 137.6, False), ("forehand", 157.2, False),
+                                                       ("forehand", 60.8, True)])
+def test_the_coach_amount_squares_the_face_so_the_ghost_goes_straight(sample: dict, stroke: str, roll: float,
+                                                                       mock: bool) -> None:
+    """Coach -> physics: firm_wrist at the coach's amount brings the roll to the good median."""
+    swing = {**sample, "wrist": wrist(roll, mock=mock)}
+    f = rolled(swing, stroke)
+    assert f is not None and f["fix"] == "firm_wrist" and f["ghost_ready"] is True
+    assert f["cue"] == "Keep your wrist firm through contact."
+    r = compare(swing, "firm_wrist", f["fix_amount"], side=stroke)
+    launch, face = r["assumptions"]["launch"], r["assumptions"]["face"]
+    assert launch["ghost"]["azimuth"]["value"] == 0.0 and face["ghost"]["faceDeg"] == 0.0
+    assert abs(launch["you"]["azimuth"]["value"]) == face["you"]["faceDeg"] > 0
+    assert launch["you"]["azimuth"]["label"] == ("MOCK (sensor)" if mock else "ASSUMED")
+
+
+
+@pytest.mark.parametrize("mock", [False, True])
+def test_a_rolled_wrist_leads_the_call_even_when_a_pose_fault_is_worse(sample: dict, mock: bool) -> None:
+    """The camera can't see forearm roll, so the sensor fault is the new information: it leads."""
+    rule = MOCK_ROLLED_WRIST if mock else RULE
+    swing = {**sample, "wrist": wrist(rule["threshold"] + 1, mock=mock)}   # only just rolled
+    faults = detect_faults(swing, "backhand")
+    wrist_fault, pose = faults[0], faults[1:]
+    assert wrist_fault["id"] == "rolled_wrist" and pose, "the sample has pose faults to put after it"
+    assert max(f["severity"] for f in pose) > wrist_fault["severity"]  # a pose fault is worse, yet follows
+    assert pose == sorted(pose, key=lambda f: (-f["severity"], FAULTS[f["id"]]["priority"]))
+    result = coach_swing(swing, stroke="backhand")
+    assert result["fault"]["id"] == "rolled_wrist" and result["cue"] == "Keep your wrist firm through contact."
+    assert result["other_faults"] == [f["id"] for f in pose]
+    assert result["ghost_fix"] == "firm_wrist" and result["ghost_note"] is None
+    assert result["fault"]["label"].endswith(MOCK_SENSOR_NOTE) is mock
+
+
+@pytest.mark.parametrize("mock", [False, True])
+def test_a_sensor_backed_rolled_wrist_is_the_ready_firm_wrist_ghost(sample: dict, mock: bool) -> None:
+    """No catalogue gate: /ghost offers firm_wrist when the coach names it (Sammy's #85, COACH_ONLY_FIXES
+    in app/ghost/compare.ts), so the coach names it whatever public/swings/catalogue.json lists."""
+    from pipeline.live import ghost_choice
+    rule = MOCK_ROLLED_WRIST if mock else RULE
+    swing = {**sample, "wrist": wrist(rule["severe_at"], mock=mock)}
+    result = coach_swing(swing, stroke="backhand")
+    assert result["fault"]["id"] == "rolled_wrist" and result["fix"] == "firm_wrist" and result["ghost_ready"] is True
+    assert result["ghost_fix"] == "firm_wrist" and result["ghost_note"] is None
+    assert result["ghost_fix_amount"] == result["fix_amount"] > 0
+    assert ghost_choice(result) == ("firm_wrist", result["fix_amount"])
+
+
+def test_a_normal_roll_leaves_the_pose_order_alone(sample: dict) -> None:
+    with_sensor = coach_swing({**sample, "wrist": wrist(RULE["target"])}, stroke="backhand")
+    without = coach_swing(sample, stroke="backhand")
+    assert with_sensor["fault"]["id"] == without["fault"]["id"] != "rolled_wrist"
+    assert with_sensor["other_faults"] == without["other_faults"]
+
+
+def test_without_a_sensor_the_order_is_severity_then_priority(sample: dict) -> None:
+    for stroke in ("forehand", "backhand"):
+        faults = detect_faults(sample, stroke)
+        assert faults == sorted(faults, key=lambda f: (-f["severity"], FAULTS[f["id"]]["priority"]))
 
 
 @pytest.mark.parametrize("stroke", ["backhand", "forehand"])

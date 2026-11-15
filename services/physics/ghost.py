@@ -55,6 +55,12 @@ EDITS = {
         "doc": "+ opens the stance (feet more square to the shot), - closes it (more side-on). "
                "Turns the hips and legs about the hip centre; blends in before contact and holds.",
     },
+    "wrist_roll": {
+        "unit": "deg", "max_abs": 90.0,
+        "doc": "+ rolls the forearm more through contact, - less (a firmer wrist). The camera can't "
+               "see forearm roll, so no joint moves: compare() turns the racket face, and so the "
+               "PREDICTED ball's aim, from the roll (physics/wrist_face.py). Needs wrist-sensor data.",
+    },
 }
 
 # Coaching fixes the ghost can show: fix id -> (edit id, sign of the amount).
@@ -65,6 +71,7 @@ FIXES = {
     "turn_shoulders_less": ("shoulder_turn", -1.0),
     "hold_wrist_cock": ("wrist_early", -1.0),
     "close_stance": ("stance_open", -1.0),
+    "firm_wrist": ("wrist_roll", -1.0),
 }
 
 # Elbow edit timing (ms around contact): full strength from 100 ms before to 50 ms after.
@@ -225,8 +232,12 @@ def _stance_open(P, size, *, hand, contact, fps, up):
             P[i, LOWER_BODY] = rotate(P[i, LOWER_BODY], centre[i], up, beta[i])
 
 
+def _wrist_roll(P, size, *, hand, contact, fps, up):
+    """No joint moves: the pose has no forearm roll. compare() reads the edit (physics/wrist_face.py)."""
+
+
 _EDIT_FUNCS = {"elbow_bend": _elbow_bend, "shoulder_turn": _shoulder_turn, "wrist_early": _wrist_early,
-               "stance_open": _stance_open}
+               "stance_open": _stance_open, "wrist_roll": _wrist_roll}
 
 
 def edit_swing(swing: dict, edits: Mapping[str, float], fps_real: float | None = None,
