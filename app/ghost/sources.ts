@@ -237,7 +237,8 @@ export function buildEntries(catalogue: Catalogue, api: ApiState): SwingEntry[] 
             key: `${LIVE_KEY}${s.id}`,
             id: s.id,
             origin: "api",
-            label: s.label ? `${s.id} · labelled ${words(s.label)}` : s.id,
+            // Judges see "Uploaded swing", not a hash id; the picker shows the id in its small mono line.
+            label: s.label ? `Uploaded swing · labelled ${words(s.label)}` : "Uploaded swing",
             fault: s.label,
             isDefault: false,
             swingFile: null,
