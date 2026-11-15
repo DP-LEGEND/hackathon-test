@@ -218,8 +218,15 @@ const FIX_NAMES: Record<string, string> = {
   bend_elbow: "Bend elbow",
   close_stance: "Close stance",
   turn_shoulders_less: "Turn shoulders less",
-  firm_wrist: "Firm wrist",
+  firm_wrist: "Keep your wrist firm",
 };
+
+/**
+ * Ghost fixes with no demo size, by unit. Physics applies firm_wrist (#80) only at the coach's
+ * amount (the forearm roll above the stroke's good median, on a swing with wrist-sensor data), so
+ * the page offers it only when the coach names it with that amount (sources.ts fixOptionsFor).
+ */
+export const COACH_ONLY_FIXES: Readonly<Record<string, string>> = { firm_wrist: "deg" };
 
 const METRIC_NAMES: Record<string, string> = {
   elbow_at_contact_deg: "Elbow at contact",
