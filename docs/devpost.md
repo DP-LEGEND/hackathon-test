@@ -5,6 +5,7 @@ aren't on main yet. When each one merges, move it into the built sections and de
   "Voice coach" (negations, a measured number turned into an amount or target, 60 s retry)
 - Anam avatar lines (coach/avatar.py) are on main but only run from the command line
 - Adaption: physics/synth.py writes a local adaption.jsonl; no fine-tune has been run or used yet
+- Sponsor tracks: the Adaption section is a TODO (see its comment). Figma: add who designed the file.
 Delete this comment before pasting into Devpost.
 -->
 
@@ -107,8 +108,52 @@ These work on their own branches or from the command line and are being merged i
 | **Anthropic Claude** (Opus 5.5) | Words the coach's fix as one spoken sentence in `/ghost`, checked against the measured numbers and the fix direction |
 | **ElevenLabs** | Reads that sentence aloud: the **Hear the coach** button |
 | **Claude Code** and **Codex** | How four people built it in parallel in one weekend |
+| **Figma** | Designing the landing page; the build follows its desktop and mobile frames |
 
 In progress: **Anam** (avatar), see *Anam avatar* above, and **Adaption** (training-data export), see *Adaption* above.
+
+## Sponsor tracks
+
+### Anthropic
+
+Claude is the coach's voice, not its judge. Measuring the swing and choosing the fix are plain code. Claude does the one thing code does badly: it turns the chosen fix into one natural spoken sentence.
+
+- **Where.** The **Hear the coach** button on `/ghost` (`services/coach/live_voice.py`). Claude Opus 5.5 (`claude-opus-5-5`) gets the coach's fault, cue and tip, never the raw metrics, and returns one sentence.
+- **How we call it.**
+  - The Anthropic Python SDK with structured outputs: `messages.parse` against a one-field schema.
+  - Low effort, since it's a one-sentence rewording.
+  - Server-side fallback: if the model declines, the API retries on a fallback model in the same call.
+  - A 10 s timeout and no client retries, so a slow call never holds up the page.
+- **Checked by code before it's spoken.**
+  - Every number must be one the code measured, written exactly (same sign, digits and unit) and quoted once inside its measured phrase.
+  - Spelled-out numbers, negations ("don't", "never"), a measured number turned into an amount or a target, and the opposite direction word are rejected.
+  - A sentence that fails is never spoken: the coach's own cue is used instead. The caption says **worded by Claude** only when it was.
+- **Built with Claude Code.** Four people and several AI agents worked in one repo under a shared `CLAUDE.md`: folder ownership, git safety rules and the product's honesty rules (code measures, Claude explains; every ball path is PREDICTED).
+
+### ElevenLabs
+
+- **Where.** The same **Hear the coach** button: ElevenLabs reads Claude's sentence, or the coach's own cue, aloud (`services/coach/voice.py`). It runs server-side only. The key never reaches the browser, which gets the MP3 inside the response.
+- **Model and voice.** `eleven_turbo_v2_5` for low latency, and the "George" voice, which works on the free plan. MP3 at 44.1 kHz.
+- **Cheap and demo-safe.**
+  - A successful clip is cached per swing on disk, so replaying a swing costs nothing and plays offline. A failed call is retried after 60 s.
+  - A 12 s timeout keeps it inside the web proxy's 30 s limit.
+  - With no key, or after a timeout, the caption still shows, with no audio and no error.
+- **Also.** The coach's avatar lines (`coach/avatar.py`) can be voiced with ElevenLabs from the command line (`--speak`).
+
+### Figma
+
+- **Designed in Figma.** The landing page (`/`) and the `/demo` entry follow the Figma frames: desktop and mobile landing, the three process panels, and the full-screen mobile menu (`components/ghost/DESIGN.md`).
+- **Taken from the design.** The charcoal and mint palette, the wordmark hierarchy, and the ghost and trail artwork as separate SVGs, so the ghost moves as you scroll. There's a still version for reduced motion.
+- **Checked against the frames** at desktop, tablet and phone sizes. The landing links only to flows that work: **Demo** (the saved 3D replay) and **Your swing** (upload). The process panels are labelled illustrations, not footage.
+
+### Adaption
+
+<!--
+TODO (Adaption): write this once a fine-tune has actually run and Ghost uses it: which model,
+trained on which rows, and what it does in the app. Until then, keep the one line below (or
+delete this heading). Never claim a fine-tune that hasn't happened.
+-->
+Training-data export is ready; no fine-tune has been run yet. See *Adaption* under *In progress* above.
 
 ## Team
 
