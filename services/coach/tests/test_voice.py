@@ -63,18 +63,31 @@ def test_default_voice_is_free_plan_voice() -> None:
 # On the python.org macOS Python the system CA store is empty until "Install Certificates" is
 # run, so the call failed certificate checks and reported "Could not reach ElevenLabs".
 
+class FakeContext:
+    """Records load_verify_locations calls instead of loading certificates."""
+
+    def __init__(self) -> None:
+        self.loaded: list[dict] = []
+
+    def load_verify_locations(self, **kwargs) -> None:
+        self.loaded.append(kwargs)
+
+
 def test_ssl_context_is_built_with_certifis_ca_bundle(monkeypatch: pytest.MonkeyPatch) -> None:
     import certifi
 
     seen: dict = {}
+    context = FakeContext()
 
     def fake_context(*args, **kwargs):
-        seen.update(kwargs)
-        return "context"
+        seen["args"], seen["kwargs"] = args, kwargs
+        return context
 
     monkeypatch.setattr(voice.ssl, "create_default_context", fake_context)
-    assert voice._ssl_context() == "context"
-    assert seen == {"cafile": certifi.where()}
+    assert voice._ssl_context() is context
+    # The default roots stay (no cafile replaces them); certifi's bundle is added on top.
+    assert seen == {"args": (), "kwargs": {}}
+    assert context.loaded == [{"cafile": certifi.where()}]
 
 
 def test_the_elevenlabs_request_uses_that_context(monkeypatch: pytest.MonkeyPatch, fake_key: str) -> None:
@@ -102,14 +115,16 @@ def test_the_elevenlabs_request_uses_that_context(monkeypatch: pytest.MonkeyPatc
 
 def test_without_certifi_the_system_store_is_used(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: dict = {}
+    context = FakeContext()
 
     def fake_context(*args, **kwargs):
         seen["kwargs"] = kwargs
-        return "default"
+        return context
 
     monkeypatch.setattr(voice, "certifi", None)
     monkeypatch.setattr(voice.ssl, "create_default_context", fake_context)
-    assert voice._ssl_context() == "default" and seen["kwargs"] == {}
+    assert voice._ssl_context() is context and seen["kwargs"] == {}
+    assert context.loaded == []
 
 
 def test_the_real_context_loads_certifis_certificates() -> None:

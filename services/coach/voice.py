@@ -40,10 +40,12 @@ def _ssl_context() -> ssl.SSLContext:
     The python.org macOS Python has no CA store until "Install Certificates.command" is run,
     so HTTPS fails certificate checks and the voice reports "Could not reach ElevenLabs".
     certifi's bundle works on every machine. Without certifi, use the system default.
+    certifi is added on top of the default roots, so the system store and SSL_CERT_FILE still apply.
     """
-    if certifi is None:
-        return ssl.create_default_context()
-    return ssl.create_default_context(cafile=certifi.where())
+    context = ssl.create_default_context()
+    if certifi is not None:
+        context.load_verify_locations(cafile=certifi.where())
+    return context
 
 
 class VoiceError(RuntimeError):
