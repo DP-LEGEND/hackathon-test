@@ -164,6 +164,26 @@ class SkeletonFigure {
     this.group.visible = false; // until the first pose arrives
   }
 
+  /** Where the figure is drawn in a width × height view (px), from its points; null when hidden. */
+  screenBox(camera: THREE.Camera, width: number, height: number): Box | null {
+    if (!this.group.visible) return null;
+    let left = Infinity;
+    let top = Infinity;
+    let right = -Infinity;
+    let bottom = -Infinity;
+    for (const point of this.points) {
+      screenPoint.copy(point).applyMatrix4(this.group.matrixWorld).project(camera);
+      if (screenPoint.z > 1) continue; // behind the camera
+      const x = (screenPoint.x * 0.5 + 0.5) * width;
+      const y = (-screenPoint.y * 0.5 + 0.5) * height;
+      left = Math.min(left, x);
+      right = Math.max(right, x);
+      top = Math.min(top, y);
+      bottom = Math.max(bottom, y);
+    }
+    return Number.isFinite(left) ? { left, top, width: right - left, height: bottom - top } : null;
+  }
+
   update(pose: SkeletonPose) {
     const p = this.points;
     for (let j = 0; j < pose.joints.length; j++) p[j].fromArray(pose.joints[j]);
@@ -255,6 +275,9 @@ function pathTag(text: string, colour: string, above: boolean): CSS2DObject {
 const TAG_GAP = 6;
 /** How close a tag may come to the edge of the view (px). */
 const TAG_INSET = 8;
+/** Room between a PREDICTED tag and a figure's joints (px); also covers the head and joint spheres. */
+const FIGURE_GAP = 14;
+const screenPoint = new THREE.Vector3();
 
 type Box = { left: number; top: number; width: number; height: number };
 
@@ -562,8 +585,10 @@ export class SkeletonScene {
   private applyView() {
     const target = new THREE.Vector3();
     if (this.view === "court") {
-      target.set(COURT.width / 2, 1.2, COURT.length * 0.45);
-      this.camera.position.set(COURT.width / 2 + 2.6, 5.2, COURT.length + 5.2);
+      // Aimed a little lower and further back, and pulled back ~10%, so landing rings in the back
+      // court stay in view and the figures sit clear of the overlays at the top left.
+      target.set(COURT.width / 2, 1, COURT.length * 0.5);
+      this.camera.position.set(COURT.width / 2 + 2.86, 5.4, COURT.length * 0.5 + 11.6);
     } else {
       // From behind the player (they face the front wall, -z), a little towards the middle.
       const { x, z } = this.placement.spot;
@@ -633,6 +658,17 @@ export class SkeletonScene {
         width: r.width + 2 * TAG_GAP,
         height: r.height + 2 * TAG_GAP,
       }));
+    // The figures too, so a tag never sits on the player's feet or head.
+    for (const figure of [this.you, this.ghost]) {
+      const box = figure.screenBox(this.camera, width, height);
+      if (!box) continue;
+      blocked.push({
+        left: box.left - FIGURE_GAP,
+        top: box.top - FIGURE_GAP,
+        width: box.width + 2 * FIGURE_GAP,
+        height: box.height + 2 * FIGURE_GAP,
+      });
+    }
     for (const tag of this.tags) {
       const el = tag.element;
       if (el.style.display === "none") continue; // behind the camera
