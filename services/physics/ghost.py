@@ -55,6 +55,12 @@ EDITS = {
         "doc": "+ opens the stance (feet more square to the shot), - closes it (more side-on). "
                "Turns the hips and legs about the hip centre; blends in before contact and holds.",
     },
+    "wrist_roll": {
+        "unit": "deg", "max_abs": 90.0,
+        "doc": "+ rolls the forearm more through contact, - less (a firmer wrist). The camera can't "
+               "see forearm roll, so no joint moves: compare() turns the racket face, and so the "
+               "PREDICTED ball's aim, from the roll (physics/wrist_face.py). Needs wrist-sensor data.",
+    },
 }
 
 # Coaching fixes the ghost can show: fix id -> (edit id, sign of the amount).
@@ -65,6 +71,7 @@ FIXES = {
     "turn_shoulders_less": ("shoulder_turn", -1.0),
     "hold_wrist_cock": ("wrist_early", -1.0),
     "close_stance": ("stance_open", -1.0),
+    "firm_wrist": ("wrist_roll", -1.0),
 }
 
 # Elbow edit timing (ms around contact): full strength from 100 ms before to 50 ms after.
@@ -225,8 +232,12 @@ def _stance_open(P, size, *, hand, contact, fps, up):
             P[i, LOWER_BODY] = rotate(P[i, LOWER_BODY], centre[i], up, beta[i])
 
 
+def _wrist_roll(P, size, *, hand, contact, fps, up):
+    """No joint moves: the pose has no forearm roll. compare() reads the edit (physics/wrist_face.py)."""
+
+
 _EDIT_FUNCS = {"elbow_bend": _elbow_bend, "shoulder_turn": _shoulder_turn, "wrist_early": _wrist_early,
-               "stance_open": _stance_open}
+               "stance_open": _stance_open, "wrist_roll": _wrist_roll}
 
 
 def edit_swing(swing: dict, edits: Mapping[str, float], fps_real: float | None = None,
@@ -236,8 +247,9 @@ def edit_swing(swing: dict, edits: Mapping[str, float], fps_real: float | None =
     edits: e.g. {"elbow_bend": 12, "shoulder_turn": -15, "wrist_early": 40, "stance_open": -20}
     fps_real: real capture rate (frames per real second). Default: swing["fps"].
     hand: "R" or "L". Default: the hand the pipeline recorded, else whichever wrist moves fastest.
-    contact_turn_deg: for a shoulder_turn edit only, a turn held at contact (+ = shoulders turned
-        further through, more open; - = less). The coil still changes by exactly the edit's size.
+    contact_turn_deg: for a shoulder_turn edit only (its size may be 0: the hold alone), a turn
+        held at contact (+ = shoulders turned further through, more open; - = less). The coil
+        still changes by exactly the edit's size.
 
     The result carries `contactFrame` (filled in if the input lacked it),
     `synthetic: true`, and an `edits` list saying what was changed.
@@ -251,7 +263,7 @@ def edit_swing(swing: dict, edits: Mapping[str, float], fps_real: float | None =
             raise ValueError(f"{k} must be within +/-{EDITS[k]['max_abs']:g} {EDITS[k]['unit']}, got {v}")
     if contact_turn_deg:
         lim = EDITS["shoulder_turn"]["max_abs"]
-        if not edits.get("shoulder_turn"):
+        if "shoulder_turn" not in edits:
             raise ValueError("contact_turn_deg only works with a shoulder_turn edit")
         if not np.isfinite(contact_turn_deg) or abs(contact_turn_deg) > lim:
             raise ValueError(f"contact_turn_deg must be within +/-{lim:g} deg, got {contact_turn_deg}")
@@ -262,7 +274,7 @@ def edit_swing(swing: dict, edits: Mapping[str, float], fps_real: float | None =
     up = up_vector(P)
     held = {"contact_turn_deg": float(contact_turn_deg)} if contact_turn_deg else {}
     for k, v in edits.items():
-        if v != 0:
+        if v != 0 or (k == "shoulder_turn" and held):
             _EDIT_FUNCS[k](P, float(v), hand=hand, contact=contact, fps=fps, up=up,
                            **(held if k == "shoulder_turn" else {}))
     out = from_array(swing, P)
@@ -270,7 +282,7 @@ def edit_swing(swing: dict, edits: Mapping[str, float], fps_real: float | None =
     out["synthetic"] = True
     out["edits"] = list(swing.get("edits") or []) + [
         {"id": k, "size": float(v), "unit": EDITS[k]["unit"],
-         **({"contactTurnDeg": float(contact_turn_deg)} if k == "shoulder_turn" and held else {})}
+         **({"contactTurnDeg": round(float(contact_turn_deg), 2)} if k == "shoulder_turn" and held else {})}
         for k, v in edits.items()
     ]
     if "id" in swing:
@@ -289,9 +301,14 @@ def apply_fix(swing: dict, fix_id: str, amount: float, fps_real: float | None = 
     """Return the ghost: the swing with one coaching fix applied. Never mutates the input.
 
     fix_id: one of FIXES, e.g. apply_fix(swing, "straighten_elbow", 12).
-    contact_turn_deg: turn_shoulders_less/more only, a turn held at contact (see edit_swing).
+    contact_turn_deg: a shoulder turn held at contact (see edit_swing), e.g. to aim the ghost. For
+        a fix other than the shoulder fixes it is added as a size-0 shoulder_turn edit after the
+        fix, so the fix itself is unchanged and the backswing coil keeps its size.
     """
     if fix_id not in FIXES:
         raise ValueError(f"unknown fix {fix_id!r}; known fixes: {', '.join(FIXES)}")
     edit, sign = FIXES[fix_id]
-    return edit_swing(swing, {edit: sign * amount}, fps_real, hand, contact_turn_deg=contact_turn_deg)
+    edits = {edit: sign * amount}
+    if contact_turn_deg and edit != "shoulder_turn":
+        edits["shoulder_turn"] = 0.0
+    return edit_swing(swing, edits, fps_real, hand, contact_turn_deg=contact_turn_deg)

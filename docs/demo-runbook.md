@@ -14,6 +14,48 @@ For the live demo on aryan's Mac. Code: `~/hackathon-demo` (a git worktree). Pyt
 
 Two people: **PRESENTER** talks, **OPERATOR** drives the laptop and terminal.
 
+## 08:00: one real hit with the wrist sensor
+
+`scripts/make_sensor_sample.py` turns one real hit (iPhone slow-motion clip + Sensor Logger export) into a saved `/ghost` sample with the Wrist sensor panel. Work in `~/hackathon-sensor`: it has this script and #74's real-hit lines. Don't use `~/hackathon-demo` while it's pinned before #74, because its coach judges real hits with the mock line. Replace every `<…>` before you press Enter.
+
+1. Get the latest script:
+```
+cd ~/hackathon-sensor
+```
+```
+git pull
+```
+2. Copy the clip and the export out of Downloads (copy, never move):
+```
+cp ~/Downloads/<clip>.MOV ~/Downloads/<export>.zip data/raw/
+```
+3. Find the first tap. Scrub QuickTime to the second the hand first lands on the phone, then make a sheet of about 1.5 playback seconds around it:
+```
+~/ghost-env/bin/python scripts/make_sensor_sample.py data/raw/<clip>.MOV --sheet <start> <end>
+```
+Open the image the `sheet:` line names. Pick the **first** frame where the hand touches the phone: that's `f<frame>`.
+
+4. Make the sample. For `--window`, give playback times from about 1 s before contact to 1 s after (6–8 playback seconds at 4×). There's a ball, so don't add `--shadow`, and don't add `--wrist-timing impact`:
+```
+~/ghost-env/bin/python scripts/make_sensor_sample.py data/raw/<clip>.MOV data/raw/<export>.zip --tap f<frame> --window <start> <end> --stroke <forehand|backhand>
+```
+5. Open the image the `TAP CHECK:` line names (`data/raw/tapcheck_<id>.jpg`). Every row must show the hand on the phone, and on tap 1 the hand must not be on it yet 3 frames before. If not, go back to step 3: a wrong tap makes every number wrong, and nothing else catches it.
+6. Check the output. All four must hold:
+   - There's a line `impact: sensor … s; the pipeline's contact (audio-transient) is … ms from it`, and **no** `no impact near this swing` warning. If that warning shows on a hit with a ball, the `--window` or the tap is off: go back to step 5.
+   - `wrist timing: roll window on the fastest forearm turn, <±N> ms from the impact spike`.
+   - `rolled_wrist: checked, …` names the real line (forehand 145.75°, backhand 124.3°) and the forearm roll. If it says `rolled_wrist: NOT CHECKED`, don't quote a wrist call from this sample.
+   - It ends with `wrote … appended catalogue entry '<id>'` and `open: /ghost?swing=<id> on the web app run from …`.
+7. **Send these to aryan if the `wrist timing` offset is 250 ms or more either way** (the search stops at ±300 ms), or if the script stopped with `no forearm-turn peak … within 300 ms`:
+   - the `impact:`, `wrist:`, `wrist timing:` and `rolled_wrist:` lines, or the whole output if it stopped;
+   - the tap-check image.
+
+   Don't rerun with `--wrist-timing impact` to get past it: the coach then doesn't check the wrist.
+8. To see the sample, start a web app from this folder on a spare port (3000 and 8000 are the show's):
+```
+npx next dev -p 3461
+```
+Open `http://localhost:3461/ghost?swing=<id>`. The sample's files are local demo data: don't commit them.
+
 ## Before you go on (30 minutes before)
 
 **1. Put the demo folder on the latest main.**
@@ -210,6 +252,10 @@ Beat 4 shows this tab only if **all four** hold. Otherwise beat 4 is spoken and 
 3. **http://localhost:8000/health**: shows `{"ok":true}`. Reload it if you're unsure whether the service is up.
 4. **The backup video**, once it's recorded at the freeze.
 
+**Saved-sample backup:** with the web app and Python service running, run `npx playwright install chromium` once to prepare the browser and video encoder.
+Run `node scripts/record_backup_demo.ts` (Node 26); set `GHOST_DEMO_URL` for a different localhost port.
+It saves silent 1920×1080 video to ignored `out/backup-demo.webm`, holding each beat for 3 seconds using saved samples only (no live upload, camera or keys). Never commit the video.
+
 **Warm up:** in tab 1, click through the forehand and the backhand all the way to the court, then click **Try another swing**. The dashed box under the swing list should say *"The live service is running but has no processed swings…"*. That's right for the show: `~/ghost-stage` stays empty until the stage upload. If it lists live swings, terminal tab 1 isn't running with an empty `~/ghost-stage`. If it says *"The live Python service isn't running"*, terminal tab 1 isn't up.
 
 ## The 3-minute click path
@@ -231,8 +277,8 @@ Browser tab 1 is http://localhost:3000/ghost, opened directly: `/` is now a land
 |---|---|---|
 | The top card, **"Forehand · over-rotation (acted and flagged) · iPhone 120 fps (IMG_2115 16:55)"** (badges *Saved sample*, *Demo swing*) | **The coach's call:** *"Over-rotation: hips turn 157°"*, cue *"Turn a little less and stay balanced through the ball."* | Code measured the swing; the coach names one fix and only quotes numbers the code measured. |
 | **Show the ghost** | **Your ghost makes the fix.** Fix *Turn shoulders less*, badge *Coach's pick*. *What the fix changes:* Shoulder turn 137.6° → 85°. It's already playing: click **0.25× slow-mo** only | Orange is the swing they played, cyan is the same body with one fix. |
-| **Show the court** | **Where the ball goes:** two paths, each labelled *PREDICTED · … · in* | These are **PREDICTED**; there's no real ball. Launch angle is **assumed, 12° for a forehand**. Checked by eye against the video, the real ball hit about 1.8 m. We set the 12° from this clip, so it's a sanity check, not a test. |
-| Scroll down with the pointer **beside** the replay, not over it (scrolling over the 3D view zooms it) | The **Ball** panel (*PREDICTED*): ball speed 133.2 → 119.1 km/h, **front wall height 1.92 → 1.86 m** | *(Read the front wall heights from this panel.)* |
+| **Show the court** | **Where the ball goes:** two paths, each labelled *PREDICTED · … · in*: orange goes cross-court, cyan goes straight down the right wall | These are **PREDICTED**; there's no real ball on screen. Launch angle is **assumed, 12° for a forehand**. Theirs goes cross-court; the ghost's goes straight down the wall. In the real video, the tracked ball hit the front wall at 1.17 m; Ghost predicted 1.45 m from body motion alone (0.28 m off, launch angle assumed). We set the 12° from this clip, so it's a check, not a test. |
+| Scroll down with the pointer **beside** the replay, not over it (scrolling over the 3D view zooms it) | The **Ball** panel (*PREDICTED*): ball speed 133.2 → 119.1 km/h, **front wall height 1.45 → 1.44 m** | *(Read the front wall heights from this panel.)* |
 | Scroll back up to the top, again with the pointer beside the replay | The step bar and **Try another swing** | |
 
 ### Beat 2: backhand, nothing to fix (1:16–1:34)
@@ -289,14 +335,15 @@ All of these come from the saved samples in `public/swings/` and are the same on
 | Ghost fix (Coach's pick) | Turn shoulders less, 52.6° | None: the coach flagged nothing, so beat 2 stops at the coach's call |
 | Body change | Shoulder turn 137.6° → 85° | Not shown |
 | Ball speed (PREDICTED) | 133.2 → 119.1 km/h | Not shown |
-| **Front wall height (PREDICTED)** | **1.92 → 1.86 m** | 0.78 m, not shown in beat 2 |
-| Lands from front wall | 8.97 → 8.04 m | Not shown |
+| **Ball direction (PREDICTED)** | **Cross-court (13.5° across) → straight down the right wall** | Straight (aim ASSUMED), not shown |
+| **Front wall height (PREDICTED)** | **1.45 → 1.44 m** | 0.77 m, not shown in beat 2 |
+| Lands from front wall | 9.69 → 8.84 m | Not shown |
 | Racket speed (ESTIMATE) | 28.3 → 25.3 m/s | Not shown |
 | **Launch angle (ASSUMED)** | **12°**, not on screen | 3°, not said in beat 2 |
 | Court | Two paths | Not shown |
-| Video check (checked by eye, not on screen) | Real ball hit about 1.8 m high | Real ball hit 0.5–0.8 m high, not said in beat 2 |
+| Real-ball check (tracked from the real video, not on screen) | The tracked ball hit the front wall at 1.17 m; Ghost predicted 1.45 m from body motion alone (0.28 m off, launch angle assumed) | Tracked 0.69 m vs 0.77 m predicted; the real ball went 23° cross-court where the aim is assumed straight. Not said in beat 2 |
 
-The launch angle isn't shown as a number. The court panel's footnote says the launch angle and the spot on court are assumed, so say the angle out loud and call it assumed.
+The launch angle isn't shown as a number. The court panel's footnote says the launch angle is assumed and the spot on court is measured from the video, so say the angle out loud and call it assumed.
 
 ## If X breaks, do Y
 
@@ -317,7 +364,7 @@ The launch angle isn't shown as a number. The court panel's footnote says the la
 
 - Only say numbers that are on screen. There are two named exceptions:
   - the **launch angle** (12° forehand, 3° backhand), which you always call **assumed**
-  - the **video-check heights** (about 1.8 m forehand, 0.5–0.8 m backhand), which you always say were **checked by eye against the video**
+  - the **real-ball check** on the forehand (the tracked ball hit the front wall at 1.17 m; Ghost predicted 1.45 m from body motion alone, 0.28 m off, launch angle assumed), which you always say was **tracked from the real video**
 - Every ball path is **PREDICTED**. Say the word the first time a path appears.
 - The wrist sensor: show terminal tab 3 only when it passes the checks in *Tab 3*, and call its numbers an **ESTIMATE**. Never show *MOCK DATA* on stage; if you mention the mock tests, say **mock**.
 - If a judge asks about the ghost's aim, the answer is: "We aimed it at the straight drive the player said he meant." That's #73's behaviour: until #73 merges, the ghost's ball direction comes from its own wrist motion, so don't give this answer before then.

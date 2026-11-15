@@ -26,7 +26,14 @@ For live swings only (saved samples never call it), the page asks `GET /api/coac
 
 A 404 (a swing the service doesn't know), any error, a 28 s timeout (just under the proxy's 30 s) or a malformed answer all keep the plain caption, with no message. Only a voice with audio is kept until the page reloads. No voice, or one without audio (no ElevenLabs key yet), isn't kept: the next time the caption shows, for example after **Check again** finds the service or once the service has its keys, the page asks again. Only an inline `data:audio/…` clip or a path on this site is played: one leading `/`, no backslash, and it must resolve to the page's own origin.
 
-The ghost starts on the coach's `ghost_fix` with `ghost_fix_amount`, and the caption shows `ghost_note` when the ghost shows a different fix from the top fault. Older coach files without those fields fall back to the worst fault physics can fix. Fixes the coach didn't flag use a small fixed demo size (`demoAmounts` in the catalogue). A fix physics can't apply to a swing shows its reason. When a fix leaves both PREDICTED paths identical, the court step draws one path and says so.
+### Physics' explanation and the real-ball check
+
+Two optional compare fields. A file without them looks exactly as before.
+
+- **`fix.explain`** (text): physics' chain from body to ball for the fix, e.g. "Your hips turned 157°, which pointed the racket face 13.5° across court, so the ball went cross-court. …". It shows under the cue on the coach's call, in the caption's secondary text, after "Physics:" so it isn't read as the coach's words. It shows only when the ghost's fix is the one the coach's top fault names, so it explains the cue on screen, and never when physics made no correction.
+- **`validation`** (`{predicted, tracked, error_deg, error_m, method}`): physics checked the PREDICTED ball against a real ball. On the court step a small badge says "Reference check against a real ball: 1.92 m predicted, 1.90 m tracked", with "Method: tracked" or "Method: hand-labelled" under it. It's worded as a reference check, so the court view's "There is no real ball" lines stay as they are. The numbers print as the file holds them. The badge needs `predicted` and `tracked` as numbers and `method` as one of those two values; anything else is ignored rather than shown.
+
+The ghost starts on the coach's `ghost_fix` with `ghost_fix_amount`, and the caption shows `ghost_note` when the ghost shows a different fix from the top fault. Older coach files without those fields fall back to the worst fault physics can fix. Fixes the coach didn't flag use a small fixed demo size (`demoAmounts` in the catalogue). **Keep your wrist firm** (`firm_wrist`, #80) has no demo size: physics applies it only at the coach's amount, on a swing with wrist-sensor data. So it's offered only when the coach names it, as a sensor swing's ghost fix or a flagged fault, and no other swing's list changes (`COACH_ONLY_FIXES` in `compare.ts`). A fix physics can't apply to a swing shows its reason. When a fix leaves both PREDICTED paths identical, the court step draws one path and says so.
 
 ## Wrist sensor panel
 
@@ -46,7 +53,9 @@ Every value is labelled **MEASURED (sensor)**, plus **MOCK** when the file says 
 
 Pipeline skeletons are hip-centred, y up, and face +z. The court's front wall is at z = 0, so `skeleton-scene.ts` turns both figures 180° about y (`[x, y, z] -> [-x, y, -z]`). Seen from behind, a right-handed forehand then hits on the player's right, as in the phone video. On the court step, the player moves so the hitting wrist at the contact frame is exactly over the PREDICTED ball's first point in x and z. The wrist is joint 16 for `R` and 15 for `L`, from `metadata.hand`, else the hand compare used. The ghost moves by the same offset. Height isn't snapped: the wrist is about 0.9 m up at contact and the ball's assumed start is 0.6 m, so the feet stay on the floor and the ball leaves about 30 cm below the hand. Physics would need to start the ball at the measured hand height for both to line up.
 
-None of that applies when a compare response has top-level `"coordinateSystem": "court"`: physics has then already placed the swings in court coordinates. Those swings are drawn exactly as given, with no turn, floor offset or placement. Only the side-by-side 1.1 m ghost shift stays, and the ghost's PREDICTED ball path moves with it, so it still leaves from the ghost's hand. The page notes that this is display only. The camera aims at the hips at contact. Any other value, or no field, means hip-centred. The raw swing shown before a compare loads is always hip-centred.
+None of that applies when a compare response has top-level `"coordinateSystem": "court"`: physics has then already placed the swings in court coordinates. Those swings are drawn exactly as given, with no turn, floor offset or placement. The camera aims at the hips at contact. Any other value, or no field, means hip-centred. The raw swing shown before a compare loads is always hip-centred.
+
+Either way the ghost stands at the player's own spot: overlaid by default, half transparent, or 0.4 m beside the player towards the middle of the court with **Side by side**. Both PREDICTED ball paths are never moved: they're drawn where physics put them, from the contact point, in both layouts.
 
 ## Measured or guessed
 

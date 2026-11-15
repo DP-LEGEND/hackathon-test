@@ -1,0 +1,18 @@
+{
+ "clip": "IMG_2115.MOV",
+ "frameSize": [1920, 1080],
+ "source": "hand-picked on a median of 41 frames spread over the clip (the player is removed); red lines at their centre, which sits 0.025 m below the WSF top-edge heights and 0.025 m in front of the short line's back edge",
+ "points": [
+  {"name": "front wall: out line, left corner", "court": [0.0, 4.545, 0.0], "px": [106, 66]},
+  {"name": "front wall: out line, right corner", "court": [6.4, 4.545, 0.0], "px": [1117, 17]},
+  {"name": "front wall: service line, left end", "court": [0.0, 1.755, 0.0], "px": [126, 500]},
+  {"name": "front wall: service line, right end", "court": [6.4, 1.755, 0.0], "px": [1133, 456]},
+  {"name": "front wall: tin, left end", "court": [0.0, 0.455, 0.0], "px": [132, 713]},
+  {"name": "front wall: tin, right end", "court": [6.4, 0.455, 0.0], "px": [1143, 666]},
+  {"name": "floor: front-left corner", "court": [0.0, 0.0, 0.0], "px": [133, 787]},
+  {"name": "floor: front-right corner", "court": [6.4, 0.0, 0.0], "px": [1144, 735]},
+  {"name": "floor: short line x right service box line", "court": [4.8, 0.0, 5.415], "px": [791, 982]},
+  {"name": "floor: short line x right wall", "court": [6.4, 0.0, 5.415], "px": [1371, 957]},
+  {"name": "floor: short line x half-court line", "court": [3.2, 0.0, 5.415], "px": [215, 1010]}
+ ]
+}

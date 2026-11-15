@@ -1,4 +1,4 @@
-// Coach caption laid over the 3D view, like a subtitle: the top fault, its cue and, when the
+// The coach's call beside the 3D view (under it on phones): the top fault, its cue and, when the
 // ghost shows a different fix, the coach's ghost_note. Orange = what the player did (the
 // fault), cyan = the fix (the cue). "No fault" never claims more than the coach checked.
 // Once the coach's voice (#60) loads, its cue replaces the plain one, with a play button when
@@ -49,7 +49,20 @@ export function noFaultInWhatWasChecked(caption: CoachCaption): boolean {
 /** The cue when the coach found no fault but couldn't check everything: never an outright all-clear. */
 export const PARTIAL_CHECK_CUE = "Nothing to fix in what the coach could check.";
 
-export function CoachCaptionBar({ state, size }: { state: CaptionState; size: "large" | "compact" }) {
+export function CoachCaptionBar({
+  state,
+  size,
+  explain = null,
+}: {
+  state: CaptionState;
+  size: "large" | "compact";
+  /**
+   * Physics' chain from body to ball for the coach's fix (compare `fix.explain`); null hides it.
+   * Shown after "Physics:", outside the quoted cue, so it never reads as the coach's words, and
+   * folded behind "How physics got this" so the call stays short enough to fit beside the view.
+   */
+  explain?: string | null;
+}) {
   const large = size === "large";
   // No fault, but the coach skipped checks or couldn't check some faults: its own cue ("Nothing to
   // fix on this swing") and any voice, which words or speaks that cue, would read as an all-clear
@@ -57,13 +70,11 @@ export function CoachCaptionBar({ state, size }: { state: CaptionState; size: "l
   const partial = state.kind === "ready" && noFaultInWhatWasChecked(state.caption);
   const voice = state.kind === "ready" && !partial ? (state.voice ?? null) : null;
   return (
-    <div className="pointer-events-none absolute inset-x-3 bottom-3 flex justify-center sm:inset-x-5 sm:bottom-5">
+    <div className="flex justify-center">
       <figure
-        data-tag-avoid
         className={cn(
           "w-full max-w-3xl rounded-[20px] border bg-background/92 text-center shadow-[0_12px_40px_rgb(0_0_0/0.4)]",
           large ? "px-4 py-3.5 sm:px-8 sm:py-5" : "px-3 py-2.5 sm:px-6 sm:py-3",
-          state.kind === "error" && "pointer-events-auto",
         )}
         aria-live="polite"
       >
@@ -104,6 +115,16 @@ export function CoachCaptionBar({ state, size }: { state: CaptionState; size: "l
             >
               “{partial ? PARTIAL_CHECK_CUE : (voice?.cue ?? state.caption.cue)}”
             </blockquote>
+            {explain && !partial && (
+              <details className="mt-1.5 text-muted-foreground">
+                <summary className="mx-auto w-fit cursor-pointer rounded-sm text-xs underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
+                  How physics got this
+                </summary>
+                <p className={cn("mt-1.5 text-left text-pretty", large ? "text-sm sm:text-base" : "text-xs sm:text-sm")}>
+                  Physics: {explain}
+                </p>
+              </details>
+            )}
             {voice && (voice.audioUrl || voice.wordedByClaude) && (
               <div className="mt-2 flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
                 {voice.audioUrl && <PlayVoice url={voice.audioUrl} large={large} />}
@@ -173,7 +194,7 @@ function PlayVoice({ url, large }: { url: string; large: boolean }) {
       type="button"
       variant="outline"
       size={large ? "sm" : "xs"}
-      className={cn(look.pill, "pointer-events-auto")}
+      className={look.pill}
       onClick={play}
     >
       <Volume2 data-icon="inline-start" />

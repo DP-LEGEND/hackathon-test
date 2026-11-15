@@ -17,4 +17,20 @@ export const look = {
   chip: "h-6 rounded-full px-2.5 text-[11px] font-semibold tracking-[0.06em]",
   /** A number with its unit, kept on one line ("133.2 km/h"). */
   value: "whitespace-nowrap tabular-nums",
+  /** The 3D view's height below lg, where the coach's call sits under it and the stage grows with the call. */
+  stageView: "h-[max(20rem,min(52vh,520px))]",
+  /**
+   * The replay stage's height from lg up (#76), where the coach's call sits beside the 3D view: it
+   * fills the screen under the page heading, so the whole view and the call fit above the fold (a
+   * 516 px view at 1440×900, 336 px at 1280×720). A long call scrolls in its column instead of
+   * resizing the view. The loading placeholder uses both heights, so the page doesn't jump.
+   */
+  stageWide: "lg:h-[max(20rem,min(760px,calc(100svh-24rem)))]",
+  /**
+   * A row of buttons that scrolls sideways on phones instead of wrapping into several rows; from
+   * `sm` up its buttons join the parent's wrapping row. The padding keeps focus rings unclipped.
+   */
+  phoneRow: "-mx-1 flex snap-x gap-2 overflow-x-auto p-1 sm:contents",
+  /** A button in a `phoneRow`. */
+  phoneRowItem: "shrink-0 snap-start",
 } as const;

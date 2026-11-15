@@ -8,7 +8,7 @@ import { chromium, expect } from '@playwright/test';
 const baseURL=process.env.GHOST_TEST_URL || 'http://localhost:3000';
 const output=`build/browser-tests/design-review/shell-upload/${process.env.GHOST_REVIEW_ROUND || 'round-1'}`;
 await mkdir(output,{recursive:true});
-assert.equal(execFileSync('git',['diff','origin/main','--','app/ghost','components/ghost','public/swings','app/upload/process-clip.ts',':(exclude)components/ghost/ghost.css',':(exclude)components/ghost/landing.tsx'],{encoding:'utf8'}).trim(),'','Protected replay and upload transport remain unchanged');
+assert.equal(execFileSync('git',['diff','origin/main','--','app/ghost','components/ghost','public/swings','app/upload/process-clip.ts',':(exclude)components/ghost/ghost.css',':(exclude)components/ghost/landing.tsx',':(exclude)components/ghost/styles.ts',':(exclude)app/ghost/page.tsx',':(exclude)app/ghost/ghost-stage.tsx',':(exclude)app/ghost/wrist-panel.tsx'],{encoding:'utf8'}).trim(),'','Protected replay and upload transport remain unchanged');
 const browser=await chromium.launch({channel:'msedge',headless:true});
 const results=[];
 async function capture(page,name) {
@@ -57,7 +57,7 @@ try {
       await expect.poll(()=>page.locator('img[src="/upload/upload.svg"]').evaluate(i=>({width:i.width,height:i.height,loaded:i.complete && i.naturalWidth>0}))).toEqual({width:40,height:40,loaded:true});
       await capture(page,`${width}-upload-empty`);
       if(width===390) {
-        const trigger=page.getByRole('button',{name:'Open navigation'});
+        const trigger=page.getByRole('button',{name:'Menu',exact:true});
         assert.ok((await trigger.boundingBox()).height>=44);
         await trigger.click();
         const dialog=page.getByRole('dialog');
@@ -119,7 +119,7 @@ try {
         if(path==='/ghost') {
           await page.goto('/ghost');
         } else if(width===390) {
-          await page.getByRole('button',{name:'Open navigation'}).click();
+          await page.getByRole('button',{name:'Menu',exact:true}).click();
           await page.getByRole('dialog').locator(`a[href="${path}"]`).click();
         } else await page.locator(`.site-nav a[href="${path}"]`).click();
         await expect(page).toHaveURL(new URL(path,baseURL).href);

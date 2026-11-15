@@ -290,8 +290,27 @@ def test_no_hold_is_exactly_the_old_edit(good):
     assert zero["edits"] == plain["edits"]
 
 
+def test_a_held_turn_needs_a_shoulder_turn_edit(good):
+    with pytest.raises(ValueError, match="only works with a shoulder_turn"):
+        edit_swing(good, {"elbow_bend": 12}, contact_turn_deg=5)
+
+
+def test_any_fix_can_hold_a_turn_at_contact_on_top_of_itself(good):
+    # apply_fix adds a size-0 shoulder_turn edit after the fix: the fix is unchanged, the
+    # backswing coil keeps its size, and the trunk is turned at contact by the held amount.
+    plain = apply_fix(good, "straighten_elbow", 12)
+    held = apply_fix(good, "straighten_elbow", 12, contact_turn_deg=5)
+    assert held["edits"] == plain["edits"] + [{"id": "shoulder_turn", "size": 0.0, "unit": "deg", "contactTurnDeg": 5.0}]
+    c = contact_frame(good)
+    P0, P1 = to_array(plain), to_array(held)
+    up = up_vector(P0)
+    y0, y1 = shoulder_yaw(P0, up), shoulder_yaw(P1, up)
+    assert shoulder_coil(y1, c)[1] == pytest.approx(shoulder_coil(y0, c)[1], abs=1e-6)  # coil kept
+    assert abs(((y1[c] - y0[c] + 180) % 360) - 180) == pytest.approx(5.0, abs=1e-6)  # turned at contact
+    assert measure(held, hand="R")["elbow_at_contact_deg"] == pytest.approx(measure(plain, hand="R")["elbow_at_contact_deg"])
+
+
 @pytest.mark.parametrize("kwargs,msg", [
-    (dict(fix_id="straighten_elbow", amount=12, contact_turn_deg=5), "only works with a shoulder_turn"),
     (dict(fix_id="turn_shoulders_less", amount=15, contact_turn_deg=61), "within"),
     (dict(fix_id="turn_shoulders_less", amount=15, contact_turn_deg=float("nan")), "within"),
 ])
