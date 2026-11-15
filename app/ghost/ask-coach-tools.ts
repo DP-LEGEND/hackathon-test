@@ -84,7 +84,15 @@ export function swingMetrics(compare: CompareResult) {
   };
 }
 
-export function ghostResult(compare: CompareResult, option: FixOption | null) {
+/** Who picked the ghost's fix: the coach only when it is the coach's chosen ghost_fix. */
+export const COACHS_PICK = "the coach's pick";
+export const YOUR_PICK = "the fix you selected";
+
+/**
+ * `ghostFix` is the coach's chosen ghost_fix (CoachCaption.ghostFix). A fix the player picked is
+ * never called the coach's pick, even when it fixes another fault the coach found (`flagged`).
+ */
+export function ghostResult(compare: CompareResult, option: FixOption | null, ghostFix: string | null) {
   const ball = (who: "you" | "ghost") => ({
     outcome: OUTCOME_WORDS[compare.ball.outcome[who]],
     speed: say(compare.ball.speedKmh[who], "km/h"),
@@ -94,7 +102,7 @@ export function ghostResult(compare: CompareResult, option: FixOption | null) {
   return {
     fix: fixName(compare.fix.id),
     size: say(compare.fix.amount, compare.fix.unit),
-    coachs_pick: option?.flagged ?? false,
+    picked_by: ghostFix !== null && compare.fix.id === ghostFix ? COACHS_PICK : YOUR_PICK,
     demo_size_not_a_coached_fix: option ? !option.flagged : false,
     ghost_is_your_swing_unchanged: compare.noCorrection,
     note: compare.ghostNote,
@@ -126,14 +134,14 @@ export function askCoachTools(get: () => AskCoachData): Record<string, AskCoachT
     get_ghost_result: async () => {
       const d = get();
       const compare = await compareFor(d);
-      return compare ? ghostResult(compare, d.activeFix) : { error: "No ghost is available for this swing." };
+      return compare ? ghostResult(compare, d.activeFix, d.caption?.ghostFix ?? null) : { error: "No ghost is available for this swing." };
     },
     simulate_fix: async ({ fix }) => {
       const d = get();
       const option = d.fixes.find((f) => f.id === fix);
       if (!option) return { error: `No such fix on this swing. Fixes: ${d.fixes.map((f) => f.id).join(", ")}` };
       if (option.unavailable) return { error: option.unavailable };
-      return ghostResult(await loadCompareFor(d.entry, option, 0), option);
+      return ghostResult(await loadCompareFor(d.entry, option, 0), option, d.caption?.ghostFix ?? null);
     },
   };
 }
