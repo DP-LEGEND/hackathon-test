@@ -327,7 +327,7 @@ export function GhostStage({
               {timeline && (
                 <span
                   aria-hidden
-                  className="pointer-events-none absolute top-0 flex h-[30px] -translate-x-1/2 flex-col items-center text-[0.65rem] leading-none text-muted-foreground"
+                  className="pointer-events-none absolute top-0 flex h-[30px] -translate-x-1/2 flex-col items-center text-[11px] leading-none text-muted-foreground"
                   style={{ left: `calc(${contactPct}% + ${(0.5 - contactPct / 100) * THUMB_PX}px)` }}
                 >
                   contact
