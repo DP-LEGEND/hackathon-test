@@ -4,22 +4,24 @@
 
 import { RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { YOU_COLOUR } from "./colours";
 import { checkedEverything, tidyLabel, type CaptionState } from "./coach-caption";
 import { fixName, formatValue, listWords, notCheckedFaults, type CoachCaption } from "./compare";
+import { look } from "./look";
 import { ReasonList } from "./reason-list";
 
 export function CoachDetails({ state }: { state: CaptionState }) {
   return (
-    <section aria-labelledby="coach-details" className="flex flex-col gap-2 rounded-xl border bg-card p-3 sm:p-4">
-      <h3 id="coach-details" className="text-sm font-medium">
+    <section aria-labelledby="coach-details" className={cn(look.card, look.pad, "flex flex-col gap-3")}>
+      <h3 id="coach-details" className={look.title}>
         How the coach decided
       </h3>
       {state.kind === "loading" && <p className="text-sm text-muted-foreground">Loading…</p>}
       {state.kind === "error" && (
         <div role="alert" className="flex flex-wrap items-center gap-3">
           <p className="text-sm text-muted-foreground">The coach&apos;s call didn&apos;t load: {state.message}</p>
-          <Button variant="outline" size="sm" onClick={state.onRetry}>
+          <Button variant="outline" size="sm" className={look.pill} onClick={state.onRetry}>
             <RotateCcw data-icon="inline-start" />
             Try again
           </Button>
@@ -27,7 +29,7 @@ export function CoachDetails({ state }: { state: CaptionState }) {
       )}
       {state.kind === "ready" && (
         <>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-[13px] leading-relaxed text-muted-foreground">
             Code measured the {state.caption.stroke || "swing"}. The fault library ranks every number past its threshold,
             worst first, and the top one is the call.
           </p>
@@ -38,16 +40,20 @@ export function CoachDetails({ state }: { state: CaptionState }) {
                 : "No fault found in what was checked: every measurement the coach could make is inside its threshold. What it couldn't check is below."}
             </p>
           ) : (
-            <ol className="flex flex-col divide-y">
+            <ol className="flex flex-col divide-y rounded-2xl border bg-(--media) px-4">
               {state.caption.faults.map((fault, i) => (
-                <li key={fault.id} className="flex flex-col gap-0.5 py-2 first:pt-0 last:pb-0 sm:flex-row sm:items-baseline sm:gap-3">
+                <li key={fault.id} className="flex flex-col gap-1 py-3 sm:flex-row sm:items-baseline sm:gap-4">
                   <span className="w-6 shrink-0 font-mono text-xs text-muted-foreground">#{i + 1}</span>
                   <span className="font-medium sm:flex-1" style={{ color: YOU_COLOUR }}>
                     {tidyLabel(fault.label)}
                   </span>
-                  <span className="text-xs text-muted-foreground tabular-nums">
-                    measured {formatValue(fault.value, fault.unit)}
-                    {fault.threshold !== null && <>, fault past {formatValue(fault.threshold, fault.unit)}</>}
+                  <span className="text-xs leading-relaxed text-muted-foreground tabular-nums sm:text-right">
+                    measured <span className={look.value}>{formatValue(fault.value, fault.unit)}</span>
+                    {fault.threshold !== null && (
+                      <>
+                        , fault past <span className={look.value}>{formatValue(fault.threshold, fault.unit)}</span>
+                      </>
+                    )}
                     {fault.severity !== null && <> · severity {fault.severity}</>} · {fault.confidence} confidence · fix:{" "}
                     {fixName(fault.fix).toLowerCase()}
                     {fault.fix === state.caption.ghostFix && " · the ghost shows this"}
@@ -72,7 +78,7 @@ export function CoachDetails({ state }: { state: CaptionState }) {
 function NotJudgedList({ caption }: { caption: CoachCaption }) {
   if (checkedEverything(caption)) return null;
   return (
-    <div className="flex flex-col gap-1.5 border-t pt-2">
+    <div className="flex flex-col gap-1.5 border-t pt-3">
       <ReasonList label="Not judged" items={caption.notJudged} />
       {caption.notMeasured.length > 0 && (
         <p className="text-xs text-muted-foreground">
