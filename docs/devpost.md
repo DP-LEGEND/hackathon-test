@@ -5,7 +5,7 @@ aren't on main yet. When each one merges, move it into the built sections and de
 - Adaption: physics/synth.py writes a local adaption.jsonl; no fine-tune has been run or used yet
 - Sponsor tracks: the Adaption section is a TODO (see its comment).
 - Figma: before submitting, set the Figma file's share link to "anyone with the link can view", or
-  judges can't open the case study. When #82 merges, drop "(pending merge)" in the Figma section.
+  judges can't open the case study.
 Delete this comment before pasting into Devpost.
 -->
 
@@ -108,7 +108,7 @@ These work on their own branches or from the command line and are being merged i
 | **Anthropic Claude** (Opus 5.5) | Words the coach's fix as one spoken sentence on swings you upload, checked against the measured numbers and the fix direction |
 | **ElevenLabs** | Reads that sentence aloud: the **Hear the coach** button on uploaded (Live) swings |
 | **Claude Code** and **Codex** | How four people built it in parallel in one weekend |
-| **Figma** | Designing the landing page; the build follows its desktop and mobile frames |
+| **Figma** | Designing the landing page, upload page and swing view; the build follows its frames |
 
 In progress: **Anam** (avatar), see *Anam avatar* above, and **Adaption** (training-data export), see *Adaption* above.
 
@@ -153,7 +153,7 @@ Claude is the coach's voice, not its judge. Measuring the swing and choosing the
 **How the Figma frames drove the restyle.** The Figma file came first, and each restyle pull request was built straight from its frames:
 - **#71** turned the landing frames (desktop and mobile) and the process panels into the new home page and `/demo`.
 - **#76** built `/upload` from the upload frame, and gave every page one shared header and navigation, local fonts and the charcoal-and-mint palette.
-- **#82** (pending merge) restyles the swing view to the two Results frames: the step bar, the coach card, the ghost legend and the PREDICTED tags.
+- **#82** restyles the swing view to the two Results frames: the step bar, the coach card, the ghost legend and the PREDICTED tags.
 
 The data, the coach's wording and the PREDICTED labels didn't change; only the design did.
 
