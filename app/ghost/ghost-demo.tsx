@@ -217,11 +217,13 @@ export function GhostDemo({ requestedSwing }: { requestedSwing: string | null })
       : { you: ballView(compare.you.ball, "you"), ghost: ballView(compare.ghost.ball, "ghost") };
   }, [onCourt, compare, samePath]);
 
-  // The coach's cue as speech (#60): asked for only on a step that shows the caption (the coach's
-  // call onwards, so not for the demo swing preloading behind the swing list), once the coach has
-  // answered and the live service is online. It can take seconds; the plain caption shows
-  // meanwhile, and stays if there's no voice (null). A null isn't kept: coming back asks again.
-  const voiceWanted = step !== "swing" && coach.status === "ready" && api.status === "online";
+  // The coach's cue as speech (#60), for live swings only: saved samples never call the voice
+  // route. Asked for only on a step that shows the caption (the coach's call onwards), once the
+  // coach has answered and the live service is online. It can take seconds; the plain caption
+  // shows meanwhile, and stays if there's no voice (null). Only a voice with audio is kept, so
+  // coming back without one asks again.
+  const voiceWanted =
+    entry?.origin === "api" && step !== "swing" && coach.status === "ready" && api.status === "online";
   const voicePromise = useMemo(() => (entry && voiceWanted ? loadVoiceFor(entry) : null), [entry, voiceWanted]);
   const voice = useAsync(voicePromise);
 

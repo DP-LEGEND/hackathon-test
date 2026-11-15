@@ -218,7 +218,9 @@ export function GhostStage({
   // Joints drawn faded on your current frame, named so the fade is never only visual.
   const fadedNow = you ? [...new Set(fadedJointsAt(you.guessed, youFrame).map(jointWords))] : [];
   const fadedLabel = fadedNow.length > 2 ? `${fadedNow.slice(0, 2).join(", ")} +${fadedNow.length - 2}` : fadedNow.join(", ");
-  // Solid joints count as measured only on a frame the file marks, for every figure drawn.
+  // Solid joints count as measured only on a frame the file marks, for every figure drawn, and
+  // only when the file records visibility (summary.fields): with just `filled` or
+  // `approximatedJoints`, the legend says "not flagged as guessed" instead of "measured from video".
   const marked =
     you !== null && you.guessed.recorded[youFrame] === true && (ghost === null || ghost.guessed.recorded[ghostFrame] === true);
   const ready = layout !== null;
