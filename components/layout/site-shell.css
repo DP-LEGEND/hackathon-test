@@ -1,0 +1,51 @@
+:root {
+  --font-geist-sans: var(--ghost-body);
+  --font-geist-mono: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.site-shell { display: flex; flex-direction: column; min-height: 100dvh; }
+.site-content { flex: 1; min-width: 0; outline: none; }
+/* Protected replay pages declare .dark locally. Inherit the shell's semantic palette there. */
+.site-content > main.dark {
+  --background: inherit; --foreground: inherit; --card: inherit; --card-foreground: inherit;
+  --popover: inherit; --popover-foreground: inherit; --primary: inherit; --primary-foreground: inherit;
+  --secondary: inherit; --secondary-foreground: inherit; --muted: inherit; --muted-foreground: inherit;
+  --accent: inherit; --accent-foreground: inherit; --border: inherit; --input: inherit; --ring: inherit;
+  --destructive: inherit;
+}
+.site-skip { position: fixed; top: -100px; left: 16px; z-index: 100; padding: 12px 20px; border-radius: 8px; background: var(--primary); color: var(--primary-foreground); }
+.site-skip:focus-visible { top: 12px; }
+.site-header { display: flex; align-items: center; gap: 48px; height: 104px; padding: 0 64px; width: 100%; max-width: 1600px; margin: 0 auto; }
+.site-brand { display: inline-flex; align-items: center; min-height: 44px; font: 700 24px var(--ghost-wordmark), sans-serif; letter-spacing: -1px; }
+.site-nav { display: flex; gap: 48px; }
+.site-nav a { display: flex; align-items: center; min-height: 44px; border-bottom: 2px solid transparent; color: var(--muted-foreground); }
+.site-nav a:hover, .site-nav a[aria-current=page] { color: var(--foreground); border-color: var(--primary); }
+.site-menu-trigger { display: none; min-height: 44px; min-width: 88px; border-radius: 999px; margin-left: auto; }
+.site-menu { max-width: none !important; width: 100vw !important; height: 100dvh; overflow-y: auto; top: 0 !important; left: 0 !important; transform: none !important; border-radius: 0 !important; padding: 24px !important; display: flex !important; flex-direction: column; gap: 24px !important; }
+.site-menu-heading { display: flex; justify-content: space-between; align-items: center; }
+.site-menu-close { min-height: 44px; border-radius: 999px; padding: 12px 24px; }
+.site-eyebrow { color: var(--primary); font-size: 11px; text-transform: uppercase; letter-spacing: 1.76px; }
+.site-menu nav { display: flex; flex-direction: column; gap: 8px; }
+.site-menu nav a { min-height: 60px; padding: 12px 16px; font: 800 24px var(--ghost-heading), sans-serif; border-radius: 12px; }
+.site-menu nav a[aria-current=page] { background: var(--accent); color: var(--primary); }
+.site-footer { display: flex; justify-content: space-between; gap: 24px; padding: 28px 64px; border-top: 1px solid var(--border); color: var(--muted-foreground); font-size: 12px; }
+.site-demo { max-width: 1440px; margin: auto; padding: 42px 64px 64px; }
+.site-page-heading { display: flex; flex-direction: column; gap: 24px; margin-bottom: 32px; }
+.site-page-heading h1 { font-size: 48px; line-height: 1.2; letter-spacing: -1.5px; }
+.site-page-heading > p:last-child { max-width: 800px; color: var(--muted-foreground); font-size: 17px; line-height: 1.6; }
+@media (max-width: 1000px) {
+  .site-header { padding: 0 32px; gap: 28px; }
+  .site-nav { gap: 28px; }
+  .site-demo { padding: 40px 32px 48px; }
+  .site-page-heading h1 { font-size: 40px; }
+}
+@media (max-width: 600px) {
+  .site-header { height: 88px; padding: 0 24px; }
+  .site-nav { display: none; }
+  .site-menu-trigger { display: inline-flex; }
+  .site-footer { padding: 24px; font-size: 10px; }
+  .site-demo { padding: 40px 24px 48px; }
+  .site-page-heading { gap: 20px; }
+  .site-page-heading h1 { font-size: 32px; letter-spacing: -.8px; }
+  .site-page-heading > p:last-child { font-size: 15px; }
+}

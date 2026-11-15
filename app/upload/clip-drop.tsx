@@ -3,7 +3,8 @@
 // Orange = what the player did, so the player's own clip is marked in orange.
 
 import { useCallback, useRef, useState } from "react";
-import { FileVideo, Upload, X } from "lucide-react";
+import { FileVideo, X } from "lucide-react";
+import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { YOU_COLOUR } from "../ghost/colours";
@@ -33,8 +34,8 @@ export function ClipDrop({
   const choose = () => inputRef.current?.click();
 
   return (
-    <section aria-labelledby="clip-heading" className="flex flex-col gap-3">
-      <h2 id="clip-heading" className="sr-only">
+    <section aria-labelledby="clip-heading" className="upload-clip-card">
+      <h2 id="clip-heading" className="upload-card-title">
         Your video
       </h2>
       <input
@@ -51,7 +52,7 @@ export function ClipDrop({
       {file ? (
         <div
           className={cn(
-            "flex flex-col gap-4 rounded-2xl border bg-card p-3 transition-colors sm:flex-row sm:items-center sm:p-4",
+            "upload-selected flex flex-col gap-4 rounded-2xl border bg-card p-3 transition-colors sm:flex-row sm:items-center sm:p-4",
             highlight && "border-dashed",
           )}
           style={lit}
@@ -85,17 +86,16 @@ export function ClipDrop({
       ) : (
         <div
           className={cn(
-            "flex flex-col items-center gap-4 rounded-2xl border-2 border-dashed px-6 py-10 text-center transition-colors sm:py-14",
+            "upload-dropzone flex flex-col items-center gap-4 rounded-2xl border-2 border-dashed px-6 py-10 text-center transition-colors sm:py-14",
             !highlight && "bg-card/40",
           )}
           style={lit}
         >
           <span
             aria-hidden
-            className="flex size-12 items-center justify-center rounded-xl border bg-background text-muted-foreground"
-            style={highlight ? { color: YOU_COLOUR } : undefined}
+            className="upload-symbol"
           >
-            <Upload className="size-5" />
+            <Image src="/upload/upload.svg" width={40} height={40} alt="" />
           </span>
           <div className="flex flex-col gap-1">
             <p className="text-lg font-medium text-balance">
@@ -105,7 +105,7 @@ export function ClipDrop({
               MOV, MP4, M4V or AVI · up to {formatBytes(MAX_CLIP_BYTES)}
             </p>
           </div>
-          <Button type="button" size="lg" className="h-10 px-4" disabled={disabled} onClick={choose}>
+          <Button type="button" variant="ghost" size="lg" className="upload-browse" disabled={disabled} onClick={choose}>
             <FileVideo data-icon="inline-start" />
             Choose a video
           </Button>
