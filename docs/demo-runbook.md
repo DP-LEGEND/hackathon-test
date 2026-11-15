@@ -187,13 +187,13 @@ The page has four steps: **Pick a swing → Coach's call → The ghost → On co
 |---|---|---|
 | The top card, **"Forehand · over-rotation (acted and flagged) · iPhone 120 fps (IMG_2115 16:55)"** (badges *Saved sample*, *Demo swing*) | **The coach's call:** *"Over-rotation: hips turn 157°"*, cue *"Turn a little less and stay balanced through the ball."* | Code measured the swing; the coach names one fix and only quotes numbers the code measured. |
 | **Show the ghost** | **Your ghost makes the fix.** Fix *Turn shoulders less*, badge *Coach's pick*. *What the fix changes:* Shoulder turn 137.6° → 85°. It's already playing: click **0.25× slow-mo** only | Orange is the swing they played, cyan is the same body with one fix. |
-| **Show the court** | **Where the ball goes:** two paths, each labelled *PREDICTED · … · in*. Panel: ball speed 133.2 → 119.1 km/h, **front wall height 1.92 → 1.88 m** | These are **PREDICTED**; there's no real ball. Launch angle is **assumed, 12° for a forehand**. Checked by eye against the video, the real ball hit about 1.8 m. |
+| **Show the court** | **Where the ball goes:** two paths, each labelled *PREDICTED · … · in*. Panel: ball speed 133.2 → 119.1 km/h, **front wall height 1.92 → 1.88 m** | These are **PREDICTED**; there's no real ball. Launch angle is **assumed, 12° for a forehand**. Checked by eye against the video, the real ball hit about 1.8 m. We set the 12° from this clip, so it's a sanity check, not a test. |
 
 ### Beat 2: backhand, nothing to fix (1:10–1:30)
 
 | Click | Screen shows | PRESENTER says |
 |---|---|---|
-| **Try another swing**, then **"Backhand · two-camera stereo · 120 fps"** | **The coach's call:** *"No fault found in what was checked"*, cue *"Nothing to fix on this swing. Hit the next one the same way."* | A backhand, filmed on two cameras at once. Nothing to fix in what the coach could check. It also says what it couldn't check: the wrist (no sensor on this swing) and checks that need the right elbow, which the camera couldn't see. That's exactly why we strapped a sensor to the arm. |
+| **Try another swing**, then **"Backhand · two-camera stereo · 120 fps"** | **The coach's call:** *"No fault found in what was checked"*, cue *"Nothing to fix in what the coach could check."* | A backhand, filmed on two cameras at once. Nothing to fix in what the coach could check. It also says what it couldn't check: the wrist (no sensor on this swing) and checks that need the right elbow, which the camera couldn't see. That's exactly why we strapped a sensor to the arm. |
 | **Pick a swing** (the step bar at the top) | The swing list | |
 
 Don't click **Show the ghost** here. With nothing flagged, the page would show an uncoached example edit.
@@ -233,7 +233,7 @@ All of these come from the saved samples in `public/swings/` and are the same on
 | | Forehand over-rotation | Backhand |
 |---|---|---|
 | Coach's call | Over-rotation: hips turn 157° | No fault found in what was checked |
-| Cue | Turn a little less and stay balanced through the ball. | Nothing to fix on this swing. Hit the next one the same way. |
+| Cue | Turn a little less and stay balanced through the ball. | Nothing to fix in what the coach could check. |
 | Ghost fix (Coach's pick) | Turn shoulders less, 52.6° | None: the coach flagged nothing, so beat 2 stops at the coach's call |
 | Body change | Shoulder turn 137.6° → 85° | Not shown |
 | Ball speed (PREDICTED) | 133.2 → 119.1 km/h | Not shown |
