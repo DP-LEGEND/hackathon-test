@@ -121,8 +121,7 @@ def build(mock_dir: Path, swing_name: str, sample_id: str, catalogue: dict) -> t
     hand = meta.get("hand") or "R"
     fps_real = swing.get("fpsReal")
     swing = {**swing, "id": sample_id}
-    # This sample's catalogue lists firm_wrist (below), so the page can show its ghost.
-    coach = coach_swing(swing, None, fps_real, app_fixes=[*catalogue["fixes"], WRIST_FIX])
+    coach = coach_swing(swing, None, fps_real)
     coach["faults"] = detect_faults(swing, metrics=measure_swing(swing, None, fps_real))
     stroke = coach["stroke"]
     flagged = {f["fix"]: f for f in coach["faults"]}

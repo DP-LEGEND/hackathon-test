@@ -67,6 +67,9 @@ wrist?: {
   roll_change_abs_deg?: number;    // size of the forearm roll, -150..+100 ms around contact
   peak_roll_rate_abs_dps?: number; // fastest roll rate about the forearm axis in that window
   peak_angular_speed_dps?: number; // fastest total forearm turn rate in that window
+  contact_source?: "gyro peak" | "impact spike" | "double tap"; // what the window is centred on:
+                                   // the forearm's fastest turn, the ball's impact, or the tap clock
+                                   // (a shadow swing). Only "gyro peak" REAL entries are judged.
 };
 ```
 
@@ -95,15 +98,15 @@ the roll is timed at the forearm's fastest turn (`contact_source: "gyro peak"`).
 entry timed any other way isn't checked: `rolled_wrist` is in `not_measured`, and
 `wrist_sensor_skipped` says why.
 
-Its fix, `firm_wrist`, is animated by physics (`physics/ghost.py`, the `wrist_roll` edit),
-so a sensor-backed `rolled_wrist` is `ghost_ready`. The page shows only fixes its
-catalogue lists. Until `public/swings/catalogue.json` lists `firm_wrist`, the coach
-returns:
-- `ghost_fix: null`;
-- `ghost_note: "ghost for wrist roll not in the app yet"`;
-- top-level `ghost_ready: false`.
+The PREDICTED aim follows the same rule: `physics/wrist_face.py` uses the roll for the racket
+face only when the coach judges it (the same three fields, finite; mock, or real and
+`"gyro peak"`). Otherwise compare keeps the camera's aim, and `assumptions.face` says why.
 
-The call (`fault`), `fix` and `cue` stay `rolled_wrist` / `firm_wrist`.
+Its fix, `firm_wrist`, is animated by physics (`physics/ghost.py`, the `wrist_roll` edit).
+So for a sensor-backed `rolled_wrist` the coach returns `ghost_fix: "firm_wrist"`, with
+`ghost_ready: true` and `ghost_fix_amount` set (the roll above the stroke's good median).
+`/ghost` offers `firm_wrist` only when the coach names it (`COACH_ONLY_FIXES` in
+`app/ghost/compare.ts`, #85), not from `public/swings/catalogue.json`.
 
 ## Swing label join
 

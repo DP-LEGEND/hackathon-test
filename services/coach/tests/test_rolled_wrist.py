@@ -12,9 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from coach.agent import catalogue_fixes, coach_swing, main as agent_main
+from coach.agent import coach_swing, main as agent_main
 from physics.compare import compare
-from physics.ghost import FIXES
 from coach.faults import (
     FAULTS, MOCK_ROLLED_WRIST, MOCK_SENSOR_NOTE, THRESHOLDS, WRIST_MOCK, detect_faults, measure_swing, severity,
 )
@@ -176,7 +175,7 @@ def test_a_rolled_wrist_leads_the_call_even_when_a_pose_fault_is_worse(sample: d
     assert wrist_fault["id"] == "rolled_wrist" and pose, "the sample has pose faults to put after it"
     assert max(f["severity"] for f in pose) > wrist_fault["severity"]  # a pose fault is worse, yet follows
     assert pose == sorted(pose, key=lambda f: (-f["severity"], FAULTS[f["id"]]["priority"]))
-    result = coach_swing(swing, stroke="backhand", app_fixes=list(FIXES))   # an app that shows every fix
+    result = coach_swing(swing, stroke="backhand")
     assert result["fault"]["id"] == "rolled_wrist" and result["cue"] == "Keep your wrist firm through contact."
     assert result["other_faults"] == [f["id"] for f in pose]
     assert result["ghost_fix"] == "firm_wrist" and result["ghost_note"] is None
@@ -184,36 +183,17 @@ def test_a_rolled_wrist_leads_the_call_even_when_a_pose_fault_is_worse(sample: d
 
 
 @pytest.mark.parametrize("mock", [False, True])
-def test_until_the_app_lists_firm_wrist_there_is_no_ghost_and_the_note_says_why(sample: dict, mock: bool) -> None:
-    """Codex P1 on #80: /ghost offers only the catalogue's fixes, and firm_wrist isn't there until the
-    UI catalogue adds it. The call and cue stay; ghost_fix is None rather than another fix's ghost."""
+def test_a_sensor_backed_rolled_wrist_is_the_ready_firm_wrist_ghost(sample: dict, mock: bool) -> None:
+    """No catalogue gate: /ghost offers firm_wrist when the coach names it (Sammy's #85, COACH_ONLY_FIXES
+    in app/ghost/compare.ts), so the coach names it whatever public/swings/catalogue.json lists."""
+    from pipeline.live import ghost_choice
     rule = MOCK_ROLLED_WRIST if mock else RULE
     swing = {**sample, "wrist": wrist(rule["severe_at"], mock=mock)}
-    without = coach_swing(swing, stroke="backhand", app_fixes=[f for f in FIXES if f != "firm_wrist"])
-    assert without["fault"]["id"] == "rolled_wrist" and without["fix"] == "firm_wrist"
-    assert without["cue"] == "Keep your wrist firm through contact."
-    assert without["ghost_fix"] is None and without["ghost_fault"] is None and without["ghost_fix_amount"] is None
-    assert without["ghost_note"] == "ghost for wrist roll not in the app yet"
-    assert without["ghost_fixes"] == [] and without["ghost_edits"] == {}   # as with no ghost-ready fault
-    # Codex P2: the top-level pair agrees, so pipeline/live.py ghost_choice can't apply firm_wrist.
-    shown = coach_swing(swing, stroke="backhand", app_fixes=list(FIXES))
-    assert shown["ghost_ready"] is True and without["ghost_ready"] is False
-    assert without["fault"] == shown["fault"] and without["fix"] == shown["fix"] == "firm_wrist"
-    assert without["fix_amount"] == shown["fix_amount"] and without["cue"] == shown["cue"]
-    from pipeline.live import ghost_choice
-    assert ghost_choice(shown)[0] == "firm_wrist"
-    assert ghost_choice(without) == (None, None)
-    # By default the coach reads the app's catalogue: the fallback ends once firm_wrist is listed there.
-    listed = "firm_wrist" in catalogue_fixes()
-    default = coach_swing(swing, stroke="backhand")
-    assert default["ghost_fix"] == ("firm_wrist" if listed else None)
-    assert default["ghost_note"] == (None if listed else "ghost for wrist roll not in the app yet")
-
-
-def test_other_ghost_fixes_never_read_the_catalogue(sample: dict, monkeypatch: pytest.MonkeyPatch) -> None:
-    import coach.agent as agent
-    monkeypatch.setattr(agent, "catalogue_fixes", lambda: pytest.fail("read the catalogue"))
-    assert coach_swing(sample, stroke="backhand")["ghost_fix"] != "firm_wrist"
+    result = coach_swing(swing, stroke="backhand")
+    assert result["fault"]["id"] == "rolled_wrist" and result["fix"] == "firm_wrist" and result["ghost_ready"] is True
+    assert result["ghost_fix"] == "firm_wrist" and result["ghost_note"] is None
+    assert result["ghost_fix_amount"] == result["fix_amount"] > 0
+    assert ghost_choice(result) == ("firm_wrist", result["fix_amount"])
 
 
 def test_a_normal_roll_leaves_the_pose_order_alone(sample: dict) -> None:
