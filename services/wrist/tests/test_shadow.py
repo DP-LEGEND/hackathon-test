@@ -13,7 +13,7 @@ from wrist.impact import G
 from wrist.load import Recording, load_recording
 from wrist.metrics import ROLL_METHODS, wrist_metrics
 from wrist.shadow import (
-    fit_video_clock, find_shadow_swings, find_tap_events, place_segments, read_segments, shadow_report, to_sensor,
+    _cell, fit_video_clock, find_shadow_swings, find_tap_events, place_segments, read_segments, shadow_report, to_sensor,
 )
 from wrist.synth import make_session
 
@@ -173,6 +173,35 @@ def test_recovery_bumps_between_swings_are_not_swings() -> None:
         speed += 450.0 * np.exp(-0.5 * ((t - c - 0.85) / 0.08) ** 2)    # the recovery after each
     rec = _rec(np.zeros((t.size, 3)), np.zeros((t.size, 3)))
     assert find_shadow_swings(rec, 0.0, 10.0, speed) == [2.0, 4.0, 6.0]
+
+
+def test_recovery_bumps_a_full_gap_after_each_swing_are_not_swings() -> None:
+    """Codex P1 on #75: recoveries SWING_GAP_S or more after their swing reach the height filter.
+    With one per swing the median (825 here) sits between them; a swing-sized reference drops them."""
+    t = np.arange(2000) / 100.0
+    speed = np.zeros_like(t)
+    swings = (2.0, 5.0, 8.0, 11.0, 14.0)
+    for c in swings:
+        speed += 1200.0 * np.exp(-0.5 * ((t - c) / 0.05) ** 2)          # swings
+        speed += 450.0 * np.exp(-0.5 * ((t - c - 1.3) / 0.08) ** 2)     # recovery 1.3 s later (gap 1.0 s)
+    rec = _rec(np.zeros((t.size, 3)), np.zeros((t.size, 3)))
+    assert find_shadow_swings(rec, 0.0, 20.0, speed) == list(swings)
+
+
+def test_a_weaker_real_swing_is_still_a_swing() -> None:
+    t = np.arange(1500) / 100.0
+    speed = np.zeros_like(t)
+    for c, h in ((2.0, 1500.0), (5.0, 1300.0), (8.0, 800.0), (11.0, 1400.0)):   # 800 is 57% of the 75th pct
+        speed += h * np.exp(-0.5 * ((t - c) / 0.05) ** 2)
+    rec = _rec(np.zeros((t.size, 3)), np.zeros((t.size, 3)))
+    assert find_shadow_swings(rec, 0.0, 15.0, speed) == [2.0, 5.0, 8.0, 11.0]
+
+
+def test_one_swing_blocks_print_the_sd_as_n_a_not_zero() -> None:
+    """Codex P2 on #75: a sample SD can't be computed from one swing."""
+    assert _cell({"n": 1, "mean": 61.04, "sd": None}) == "61.0 ± n/a"
+    assert _cell({"n": 3, "mean": 61.04, "sd": 0.0}) == "61.0 ± 0.0"
+    assert _cell({"n": 0, "mean": None, "sd": None}) == "n/a"
 
 
 def test_roll_is_the_gyro_integral_even_where_the_twist_breaks_down() -> None:
