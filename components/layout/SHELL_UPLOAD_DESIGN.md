@@ -36,6 +36,10 @@ Validation (2026-11-15, base faccec3, Windows / Edge 156.0.4314.58):
 - Second round: retained the desktop input/settings split and mobile stacking;
   added menu scrolling for short viewports. Final captures confirm legible
   hierarchy, 44px controls and no horizontal overflow at all three widths.
+- Desktop /ghost uses a compact 44px shared header so the complete forehand fault
+  remains visible without scrolling at 1440x900 and 1470x956. Navigation targets
+  remain 44px; inset focus outlines fit the compact header. Replay internals and
+  all other routes' header spacing remain unchanged.
 - Lint and isolated production build passed; upload transport tests passed 5/5;
   the running service and web app passed demo_smoke.py 5/5. Browser checks passed
   upload errors, Still processing, progress, keyboard settings, cancellation,

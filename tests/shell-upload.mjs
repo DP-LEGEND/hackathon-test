@@ -149,6 +149,24 @@ try {
       const coach=JSON.parse(await readFile(`public/swings/${entry.coach}`,'utf8'));
       const cue=entry.stroke==='backhand'?'Nothing to fix in what the coach could check.':coach.cue;
       await expect(page.locator('blockquote')).toContainText(cue);
+      if(entry.stroke==='forehand') {
+        await page.evaluate(()=>document.fonts.ready);
+        const fault=page.getByRole('region',{name:'Swing replay'}).getByText('Over-rotation: hips turn 157°',{exact:true});
+        for(const [width,height] of [[1440,900],[1470,956]]) {
+          await page.setViewportSize({width,height});
+          await expect(fault).toBeInViewport({ratio:1});
+          assert.equal(await page.evaluate(()=>scrollY),0,'Forehand fault is visible without scrolling');
+          assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+          await page.screenshot({path:`${output}/${width}x${height}-forehand-coach.png`,animations:'disabled'});
+        }
+        await page.setViewportSize({width:1440,height:900});
+        await page.locator('.site-brand').focus();
+        await page.keyboard.press('Tab');
+        const home=page.locator('.site-nav a[href="/"]');
+        await expect(home).toBeFocused();
+        await expect(home).toHaveCSS('outline-offset','-2px');
+        results.push('Forehand fault fully visible without scrolling at 1440x900 and 1470x956: PASS');
+      }
       await page.getByRole('button',{name:'Show the ghost',exact:true}).click();
       await page.getByRole('button',{name:'Show the court',exact:true}).click();
       await expect(page.getByText('PREDICTED BALL PATHS',{exact:true}).or(page.getByText('PREDICTED BALL PATH',{exact:true}))).toBeVisible();

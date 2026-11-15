@@ -33,6 +33,10 @@
 .site-page-heading { display: flex; flex-direction: column; gap: 24px; margin-bottom: 32px; }
 .site-page-heading h1 { font-size: 48px; line-height: 1.2; letter-spacing: -1.5px; }
 .site-page-heading > p:last-child { max-width: 800px; color: var(--muted-foreground); font-size: 17px; line-height: 1.6; }
+@media (min-width: 1001px) {
+  .site-header-compact { height: 44px; }
+  .site-header.site-header-compact :focus-visible { outline-offset: -2px; }
+}
 @media (max-width: 1000px) {
   .site-header { padding: 0 32px; gap: 28px; }
   .site-nav { gap: 28px; }
