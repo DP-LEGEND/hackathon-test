@@ -19,6 +19,7 @@ import {
   NO_EXTRAS,
   checkClip,
   checkOffset,
+  checkUploadTotal,
   processClip,
   type ClipSettings,
   type ExtraInputs,
@@ -67,6 +68,8 @@ function UploadFlow() {
   const [overExtra, setOverExtra] = useState(false);
   // The offset only goes out with a second angle, so it only blocks sending then.
   const offsetProblem = extras.secondClip ? checkOffset(extras.offset) : null;
+  // Each file passes its own check when chosen; together they must still fit in one upload.
+  const totalProblem = file ? checkUploadTotal(file, extras) : null;
 
   const job = useRef<ProcessJob | null>(null);
   const focusTarget = useRef<"progress" | "submit" | null>(null);
@@ -164,7 +167,7 @@ function UploadFlow() {
 
   async function send(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!file || job.current || offsetProblem) return;
+    if (!file || job.current || offsetProblem || totalProblem) return;
     const sent = settings;
     focusTarget.current = "progress";
     setPhase({ kind: "working", startedAt: Date.now(), uploadedAt: null, progress: 0 });
@@ -245,14 +248,20 @@ function UploadFlow() {
       ) : (
         <div className="upload-actions flex flex-col gap-4">
           {phase.kind === "failed" && <Failure failure={phase.failure} slowdown={phase.slowdown} />}
+          {totalProblem && (
+            <p id="send-problem" role="alert" className="flex items-start gap-2 text-sm text-pretty text-destructive">
+              <CircleAlert aria-hidden className="mt-0.5 size-4 shrink-0" />
+              {totalProblem}
+            </p>
+          )}
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
             <Button
               ref={submitRef}
               type="submit"
               size="lg"
               className="upload-submit"
-              disabled={!file || offsetProblem !== null}
-              aria-describedby="send-hint"
+              disabled={!file || offsetProblem !== null || totalProblem !== null}
+              aria-describedby={totalProblem ? "send-hint send-problem" : "send-hint"}
             >
               {phase.kind === "failed" ? "Try again" : "Build my ghost"}
               <ArrowRight data-icon="inline-end" />
@@ -262,7 +271,9 @@ function UploadFlow() {
                 ? "Choose a video to start."
                 : offsetProblem
                   ? "Fix the second clip offset to start."
-                  : "Processing can take a minute."}
+                  : totalProblem
+                    ? "Remove or trim a file to start."
+                    : "Processing can take a minute."}
             </p>
           </div>
           {phase.kind === "idle" && phase.notice && (

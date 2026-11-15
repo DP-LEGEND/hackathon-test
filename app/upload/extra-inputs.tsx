@@ -12,8 +12,7 @@ import { YOU_COLOUR } from "../ghost/colours";
 import {
   CLIP_ACCEPT,
   MAX_CLIP_BYTES,
-  MAX_SENSOR_CSV_BYTES,
-  MAX_SENSOR_ZIP_BYTES,
+  MAX_SENSOR_BYTES,
   SENSOR_ACCEPT,
   checkClip,
   checkOffset,
@@ -86,7 +85,7 @@ export function ExtraInputsPanel({
         accept={SENSOR_ACCEPT}
         check={checkSensorFile}
         prompt="Drop the Sensor Logger .zip or a .csv"
-        formats={`ZIP up to ${wholeMegabytes(MAX_SENSOR_ZIP_BYTES)} · CSV up to ${wholeMegabytes(MAX_SENSOR_CSV_BYTES)}`}
+        formats={`ZIP or CSV · up to ${wholeMegabytes(MAX_SENSOR_BYTES)}`}
         chooseLabel="Choose a ZIP or CSV"
         disabled={disabled}
         onPick={(sensorFile) => onChange({ ...value, sensorFile })}

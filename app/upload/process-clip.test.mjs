@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { AUTO_SETTINGS, checkOffset, checkSensorFile, processClip } from "./process-clip.ts";
+import { AUTO_SETTINGS, checkOffset, checkSensorFile, checkUploadTotal, processClip } from "./process-clip.ts";
 
 for (const { status, waited, body, failure } of [
   { status: 504, waited: 0, body: '{"error":"Ghost API is still processing; the proxy stopped waiting."}', failure: { kind: "proxy-timeout" } },
@@ -130,19 +130,33 @@ test("offsets and sensor files are checked before sending", () => {
   assert.match(checkSensorFile(new File([], "export.zip")), /is empty/);
 });
 
-test("a .csv may be up to 20 MB and a .zip up to 50 MB", () => {
-  const MB = 1024 * 1024;
+const MB = 1024 * 1024;
+
+test("a .csv or a .zip may be up to 10 MB, like the service", () => {
   // checkSensorFile reads only the name and size, so plain objects stand in for big files.
-  assert.equal(checkSensorFile({ name: "wrist.csv", size: 20 * MB }), null);
+  for (const name of ["wrist.csv", "export.zip"]) {
+    assert.equal(checkSensorFile({ name, size: 10 * MB }), null, name);
+    assert.equal(
+      checkSensorFile({ name, size: 10 * MB + 1 }),
+      "Sensor export too large: 10.0 MB. The limit is 10 MB.",
+      name,
+    );
+    assert.match(checkSensorFile({ name, size: 30 * MB }), /^Sensor export too large: 30\.0 MB\. The limit is 10 MB\.$/, name);
+  }
+});
+
+test("everything chosen together may be at most 250 MB", () => {
+  const none = { secondClip: null, sensorFile: null };
+  // The main clip alone never trips it: checkClip already caps a clip at 250 MB.
+  assert.equal(checkUploadTotal({ size: 250 * MB }, none), null);
+  assert.equal(checkUploadTotal({ size: 200 * MB }, { secondClip: { size: 40 * MB }, sensorFile: { size: 10 * MB } }), null);
   assert.equal(
-    checkSensorFile({ name: "wrist.csv", size: 20 * MB + 1 }),
-    "Sensor export too large: 20.0 MB. The limit is 20 MB for a CSV.",
+    checkUploadTotal({ size: 200 * MB }, { secondClip: { size: 40 * MB }, sensorFile: { size: 10 * MB + 1 } }),
+    "Your files add up to 250 MB. One upload can be at most 250 MB in total, so trim a video to just the swing or remove an optional file.",
   );
-  assert.match(checkSensorFile({ name: "wrist.csv", size: 30 * MB }), /The limit is 20 MB for a CSV/);
-  assert.equal(checkSensorFile({ name: "export.zip", size: 30 * MB }), null);
-  assert.equal(checkSensorFile({ name: "export.zip", size: 50 * MB }), null);
-  assert.equal(
-    checkSensorFile({ name: "export.zip", size: 50 * MB + 1 }),
-    "Sensor export too large: 50.0 MB. The limit is 50 MB for a ZIP.",
+  assert.match(
+    checkUploadTotal({ size: 200 * MB }, { secondClip: { size: 120 * MB }, sensorFile: null }),
+    /^Your files add up to 320 MB\. One upload can be at most 250 MB in total/,
   );
+  assert.match(checkUploadTotal({ size: 245 * MB }, { secondClip: null, sensorFile: { size: 6 * MB } }), /add up to 251 MB/);
 });
