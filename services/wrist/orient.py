@@ -71,6 +71,31 @@ def still_bias(rec: Recording, taps_s: Optional[Sequence[float]]) -> tuple[np.nd
     return bias, info
 
 
+def orientation_bias(rec: Recording, rots: Rotation) -> tuple[np.ndarray, dict[str, Any]]:
+    """(gyro bias in rad/s, phone axes; how it was measured) against the phone's own orientation.
+
+    The median, over the whole recording, of the gyro minus the turn rate between consecutive
+    orientations (body axes). The phone's orientation is corrected by gravity, so a constant gyro
+    offset shows up as this difference, while movement can't pass for bias: both sides see it.
+    (still_bias's "still" window allows slow movement, up to STILL_DPS: on the first real
+    recording it read 3.4 deg/s about the forearm around the taps where this reads 0.002.)
+    """
+    dt = np.diff(rec.t)
+    ok = dt > 0
+    rate = (rots[:-1].inv() * rots[1:]).as_rotvec()[ok] / dt[ok, None]
+    diff = 0.5 * (rec.gyro[:-1] + rec.gyro[1:])[ok] - rate
+    n = int(diff.shape[0])
+    info: dict[str, Any] = {"bias_from": "the phone's own orientation (median of gyro minus orientation rate)",
+                            "samples": n, "bias_dps": None, "drift_if_uncorrected_deg_per_min": None, "warning": None}
+    if n < MIN_STILL_S * rec.rate_hz:
+        info["warning"] = f"only {n} orientation samples: the gyro bias isn't removed from the roll"
+        return np.zeros(3), info
+    bias = np.median(diff, axis=0)
+    info.update(bias_dps=[round(float(v), 3) for v in np.degrees(bias)],
+                drift_if_uncorrected_deg_per_min=round(float(np.degrees(np.linalg.norm(bias))) * 60, 1))
+    return bias, info
+
+
 def _qmul(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     """Hamilton product of (..., 4) quaternions in scipy's (x, y, z, w) order: a then b in body axes."""
     ax, ay, az, aw = np.moveaxis(a, -1, 0)
