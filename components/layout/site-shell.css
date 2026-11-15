@@ -3,8 +3,14 @@
   --font-geist-mono: ui-monospace, SFMono-Regular, Consolas, monospace;
 }
 
-.site-shell { display: flex; flex-direction: column; min-height: 100dvh; }
-.site-content { flex: 1; min-width: 0; outline: none; }
+/* --site-page-top: the one gap from the header's bottom edge to each page's first heading block.
+   The shell owns it, so pages add no top padding of their own. */
+.site-shell { --site-page-top: 16px; display: flex; flex-direction: column; min-height: 100dvh; }
+.site-content { flex: 1; min-width: 0; outline: none; padding-top: var(--site-page-top); }
+/* The header is not sticky, so an in-page anchor target lands the same gap below the window's top edge. */
+.site-content [id] { scroll-margin-top: var(--site-page-top); }
+/* app/upload/upload.css still sets its own top padding; tests/ghost-ui.mjs keeps app/upload identical to main. */
+.site-content .upload-container { padding-top: 0; }
 /* Protected replay pages declare .dark locally. Inherit the shell's semantic palette there. */
 .site-content > main.dark {
   --background: inherit; --foreground: inherit; --card: inherit; --card-foreground: inherit;
@@ -29,7 +35,7 @@
 .site-menu nav a { min-height: 60px; padding: 12px 16px; font: 800 24px var(--ghost-heading), sans-serif; border-radius: 12px; }
 .site-menu nav a[aria-current=page] { background: var(--accent); color: var(--primary); }
 .site-footer { display: flex; justify-content: space-between; gap: 24px; padding: 28px 64px; border-top: 1px solid var(--border); color: var(--muted-foreground); font-size: 12px; }
-.site-demo { max-width: 1600px; margin: auto; padding: 16px 64px 64px; }
+.site-demo { max-width: 1600px; margin: auto; padding: 0 64px 64px; }
 .site-page-heading { display: flex; flex-direction: column; gap: 24px; margin-bottom: 32px; }
 .site-page-heading h1 { font-size: 48px; line-height: 1.2; letter-spacing: -1.5px; }
 .site-page-heading > p:last-child { max-width: 800px; color: var(--muted-foreground); font-size: 17px; line-height: 1.6; }
@@ -41,9 +47,10 @@
   .site-demo > .ghost-swing { gap: 12px; }
 }
 @media (max-width: 1000px) {
+  .site-shell { --site-page-top: 24px; }
   .site-header { padding: 0 32px; gap: 28px; }
   .site-nav { gap: 28px; }
-  .site-demo { padding: 24px 32px 48px; }
+  .site-demo { padding: 0 32px 48px; }
   .site-page-heading h1 { font-size: 40px; }
   .site-demo > .site-page-heading h1 { font-size: 28px; }
 }
@@ -52,7 +59,7 @@
   .site-nav { display: none; }
   .site-menu-trigger { display: inline-flex; }
   .site-footer { padding: 24px; font-size: 11px; }
-  .site-demo { padding: 24px 24px 48px; }
+  .site-demo { padding: 0 24px 48px; }
   .site-page-heading { gap: 20px; }
   .site-page-heading h1 { font-size: 32px; letter-spacing: -.8px; }
   .site-demo > .site-page-heading h1 { font-size: 26px; }
