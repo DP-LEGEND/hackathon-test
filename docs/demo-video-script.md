@@ -1,31 +1,20 @@
 <!--
-TODO (before recording). Rules: 2:00 hard cut, no logos, intros or music. Every sped-up part
-shows its speed (e.g. "4x") and the real run time.
-Gates: don't trust a list of PRs here. The morning of recording, run `git log` on main (see
-"Set up") and check that each beat's merge is there:
-- #73, #74 and #86 are merged (#86: measured hit spot, hero files at 1.45 m predicted vs 1.17 m
-  tracked). The real-ball row also needs #85 (the badge). Without it in git log, cut the
-  real-ball row: see "If the gates aren't met".
-- The voice only appears on live uploads (app/ghost/ghost-demo.tsx). The measured hit spot and
-  the badge are only on the saved hero copy (#86: a live upload has no court lines). So the one
-  swing is recorded in two passes, with the seam captioned.
-- Ask the coach (10 s): only if git log on main shows #94 (the ElevenLabs voice agent) merged,
-  and the spoken test in "Set up" passes 3 of 3 on the demo Mac, timing included (speaking within
-  3 s of "Why?"; fault, number and fix within 10 s). Otherwise record the times without it.
-  #94 tested typed turns only, so the spoken test is the first real check.
-- Sensor beat (optional, 5 s): only if a real sensor sample is on main by 09:00 and its coach's
-  call reads "Rolled wrist…" with no MOCK label. On main, a real swing not timed at the forearm's
-  fastest turn lists rolled_wrist as not measured (#74), so check the call, not just the file.
-  It doesn't fit alongside the Ask beat: if both pass, keep the Ask beat.
-- [X] of [Y]: counted from shot 2 at 08:00. No success rate exists anywhere yet.
-- Closest product: SwingVision (tennis and pickleball, tracks shot speed, depth and accuracy;
-  no squash found, web search 15 Nov).
-- Adaption: if the Qwen3.5-4B run beats 66%, update this file and docs/devpost.md together.
+Before recording. Rules: 2:00 hard cut, no logos, intros or music. Every sped-up part shows its
+speed (e.g. "4x") and the real run time.
+Gates (check the morning of recording, on main, not from this note):
+- On main already: #85 (real-ball badge), #86 (hit spot, 1.45 m predicted vs 1.17 m tracked),
+  #94 (Ask the coach agent), #101 (Hear the coach word reveal), #107 and #111 (multi upload).
+- Wrist beat (6): needs a shadow-swing sample with sensor data in public/swings/catalogue.json
+  (an entry with "wristSeries"). Its panel must read "MEASURED (sensor)" with no MOCK badge. On
+  main at c5c4f99..2cfbd58 no sample has wrist data, so the beat is out until one lands.
+- Ask beat (7): the spoken test in "Set up" passes 3 of 3 on the demo Mac, timing included.
+- Front knee line (4): pause on Contact in Side by side and check that the ghost's racket head
+  is level with its front knee. If it isn't, drop that clause from the voiceover.
 -->
 
-# Ghost: demo video script (1:55)
+# Ghost: demo video script (1:52)
 
-The Devpost video. It runs **1:55**, under the **2:00 hard cut**. It has no logos, intros or music: the first frame is Aryan, and the last frame is the product.
+The Devpost video. It runs **1:52**, 3 s under the 1:55 target and 8 s under the **2:00 hard cut**. It has no logos, intros or music: the first frame is the landing page, and the last frame is the product.
 
 **Rules**
 - Every number in the voiceover is on screen at that moment, and every claim is on screen or on main.
@@ -34,213 +23,113 @@ The Devpost video. It runs **1:55**, under the **2:00 hard cut**. It has no logo
 - Timed at 150 words a minute (2.5 words a second). If it runs long, cut words. Don't speed up the voice.
 - Record only what's on main.
 
-| Part | Time | Length |
-|---|---|---|
-| 1. Problem, with Aryan | 0:00–0:15 | 15 s |
-| 2. One real run, start to finish | 0:15–1:30 | 75 s (70 s if the sensor beat is used) |
-| 2a. Ask the coach (gated) | 0:44–0:54 | 10 s; part 2 runs to 1:33 and part 3 drops its ElevenLabs row (see 2a) |
-| 2b. Sensor beat (optional) | 1:25–1:30 | 5 s, taken from part 2; not with 2a |
-| 3. How it's built | 1:30–1:50 | 20 s (17 s with 2a) |
-| 4. What's new, how often it works | 1:50–1:55 | 5 s |
-| **Total** | | **1:55** (5 s under the cut), with or without 2a |
+**Honest lines, word for word.** Don't soften or drop these:
+- Uploading a second angle or a wrist file on real footage is *"being finished"*. The upload in the video is one video.
+- The wrist rule is *"calibrated on shadow swings"* (no ball). Say *"shadow swing"* when its sample is on screen.
+
+| # | Beat | Time | Length |
+|---|---|---|---|
+| 1 | Landing and the process slider | 0:00–0:09 | 9 s |
+| 2 | Upload: three drop zones, then a live one-video upload | 0:09–0:24 | 15 s |
+| 3 | Two-camera stereo backhand | 0:24–0:36 | 12 s |
+| 4 | The coach's call and Hear the coach | 0:36–0:52 | 16 s |
+| 5 | The ghost, side by side | 0:52–1:04 | 12 s |
+| 6 | Court: 1.45 → 1.44 m and the real-ball check | 1:04–1:21 | 17 s |
+| 7 | Wrist panel on the shadow-swing sample (gated) | 1:21–1:31 | 10 s |
+| 8 | Ask the coach (gated) | 1:31–1:41 | 10 s |
+| 9 | Close: one phone to start | 1:41–1:52 | 11 s |
+| | **Total** | | **1:52** |
+
+If beat 7 or 8 is out, cut it and move the later beats up. Don't stretch other beats to fill the gap: without both, the video runs 1:32.
 
 ## What's automated, and what isn't
 
-This decides the voiceover and the small caption chip on each step. There is no mock data in this run.
-
 | Step | How it's done | Chip |
 |---|---|---|
-| Upload: swing, slow motion, hand, stroke, 3D skeleton | Automated, live | AUTOMATED |
+| Upload: swing, slow motion, hand, stroke, 3D skeleton | Automated, live, from one video | AUTOMATED |
+| A second angle or a wrist file in the upload | On the page, but on real footage it's being finished. Not used in the video | BEING FINISHED |
+| The stereo backhand | Two real cameras (an iPhone and an iPad), triangulated by the pipeline. A saved sample | TWO CAMERAS |
 | The coach's call, *"Over-rotation: hips turn 157°"* | Automated: code measures and picks the fix | AUTOMATED |
-| Claude's wording and the voice | Automated: Claude words the cue, code checks it, ElevenLabs speaks it. Needs both keys and the Mac online | AUTOMATED |
-| Ask the coach (2a, gated) | Live: a real-time ElevenLabs voice agent answers Aryan's spoken "Why?". Its numbers come only from Ghost's tools (`get_coach_call`, `get_swing_metrics`, `get_ghost_result`, `simulate_fix`), and the answer is shown in the panel's transcript | AUTOMATED |
+| Claude's wording and the voice | Claude words the cue, code checks it, ElevenLabs speaks it. Live uploads only. Needs both keys and the Mac online | AUTOMATED |
 | The ghost | Automated: physics edits the skeleton | AUTOMATED |
 | Both ball paths | Simulated: PREDICTED. Launch angle ASSUMED, racket speed ESTIMATE | PREDICTED |
-| The ghost's aim | A straight drive, the shot Aryan meant: TARGET, not measured | TARGET |
 | Where the ball was hit from | MEASURED from the court lines. Run offline, so only on the saved copy | OFFLINE |
 | Real-ball check | Ball found and tracked automatically. Court lines picked by hand, once per clip. Run offline | BY HAND + OFFLINE |
+| Wrist panel | A forearm phone's gyro, measured. The rolled-wrist rule is an ESTIMATE, calibrated on one shadow session (no ball) | ESTIMATE |
+| Ask the coach | A real-time ElevenLabs voice agent. Its numbers come only from Ghost's tools (`get_coach_call`, `get_swing_metrics`, `get_ghost_result`, `simulate_fix`) | AUTOMATED |
 
 ## The script
 
-### 1. Problem (0:00–0:15)
+The hero forehand (IMG_2115) is recorded in two passes:
+- **Live pass (beats 2 and 4):** the one-swing hero clip is uploaded, and the app gives the coach's call and voice. Only live uploads have a voice.
+- **Saved-copy pass (beats 5, 6 and 8):** the same swing from the saved hero files (#86), which add the measured hit spot and the real-ball badge. The seam caption in beat 5 says so.
 
-| Time | Screen | Voiceover |
-|---|---|---|
-| 0:00–0:07 | The real IMG_2115 forehand at real speed. Caption: *"Aryan · forehand drive · real speed"* | *This is Aryan, aiming this forehand straight down the wall. It went cross-court.* |
-| 0:07–0:15 | The same swing in slow motion. Caption: *"slow motion"* | *A coach would say "turn less". But what does "less" look like on your own body?* |
+| # | Time | Screen | Voiceover |
+|---|---|---|---|
+| 1 | 0:00–0:09 | `/` landing: *"See your swing. Find your edge."* Scroll to **Your swing. Three perspectives.** and drag the **Explore the process** slider through **Input**, **Coach's call** and **Predicted shots**. | *This is Ghost. One phone films your squash swing, and Ghost shows you the swing you haven't played yet.* |
+| 2 | 0:09–0:13 | `/upload`, held still: the three drop zones, **Your video**, **Second camera angle (optional, for measured depth)** and **Wrist sensor export (.zip or .csv, optional)**. Caption: *"Second angle and wrist upload on real footage: being finished"*. Chip: BEING FINISHED. | *The upload takes one video, a second angle and a wrist sensor. Multi-upload on real footage is being finished, so today: one video.* |
+| 2 | 0:13–0:24 | Drop the one-swing hero clip on **Your video**. **Hitting hand**, **Stroke** and **Slowdown** on **Auto**, then **Build my ghost**. The progress panel sped up, captioned *"[k]x · real run time [N] s"*. It opens `/ghost` on the live swing. Chip: AUTOMATED. | *It finds the swing, the hand and every joint in 3D.* |
+| 3 | 0:24–0:36 | The two real source videos of the backhand, side by side, with the iPhone and iPad angles playing in sync, for 4 s. Then `/ghost` on **Backhand · two-camera stereo · 120 fps**: drag to rotate the skeleton. Open **How this was predicted** so *"This swing: two cameras."* is in frame. Chip: TWO CAMERAS. | *Two cameras filmed this backhand from two real angles. Matching them triangulates every joint, so depth is measured, not estimated.* |
+| 4 | 0:36–0:45 | Back to the live hero upload at **the coach's call**: *"Over-rotation: hips turn 157°"*. The cue changes to Claude's wording, marked *"worded by Claude"*. | *Code measured it: hips turn 157 degrees, too much. Claude words the fix, code checks every number, ElevenLabs speaks it.* |
+| 4 | 0:45–0:52 | Click **Hear the coach**. The ElevenLabs audio plays and the cue's words light up in step with it. Fade the audio out at 0:52 if it runs longer. | *(the coach's voice, no voiceover)* |
+| 5 | 0:52–1:04 | **Seam caption, 3 s:** *"Same swing, saved copy: adds the hit spot measured from the court lines (offline)"*. Then the saved hero forehand, **The ghost** step, **Side by side**, **0.25×** (slow motion), and pause on **Contact**. Chip: AUTOMATED. | *Same swing, saved copy. Orange is Aryan. Cyan is Aryan's ghost: same body, turning less, meeting the ball level with the front knee.* |
+| 6 | 1:04–1:13 | **Show the court**: two paths, each tagged *PREDICTED*. Orange goes cross-court, cyan goes straight. The change panel's **Front wall height** row in frame: *1.45 → 1.44 m*. Then the badge under the legend: *"Reference check against a real ball: 1.45 m predicted, 1.17 m tracked"*, *"Method: tracked"*. Chips: PREDICTED, TARGET. | *Both balls are predicted, not tracked. Aryan's goes cross-court, the ghost's goes straight. Front wall: 1.45 to 1.44 metres.* |
+| 6 | 1:13–1:21 | Cut to the real clip with the ball's tracked path to the front wall (the validate_ball debug image). Caption: *"Real ball, tracked automatically · court lines picked by hand"*. Keep the badge's *1.45* and *1.17* on screen as a caption. Chip: BY HAND + OFFLINE. | *The real-ball check: code tracked the actual ball at 1.17 metres, against 1.45 predicted. The launch angle is assumed.* |
+| 7 | 1:21–1:31 | **Gated.** The shadow-swing sample in `/ghost`, scrolled to the **Wrist sensor** panel: *MEASURED (sensor)*, the forearm roll chart, and the coach's rolled-wrist line as the app prints it. Caption: *"Shadow swing: no ball · wrist rule calibrated on shadow swings · ESTIMATE"*. | *A forearm phone reads wrist roll a camera can't see. This shadow swing has no ball; the wrist rule is calibrated on shadow swings.* |
+| 8 | 1:31–1:41 | **Gated.** The saved hero copy at **the coach's call**, the **Ask the coach** panel already reading *"Listening: ask why, or what you should feel"*. The slot opens as Aryan says "Why?" out loud. The panel switches to *"The coach is speaking"* and the answer fills the **Conversation** transcript. Caption for the whole beat: *"Real-time ElevenLabs voice agent: numbers only from Ghost's tools"*. | Aryan: "Why?", then the agent's answer. No voiceover. |
+| 9 | 1:41–1:52 | Back to the hero's side-by-side ghost at 0.25×. Caption, one line per phone: *"1 phone: a 3D swing, depth estimated"*, *"+ a second phone: depth measured"*, *"+ a forearm phone: the wrist"*. Hard cut at 1:52. | *One phone to start. A second phone adds measured depth, a forearm phone adds the wrist. Ghost shows the swing you haven't played yet.* |
 
-### 2. One real run, start to finish (0:15–1:30)
+**Word counts, checked against the slots** (2.5 words a second): 1: 19 words, 8 s of 9. 2: 23 + 11 words, 13 s of 15 (the first line runs on over the drop). 3: 20, 8 s of 12. 4: 20, 8 s of 9. 5: 23, 9 s of 12. 6: 19 + 19, 8 s of 9 and 8 s of 8. 7: 24, 10 s of 10. 9: 24, 10 s of 11.
 
-The same swing as part 1, recorded in two passes:
-- **Live pass, 0:15–0:45:** the one-swing clip cut from IMG_2115 is uploaded, and the app gives the coach's call and voice.
-- **Saved-copy pass, 0:45–1:30:** the same swing from the saved hero files (#86), which add the measured hit spot and the real-ball badge.
+### Beat notes
 
-Use this version (A) only if the live call reads exactly *"Over-rotation: hips turn 157°"*, matching the saved copy. Otherwise use version B below.
-
-| Time | Screen | Voiceover |
-|---|---|---|
-| 0:15–0:27 | `/upload`: **Choose a video** (the one-swing hero clip). **Hitting hand**, **Stroke** and **Slowdown** on **Auto**, then **Build my ghost**. The progress panel (*Uploading your clip → Finding your swing… → Measuring… → Building your ghost…*) sped up, captioned *"[k]x · real run time [N] s"*. It opens `/ghost` at the coach's call. Chip: AUTOMATED. | *We upload that one swing. From here it runs by itself: it finds the swing, the hand, the stroke, and every joint in 3D.* |
-| 0:27–0:39 | **The coach's call:** *"Over-rotation: hips turn 157°"*. A few seconds later the cue changes to Claude's wording, *"worded by Claude"*. Click **Hear the coach**. | *The coach's call: hips turn 157 degrees, too much. Code measured that. Claude words the fix, code checks every number, and ElevenLabs speaks it.* |
-| 0:39–0:45 | Hold the frame. **The ElevenLabs audio plays on its own**, with no voiceover. Fade it out at 0:45 if it runs longer. | *(the coach's voice)* |
-| 0:45–0:58 | **Seam caption, 3 s:** *"Same swing, saved copy: adds the hit spot measured from the court lines (offline, not in the upload yet)"*. Then the saved hero forehand, **The ghost** step, **Side by side**, **0.25× slow-mo**, then **Contact**. Chip: AUTOMATED. | *Same swing, saved copy, with its hit spot measured offline. Orange is Aryan. Cyan is Aryan's ghost: same body, turning less.* |
-| 0:58–1:12 | **Show the court**: two paths, each tagged *PREDICTED*. The orange ball goes cross-court, and the cyan ghost's goes straight down the right wall. Chips: PREDICTED, TARGET. | *Both balls are predicted, not tracked, with an assumed launch angle. Aryan's goes cross-court. The ghost's goes straight down the wall: the drive Aryan meant.* |
-| 1:12–1:30 | The badge under the legend, exactly: *"Reference check against a real ball: 1.45 m predicted, 1.17 m tracked"*, with *"Method: tracked"* under it. Cut to the real clip with the ball's tracked path to the front wall (the validate_ball debug image), captioned *"Real ball, tracked automatically · court lines picked by hand"*. Chip: BY HAND + OFFLINE. | *Then we checked the real ball. Code tracked it by itself, from court lines we marked by hand: front wall 1.17 metres, against 1.45 predicted. The launch angle was assumed.* |
-
-**With the sensor beat (2b),** part 2 gives up 5 s: ghost 0:45–0:57, court 0:57–1:10, real-ball check 1:10–1:25. The voiceover is unchanged; every row still fits.
-
-**Version B: the live call doesn't match the saved copy.** There's no voice in the run, because saved copies never ask for one. The voice moves to part 3, from a live upload with a fault (see *Set up*).
-
-| Time | Screen | Voiceover |
-|---|---|---|
-| 0:15–0:27 | As in A. Stop on the progress panel and don't show the live call. | As in A. |
-| 0:27–0:37 | Seam caption: *"Same swing, saved copy: processed by the same pipeline, plus the hit spot measured offline"*. Then the saved copy at **the coach's call**, *"Over-rotation: hips turn 157°"*. | *Same swing, saved copy, with its hit spot measured offline. The coach's call: hips turn 157 degrees, too much. Code measured that.* |
-| 0:37–0:50 | The ghost, as in A. | *Orange is Aryan. Cyan is Aryan's ghost: same body, turning less.* |
-| 0:50–1:04 | The court, as in A. | As in A. |
-| 1:04–1:22 | The badge and the real clip, as in A. | As in A. |
-| 1:22–1:30 | Part 3 starts 8 s early, so the voice gets a full slot (see part 3, version B). With the sensor beat, it goes here (1:22–1:27) and part 3 starts 3 s early. | |
-
-### 2a. Ask the coach (gated, 10 s)
-
-Only if git log on main shows #94 merged the morning of recording, **and** the spoken test in *Set up* passes 3 of 3 on the demo Mac, timing included. Otherwise record the times above, unchanged.
-
-It comes right after the coach's call and voice, on the same swing: the live upload in version A, the saved copy in version B. #94's tools read both.
-
-| Time (A) | Screen | Audio |
-|---|---|---|
-| 0:44–0:54 | Still at **the coach's call**, with the panel already open and reading *"Listening: ask why, or what you should feel"*. The slot starts as Aryan says "Why?" out loud. The panel switches to *"The coach is speaking"*, and the answer fills the **Conversation** transcript. Caption for the whole beat, exactly: *"Real-time ElevenLabs voice agent: numbers only from Ghost's tools"* | Aryan: "Why?", then the agent's answer. No voiceover. |
-
-- **Before the slot:** click **Ask the coach**, allow the microphone, and let the agent's greeting finish (#94's agent opens with one). Cut that part: the slot opens on "Why?".
-- The gap between "Why?" and the answer is real time, so never cut it. The spoken test proves it fits: speaking within 3 s, with the fault, its number and the fix said by 10 s.
-- If the answer runs past the slot, fade it out at 10 s and add the caption *"answer cut short"*. Every number spoken before the fade must be in the transcript on screen.
-- Don't add a voiceover that repeats the agent's numbers.
-
-**Where the 10 s come from:** part 3's ElevenLabs row goes in both versions, because the agent now shows ElevenLabs live.
-- **Version A:** that row is only 3 s, so the other 7 s come from slack in part 2. Every voiceover line still fits its new row.
-- **Version B:** that row is the 11 s voice-clip slot, so the time comes from it alone. B no longer needs the faulted live swing from *Set up*.
-
-| Row | A without | **A with 2a** | B without | **B with 2a** |
-|---|---|---|---|---|
-| Upload | 0:15–0:27 | **0:15–0:26** | 0:15–0:27 | **0:15–0:27** |
-| Coach's call (B: seam + call) | 0:27–0:39 | **0:26–0:38** | 0:27–0:37 | **0:27–0:37** |
-| Coach's voice (Hear the coach) | 0:39–0:45 | **0:38–0:44** | none | **none** |
-| Ask the coach | none | **0:44–0:54** | none | **0:37–0:47** |
-| Ghost | 0:45–0:58 | **0:54–1:06** | 0:37–0:50 | **0:47–1:00** |
-| Court | 0:58–1:12 | **1:06–1:17** | 0:50–1:04 | **1:00–1:14** |
-| Real-ball check | 1:12–1:30 | **1:17–1:33** | 1:04–1:22 | **1:14–1:33** |
-| Figma | 1:30–1:34 | **1:33–1:37** | 1:22–1:26 | **1:33–1:37** |
-| Claude | 1:34–1:40 | **1:37–1:43** | 1:26–1:32 | **1:37–1:43** |
-| ElevenLabs | 1:40–1:43 | **dropped** | 1:32–1:43 (voice clip) | **dropped** |
-| Adaption | 1:43–1:50 | **1:43–1:50** | 1:43–1:50 | **1:43–1:50** |
-| Part 4 | 1:50–1:55 | **1:50–1:55** | 1:50–1:55 | **1:50–1:55** |
-
-With 2a, leave out the sensor beat (2b): both don't fit in 1:55.
-
-### 2b. Sensor beat (optional, 1:25–1:30)
-
-Only if every gate in the note at the top holds: a real sample on main by 09:00, a call that starts *"Rolled wrist"*, and no *MOCK* label. Otherwise leave it out and keep the times above.
-
-| Time | Screen | Voiceover |
-|---|---|---|
-| 1:25–1:30 | The real sensor sample in `/ghost` at **the coach's call**: the rolled-wrist call with its wrist-sensor label, as the app prints it. | *The forearm phone catches what the camera can't: a rolled wrist.* |
-
-### 3. How it's built (1:30–1:50)
-
-Each tool as it really looks on screen, with no logo cards. No API keys, emails or account names in frame.
-
-| Time | Screen | Voiceover |
-|---|---|---|
-| 1:30–1:34 | **Figma:** the UI design file's case study page (node 60-452): the frames beside the built pages. | *Every screen was designed in Figma first.* |
-| 1:34–1:40 | **Claude coach:** `services/coach/live_voice.py` in the editor: `word_cue` (the Claude call, structured output) and `check_worded_cue` (the checker). | *Claude only words the coach's fix; code rejects any changed number.* |
-| 1:40–1:43 | **ElevenLabs:** the ElevenLabs web app with the coach's voice and the line it spoke. | *ElevenLabs is its voice.* |
-| 1:43–1:50 | **Adaption:** the AutoScientist run page or leaderboard showing the Qwen3.5-2B run at a 66% win rate. Caption: *"vs its base model, on Adaption's own eval · SIMULATED data · not in the app"*. | *Adaption: a small model fine-tuned on simulated data, 66% win rate, not in the app.* |
-
-**Version B (part 3 runs 1:22–1:50):** Figma 1:22–1:26, Claude 1:26–1:32, then ElevenLabs for **11 s, 1:32–1:43**. The voice clip needs that slot: cues run up to 20 words.
-- On screen: the live upload from *Set up* at **the coach's call**, captioned *"a live upload, not the swing above"*. Click **Hear the coach**.
-- Voiceover: *"ElevenLabs is its voice."* Then the clip plays on its own, faded out at 1:43 if it runs longer.
-- Then Adaption 1:43–1:50, as above.
-- With the sensor beat, Figma and Claude each give up time: Figma 1:27–1:30, Claude 1:30–1:35, ElevenLabs 1:35–1:43 (the clip gets 6 s).
-
-**With the Ask beat (2a),** in either version, drop the ElevenLabs row: the agent shows ElevenLabs live. Part 3 is then Figma 1:33–1:37, Claude 1:37–1:43 and Adaption 1:43–1:50 (see 2a's table).
-
-### 4. What's new, how often it works (1:50–1:55)
-
-| Time | Screen | Voiceover |
-|---|---|---|
-| 1:50–1:55 | The side-by-side ghost at 0.25×. Caption: *"Closest product: SwingVision tracks the shots you played (tennis, pickleball). New: Ghost shows the fix on your own body, and where that ball would go. Worked end to end on [X] of [Y] clips filmed 15 Nov."* Hard cut at 1:55. | *SwingVision tracks shots. Ghost plays the fix. [X] of [Y] worked.* |
-
-"Worked" means the upload finished and the coach gave a call with a ghost.
-
-**If shot 2 wasn't filmed,** replace the caption and the voiceover. [X] and [Y] aren't used.
-- Caption: *"Closest product: SwingVision tracks the shots you played (tennis, pickleball). New: Ghost shows the fix on your own body, and where that ball would go. The real ball was tracked automatically in both clips we checked."*
-- Voiceover: *"SwingVision tracks shots; Ghost plays the fix. Both real balls tracked."*
-
-### If the gates aren't met
-
-- **#85 not in main's git log:** the court has #86's heights but no badge, so the tracked 1.17 m isn't on screen. Read the court panel as it is. Cut the real-ball row and give its 18 s to the ghost and court rows. Don't show validate_ball output from a branch. If shot 2 wasn't filmed either, drop the real-ball sentence from part 4's fallback caption and voiceover.
-- **No keys or no internet:** no voice and no Ask beat. Use version B without 2a, and keep the ElevenLabs row in part 3 on the web app.
-- **#94 not in main's git log, or any spoken-test run fails a check (timing included):** no Ask beat. Record the times without 2a, exactly as before.
-
-## Shot list: 08:00 court session
-
-docs/elevation-check.md has priority: its cameras and 6 + 6 drives come first, unchanged. The video's run uses IMG_2115, so the court session adds shots 2 to 4.
-
-| # | Shot | Angle | Settings | Swings | Takes | Used in |
-|---|---|---|---|---|---|---|
-| 1 | Elevation-check hits | As docs/elevation-check.md | As that doc | 6 forehand + 6 backhand drives | As that doc | Not in the video |
-| 2 | Clips to count how often it works | **Side-on**, whole body in frame | 60 fps normal video, one swing per clip, a few seconds | Mixed forehands and backhands, one player per clip | **10 single-swing clips** | Part 4: upload every one on `/upload` (Auto) and log pass or fail |
-| 3 | Wrist-sensor block | Behind the player, where camera A stands, whole body in frame | Phone **tight on the forearm**, Sensor Logger at **100 Hz**. **Tap the phone 3 times** in view of the camera before the first hit | **8 good + 8 rolled-wrist forehand drives**. Say "good 1", "rolled 1" and so on before each, and log the label | 1 block of 16 | Sensor beat (2b), only if a real sample from it is on main by 09:00 |
-| 4 | Aryan on court (optional) | Front-on or side-on, face visible | Normal video | None, or a practice swing | 2 | Part 1, as a 1 s cutaway before IMG_2115 if it fits |
-
-**Order:** shot 1 (08:00–08:15), then shot 3 (sensor), then shot 2, then 4.
-
-Upload the shot-2 clips into a separate `GHOST_SWINGS_DIR`, never `~/ghost-stage`. Keep the log (clip, stroke, pass or fail, error message) in `data/raw/` with the clips, never committed. Sensor Logger exports and their videos also go in `data/raw/`.
+- **Beat 2:** the three drop zones show what the product takes. Never drop a second file on camera: the multi-upload isn't finished on real footage.
+- **Beat 3:** the two source videos live in `data/raw/` (the iPhone and iPad clips of IMG_2116). Ask Dev which ones the stereo sample came from. Don't open the backhand's coach's call: on this swing it reads *"Nothing to fix on this swing"*, which is honest but costs time.
+- **Beat 4:** the call must read exactly *"Over-rotation: hips turn 157°"*, matching the saved copy, or the seam in beat 5 isn't true. If it doesn't, use any live upload whose coach names a fault, caption it *"a live upload, not the hero swing"*, and change the voiceover's number to the one on screen.
+- **Beat 5:** say *"level with the front knee"* only if the Contact frame shows it (see the gate at the top).
+- **Beat 6:** the 1.45 → 1.44 m row is the predicted front-wall height, Aryan's then the ghost's. The real-ball check compares Aryan's 1.45 m with the tracked 1.17 m. Don't mix them up in the edit.
+- **Beat 7:** say *"shadow swing"*. If the sample's panel shows a *MOCK* badge or *SAMPLE (sensor)*, the beat is out.
+- **Beat 8:** the gap between "Why?" and the answer is real time, so never cut it. If the answer runs past 10 s, fade it and add *"answer cut short"*. Every number spoken before the fade must be in the transcript on screen. No voiceover repeating the agent's numbers.
 
 ## Recording checklist
 
 **Set up**
-- [ ] **The morning of recording, check main's git log** for the merges the beats need. Don't go by this file's notes.
+- [ ] The morning of recording, check main's git log, and check the catalogue for a wrist sample:
   ```
   git -C ~/hackathon-demo fetch origin
   ```
   ```
-  git -C ~/hackathon-demo log --oneline origin/main | grep -E "pull request #(85|86|94) "
+  git -C ~/hackathon-demo log --oneline origin/main | grep -E "pull request #(85|86|94|101|107|111) "
   ```
-  - **#86:** already merged.
-  - **#85:** needed for the real-ball row. The hero court step should then show the badge *"Reference check against a real ball: 1.45 m predicted, 1.17 m tracked"*.
-  - **#94:** needed for the Ask beat.
-
-  If a needed line is missing, follow *If the gates aren't met*.
-- [ ] Make the one-swing hero clip from IMG_2115. Ask Dev for the safest cut: sharing can change the frame rate, and the hit sound must survive. Rehearse its upload: the call must read exactly *"Over-rotation: hips turn 157°"*. Otherwise use version B. If Auto picks the wrong speed, set **Slowdown** by hand.
+  ```
+  git -C ~/hackathon-demo show origin/main:public/swings/catalogue.json | grep -o '"wristSeries"' | head -1
+  ```
+  No `"wristSeries"` line means no wrist sample: beat 7 is out.
+- [ ] Make the one-swing hero clip from IMG_2115. Ask Dev for the safest cut: sharing can change the frame rate. Rehearse its upload: the call must read exactly *"Over-rotation: hips turn 157°"*. If Auto picks the wrong speed, set **Slowdown** by hand.
 - [ ] Run the service on its own empty folder: `mkdir -p ~/ghost-video`, then the runbook's tab 1 command with `GHOST_SWINGS_DIR=~/ghost-video` in place of `~/ghost-stage`.
-- [ ] **A faulted live swing for the voice, ready before recording.** Upload a clip where the coach names a fault into `~/ghost-video` (the hero clip if it matches, otherwise any shot-2 clip with a fault). Check that **Hear the coach** plays. Version B's part 3 needs this, unless the Ask beat is in.
 - [ ] Both keys in `.env.local`, and the Mac online. Never open `.env.local` on screen.
-- [ ] **Ask beat only:** once git log shows #94, add `ELEVENLABS_AGENT_ID` to `~/hackathon-demo/.env.local` for the recording (without it the panel stays hidden). Take it out again after recording: #94 keeps it off the demo Mac so the stage demo stays exactly as rehearsed.
-- [ ] **Ask beat spoken test, on the demo Mac.** Use the recording browser and the swing you'll record (version A: the live hero upload; version B: the saved hero copy). Screen-record each run with the microphone and system audio. Click **Ask the coach**, allow the microphone, let the greeting finish, and say "Why?" out loud. Run it 3 times, and use the beat only if all 3 pass **every** check below. **If any run misses any check, timing included, the beat is out.**
+- [ ] **Ask beat only:** add `ELEVENLABS_AGENT_ID` to `~/hackathon-demo/.env.local` for the recording (without it the panel stays hidden). Take it out again after recording, so the stage demo stays as rehearsed.
+- [ ] **Ask beat spoken test, on the demo Mac,** on the saved hero copy. Screen-record each run with the microphone and system audio. Click **Ask the coach**, allow the microphone, let the greeting finish, and say "Why?" out loud. Run it 3 times. The beat is in only if all 3 pass every check:
   1. The agent answers by voice, and the answer appears in the **Conversation** transcript.
-  2. Every number it says appears in the transcript and is a value from the swing's tools. #94's typed test on the saved hero quoted 157.2° and 87.5°. Digits or words both count.
+  2. Every number it says is in the transcript and is a value from the swing's tools.
   3. It names the same fault and the same direction of fix as the coach's call.
   4. No error (*"The coach couldn't connect."* or *"The coach isn't available right now."*).
-  5. **Timing,** read off that run's screen recording, not by feel. Take 0 s as the moment Aryan starts saying "Why?".
-     - The agent starts speaking by **3 s**.
-     - By **10 s** it has said the fault, its number and the fix.
-
-     Write down both times for each run.
-- [ ] Ask beat: wear headphones, so the agent doesn't hear itself through the microphone. The screen recorder captures the microphone (Aryan's "Why?") as well as system audio (the agent).
+  5. Timing, read off the screen recording, with 0 s as the start of "Why?": speaking by **3 s**, and the fault, its number and the fix said by **10 s**.
+- [ ] Ask beat: wear headphones, so the agent doesn't hear itself.
 - [ ] Browser window 1440 × 900, zoom 100%, Do Not Disturb on, desktop clear, macOS **Reduce motion off**.
 - [ ] Screen recorder captures system audio, for the ElevenLabs clip.
-- [ ] Log into Figma, Adaption and ElevenLabs in advance. Hide emails, account names and keys.
-- [ ] At 09:00, decide which optional beat is in, by the gates at the top: the Ask beat (2a), or the sensor beat (2b), or neither. Never both. Then use the matching times.
 
 **Record**
-- [ ] Note the upload's real run time from the recording's own clock. That's the *"real run time"* in the caption. The speed in the caption is the real time divided by the time on screen.
-- [ ] Two passes: live (upload, call, voice, and the Ask beat in version A), then the saved copy (ghost, court, badge). Pause 2 s before and after every click.
-- [ ] Ask beat: record it in one continuous take. Only the greeting before "Why?" may be cut. Never cut between "Why?" and the answer. If the take misses the 3 s or 10 s mark, retake it. If no take makes it, the beat is out.
-- [ ] Record the voiceover last, to the edited picture. Fill in [k] and [N] first, and [X] and [Y] only if shot 2 was filmed.
+- [ ] Note the upload's real run time from the recording's own clock. The speed in the caption is the real time divided by the time on screen.
+- [ ] Two passes: live (upload, call, Hear the coach), then the saved copy (ghost, court, badge, Ask). Pause 2 s before and after every click.
+- [ ] Hear the coach: record the whole word reveal, and pick the 7 s in the edit.
+- [ ] Ask beat: one continuous take. Only the greeting before "Why?" may be cut. If no take makes the 3 s and 10 s marks, the beat is out.
+- [ ] Record the voiceover last, to the edited picture. Fill in [k] and [N] first.
 
 **Before you upload**
-- [ ] The cut is 1:55, and never past 2:00. No logo, title or end card, and no music.
+- [ ] The cut is 1:52 (shorter if a gated beat is out), and never past 2:00. No logo, title or end card, and no music.
+- [ ] Both honest lines are said: multi-upload *"being finished"*, and the wrist *"calibrated on shadow swings"* (if beat 7 is in).
 - [ ] Every sped-up part shows its speed and real run time. The seam caption is on screen for at least 3 s.
-- [ ] Every number in the voiceover is on screen at that moment. *PREDICTED* is visible on both ball paths.
-- [ ] Ask beat: the caption *"Real-time ElevenLabs voice agent: numbers only from Ghost's tools"* stays up for the whole beat, and every number the agent says is in the transcript on screen.
+- [ ] Every number in the voiceover is on screen at that moment: 157, 1.45, 1.44 and 1.17. *PREDICTED* is visible on both ball paths.
 - [ ] Burn in the captions: judges often watch muted.
 - [ ] Export 1080p MP4. Upload it unlisted to YouTube or Vimeo, and paste the link into Devpost.
