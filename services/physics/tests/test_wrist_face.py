@@ -13,7 +13,7 @@ from physics.compare import GuessedFixError, compare
 from physics.tests.swing_factory import make_swing
 from physics.wrist_face import (
     FACE_CAP_DEG, FACE_PER_ROLL_DEG, GOOD_ROLL_DEG, MOCK_GOOD_ROLL_DEG, cross_court_sign, face_deg, good_roll,
-    sensor_roll,
+    MOCK_LABEL, aim_roll, sensor_roll,
 )
 
 SWINGS = Path(__file__).resolve().parents[3] / "public" / "swings"
@@ -24,8 +24,10 @@ def good():
     return make_swing()
 
 
-def with_roll(swing: dict, roll: float, mock: bool = False) -> dict:
-    return {**swing, "wrist": {"usable": True, "mock": mock, "roll_change_abs_deg": roll, "roll_change_deg": roll}}
+def with_roll(swing: dict, roll: float, mock: bool = False, contact_source: str | None = "gyro peak") -> dict:
+    """A usable wrist entry, timed as the real medians were tuned (the gyro peak) unless told otherwise."""
+    return {**swing, "wrist": {"usable": True, "mock": mock, "roll_change_abs_deg": roll, "roll_change_deg": roll,
+                               "contact_source": contact_source}}
 
 
 def aims(r: dict) -> tuple[float, float]:
@@ -129,6 +131,43 @@ def test_firm_wrist_needs_sensor_data(good) -> None:
         compare({**good, "wrist": {"usable": False, "skip_reason": "sync off"}}, "firm_wrist", 20)
     r = compare(good, "firm_wrist", 0)       # amount 0 = unchanged, as for every fix
     assert "face" not in r["assumptions"]
+
+
+# ---- timing: the roll is used only when the coach can judge it -------------------------
+
+@pytest.mark.parametrize("contact_source", ["impact spike", "double tap", None])
+def test_an_impact_timed_real_roll_keeps_the_camera_aim_and_says_why(good, contact_source) -> None:
+    """Codex P1 on #80: the coach doesn't check this roll (#74), so the face model mustn't use it either."""
+    plain = compare(good, "straighten_elbow", 12)
+    r = compare(with_roll(good, 158.8, contact_source=contact_source), "straighten_elbow", 12)
+    for who in ("you", "ghost"):
+        az, cam = r["assumptions"]["launch"][who]["azimuth"], plain["assumptions"]["launch"][who]["azimuth"]
+        assert az["value"] == cam["value"] and az["label"] == cam["label"] and "cameraAim" not in az
+        assert az["method"].startswith(cam["method"]) and "Wrist roll not used for the aim" in az["method"]
+        assert az["wristRollUsed"] is False
+    assert r["you"]["ball"] == plain["you"]["ball"] and r["ghost"]["ball"] == plain["ghost"]["ball"]
+    face = r["assumptions"]["face"]
+    assert face["applied"] is False and face["contactSource"] == contact_source
+    assert "gyro-peak-timed practice swings" in face["reason"] and "Aim:" not in r["assumptions"]["note"]
+    with pytest.raises(GuessedFixError, match="timed as the coach judges it"):
+        compare(with_roll(good, 158.8, contact_source=contact_source), "firm_wrist", 22.0)
+
+
+def test_a_gyro_peak_real_roll_and_any_mock_roll_still_aim_by_the_face(good) -> None:
+    r = compare(with_roll(good, 158.8), "straighten_elbow", 12)
+    assert r["assumptions"]["face"]["applied"] is True and "cameraAim" in r["assumptions"]["launch"]["you"]["azimuth"]
+    m = compare(with_roll(good, 60.8, mock=True, contact_source="impact spike"), "straighten_elbow", 12)
+    assert m["assumptions"]["face"]["applied"] is True and m["assumptions"]["face"]["label"] == MOCK_LABEL
+
+
+@pytest.mark.parametrize("mock", [False, True])
+@pytest.mark.parametrize("contact_source", ["gyro peak", "impact spike", "double tap", None])
+def test_the_face_model_uses_a_roll_exactly_when_the_coach_judges_it(good, mock, contact_source) -> None:
+    from coach.faults import measure_swing
+    swing = with_roll(good, 150.0, mock=mock, contact_source=contact_source)
+    swing["wrist"].update(peak_roll_rate_abs_dps=900.0, peak_angular_speed_dps=1500.0)
+    coach_judges = measure_swing(swing, "forehand")["forearm_roll_deg"] is not None
+    assert (aim_roll(swing)[0] is not None) == coach_judges
 
 
 # ---- no sensor data: nothing changes ---------------------------------------------------

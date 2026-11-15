@@ -16,6 +16,8 @@ from __future__ import annotations
 import argparse
 import json
 import math
+from collections.abc import Collection
+from pathlib import Path
 from typing import Any, Optional
 
 from physics.ghost import FIXES
@@ -25,6 +27,21 @@ from coach.faults import Fault, Stroke, detect_faults, disabled_faults, measure_
 NO_FAULT_CUE = "Nothing to fix on this swing. Hit the next one the same way."
 GHOST_SHOWS_NEXT = "The ghost shows the next fix, because the top one isn't animated yet."
 GHOST_SHOWS_NONE = "The ghost can't animate this fix yet."
+
+# Fixes the coach can ask the ghost for that /ghost can't show until they're in its catalogue
+# (public/swings/catalogue.json "fixes"): until then ghost_fix is None and ghost_note says why.
+CATALOGUE = Path(__file__).resolve().parents[2] / "public" / "swings" / "catalogue.json"
+NOT_IN_APP = {"firm_wrist": "ghost for wrist roll not in the app yet"}
+
+
+def catalogue_fixes(path: Path = CATALOGUE) -> list[str]:
+    """The fixes /ghost offers (catalogue.json "fixes"); [] if the catalogue can't be read."""
+    try:
+        fixes = json.loads(path.read_text(encoding="utf-8")).get("fixes")
+    except (OSError, ValueError, AttributeError):
+        return []
+    return [f for f in fixes if isinstance(f, str)] if isinstance(fixes, list) else []
+
 
 # Fixes the ghost shows together when both faults fire: an open stance lets the hips
 # fly open, so closing the stance pairs with turning the shoulders less.
@@ -60,8 +77,13 @@ def _json_safe(metrics: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def coach_swing(swing: dict, stroke: Optional[Stroke] = None, fps_real: Optional[float] = None) -> dict[str, Any]:
+def coach_swing(swing: dict, stroke: Optional[Stroke] = None, fps_real: Optional[float] = None,
+                app_fixes: Optional[Collection[str]] = None) -> dict[str, Any]:
     """Return the top fault, its fix and its cue for one swing.
+
+    app_fixes: the fixes the page can show (default: the catalogue's, read only when the ghost
+    would be a NOT_IN_APP fix). A NOT_IN_APP ghost fix the page can't show gives ghost_fix None
+    and that reason as ghost_note; the call, its fix and its cue stay the same.
 
     stroke: "forehand" or "backhand". If omitted we use swing["stroke"], else detect it
     (low confidence; see measure_extra.py). fps_real: real capture rate if slow-mo.
@@ -89,6 +111,9 @@ def coach_swing(swing: dict, stroke: Optional[Stroke] = None, fps_real: Optional
         note = None
     else:
         note = GHOST_SHOWS_NEXT if ghost else GHOST_SHOWS_NONE
+    if ghost is not None and ghost["fix"] in NOT_IN_APP and ghost["fix"] not in (
+            app_fixes if app_fixes is not None else catalogue_fixes()):
+        ghost, note = None, NOT_IN_APP[ghost["fix"]]
     shown = ghost_fixes(ghost, faults)
     return {
         "stroke": metrics["stroke"],

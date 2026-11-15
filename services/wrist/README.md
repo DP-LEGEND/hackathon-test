@@ -21,8 +21,11 @@ A **shadow swing** (no ball, so no impact) is timed from the double tap; its imp
 are null. Without the phone's own orientation, the integrated gyro takes over.
 
 **Tested on MOCK data** (`synth.py`) **and one real shadow session** (no ball: see
-[Shadow sessions](#shadow-sessions-no-ball)). The threshold in `coach/faults.py` comes from
-mock swings and must be retuned on real hits.
+[Shadow sessions](#shadow-sessions-no-ball)). The real-data `rolled_wrist` lines in
+`coach/faults.py` come from that one shadow session (`WRIST_SESSION_FH` / `WRIST_SESSION_BH`:
+forehand 145.75°, backhand 124.3°). They judge only rolls timed at the forearm's fastest turn
+(`contact_source: "gyro peak"`), as that session's were, and must be retuned on real hits.
+`MOCK_ROLLED_WRIST` (39.2°) is for mock entries (`synth.py`) only, never for real data.
 
 ## Recording (tonight)
 

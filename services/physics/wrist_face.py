@@ -21,6 +21,12 @@ used and the aim stays compare.py's wrist-direction estimate.
 The good medians come from the first real session (14 Nov 2026 shadow swings, coach/faults.py
 uses them as the rolled_wrist targets). Mock recordings (wrist.synth, roll ~16 deg good vs
 ~62 deg rolled) use the mock session's good median instead, and say MOCK.
+
+The roll is used only when the coach's rolled_wrist rule can judge it (aim_roll): mock data
+(the mock rule has no timing gate), or a real entry whose roll window sits on the gyro peak
+(contact_source "gyro peak"), the timing those medians and the real lines were tuned on. A
+real entry timed any other way (impact spike, double tap) keeps the camera's aim, with the
+reason (AIM_NOT_GYRO_PEAK).
 """
 
 from __future__ import annotations
@@ -42,6 +48,10 @@ INTENT = "straight drive"
 INTENT_AZIMUTH_DEG = 0.0  # a straight drive: parallel to the side walls
 ASSUMED_LABEL = "ASSUMED"
 MOCK_LABEL = "MOCK (sensor)"  # mock data is labelled mock on screen
+# The timing the real medians (and coach/faults.py's real lines) were tuned on.
+GYRO_PEAK = "gyro peak"
+AIM_NOT_GYRO_PEAK = ("Wrist roll not used for the aim: the face model's good medians were tuned on gyro-peak-timed "
+                     "practice swings, and this swing's roll is timed from {source}, so the aim is the camera's.")
 
 
 def _finite(x: Any) -> bool:
@@ -54,6 +64,20 @@ def sensor_roll(swing: dict) -> Optional[dict[str, Any]]:
     if not isinstance(wrist, dict) or not wrist.get("usable") or not _finite(wrist.get("roll_change_abs_deg")):
         return None
     return {"roll": float(wrist["roll_change_abs_deg"]), "mock": bool(wrist.get("mock"))}
+
+
+def aim_roll(swing: dict) -> tuple[Optional[dict[str, Any]], Optional[str]]:
+    """(roll, None) when the face model may use the swing's wrist roll, i.e. when the coach's
+    rolled_wrist rule can judge it: mock data, or a real entry timed at the gyro peak.
+    (None, why) for a usable real entry timed any other way. (None, None) without usable sensor
+    data, exactly as before."""
+    roll = sensor_roll(swing)
+    if roll is None or roll["mock"]:
+        return roll, None
+    source = swing["wrist"].get("contact_source")
+    if source == GYRO_PEAK:
+        return roll, None
+    return None, AIM_NOT_GYRO_PEAK.format(source=f"the {source}" if source else "an unknown contact")
 
 
 def good_roll(stroke: str, mock: bool) -> float:

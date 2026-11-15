@@ -48,7 +48,10 @@ Where the ball model's inputs come from (physics/ball.py):
   degree of forearm roll above the stroke's good median, capped at FACE_CAP_DEG. The wrist's
   direction stays as cameraAim, a cross-check. The firm_wrist fix lowers the ghost's roll by
   its amount (no joint moves), so at the coach's amount the ghost's face is square and its
-  ball goes straight. firm_wrist without sensor data raises GuessedFixError.
+  ball goes straight. firm_wrist without sensor data raises GuessedFixError. The roll is used
+  only when the coach can judge it (wrist_face.aim_roll: mock data, or a real roll timed at
+  the gyro peak); a real roll timed from the impact or a double tap keeps the camera's aim,
+  and both azimuths' method and assumptions.face (applied false) say why.
 - Elevation (launch angle) is ASSUMED: DEFAULT_ELEVATION_DEG for the stroke (12 forehand,
   3 backhand) unless you pass one for the swing. A swing's path at contact is too noisy to
   give the launch angle, and the face angle needs racket tracking.
@@ -76,8 +79,8 @@ import numpy as np
 from physics.ball import COURT_WIDTH_M, DEFAULT_CONTACT, predict_ball_path
 from physics.ghost import EDITS, FIXES, apply_fix
 from physics.wrist_face import (
-    FACE_CAP_DEG, FACE_PER_ROLL_DEG, INTENT, INTENT_AZIMUTH_DEG, cross_court_wall, face_aim, face_note, good_roll,
-    sensor_roll,
+    FACE_CAP_DEG, FACE_PER_ROLL_DEG, INTENT, INTENT_AZIMUTH_DEG, aim_roll, cross_court_wall, face_aim, face_note,
+    good_roll,
 )
 from physics.metrics import contact_frame, measure, real_fps
 from physics.skeleton import (
@@ -536,10 +539,11 @@ def compare(swing: dict, fix_name: str, amount: float, fps_real: float | None = 
         raise GuessedFixError(f"Not available on this swing: the camera couldn't see the {side_name} {target[1]} "
                               "around contact (guessed joints), so a ghost of this fix would edit a guess.")
     edit, sign = FIXES[fix_name]
-    roll = sensor_roll(swing)
+    roll, aim_skip = aim_roll(swing)
     if edit == "wrist_roll" and roll is None and float(amount) != 0.0:
         raise GuessedFixError("Not available on this swing: a firm-wrist ghost needs the forearm roll from a "
-                              "wrist sensor, and this swing has no usable wrist-sensor data.")
+                              + (f"wrist sensor timed as the coach judges it. {aim_skip}" if aim_skip else
+                                 "wrist sensor, and this swing has no usable wrist-sensor data."))
     ghost_swing = apply_fix(played, fix_name, amount, fps_real, hand)
     ghost_swing.pop("wrist", None)  # your forearm phone's data isn't the ghost's: nothing may coach it
 
@@ -552,7 +556,7 @@ def compare(swing: dict, fix_name: str, amount: float, fps_real: float | None = 
         you_aim = face_aim(roll["roll"], good, anchor[0], roll["mock"])
         ghost_aim = face_aim(ghost_roll, good, anchor[0], roll["mock"])
         face = {
-            "label": you_aim["label"], "assumed": True, "mock": roll["mock"],
+            "applied": True, "label": you_aim["label"], "assumed": True, "mock": roll["mock"],
             "facePerRollDeg": FACE_PER_ROLL_DEG, "capDeg": FACE_CAP_DEG, "goodRollDeg": good,
             "intent": {"value": INTENT, "azimuthDeg": INTENT_AZIMUTH_DEG, "label": "STATED"},
             "crossCourt": f"towards the {cross_court_wall(anchor[0])} wall",
@@ -568,6 +572,11 @@ def compare(swing: dict, fix_name: str, amount: float, fps_real: float | None = 
         swing, estimate_racket_speed(played, fps_real, hand), estimate_racket_speed(ghost_swing, fps_real, hand))
     you, you_launch = _on_court(played, fps_real, hand, contact, shift, elevation, you_racket, you_aim)
     ghost, ghost_launch = _on_court(ghost_swing, fps_real, hand, contact, shift, elevation, ghost_racket, ghost_aim)
+    if aim_skip:  # a real roll the coach can't judge: the camera's aim, saying why
+        for launch in (you_launch, ghost_launch):
+            az = launch["azimuth"]
+            launch["azimuth"] = {**az, "method": f"{az['method']}. {aim_skip}", "wristRollUsed": False}
+        face = {"applied": False, "reason": aim_skip, "contactSource": swing["wrist"].get("contact_source")}
     # The ghost inherits your frames' flags, so the same metrics are left out on both sides.
     _drop_guessed(you, guessed)
     _drop_guessed(ghost, guessed)

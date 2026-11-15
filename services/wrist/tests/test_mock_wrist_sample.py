@@ -72,7 +72,8 @@ def test_a_rolled_mock_swing_becomes_a_sample_whose_ghost_goes_straight(script, 
 def test_it_refuses_real_data_and_an_existing_sample(script, tmp_path, out_dir, capsys) -> None:
     real = mock_session(tmp_path / "real", mock=False)
     assert script.main([str(real), "--out-dir", str(out_dir)]) == 2
-    assert "isn't mock data" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "isn't mock data" in err and "docs/demo-runbook.md" in err and "make_sensor_sample" not in err
     mock = mock_session(tmp_path / "mock")
     assert script.main([str(mock), "--out-dir", str(out_dir)]) == 0
     assert script.main([str(mock), "--out-dir", str(out_dir)]) == 2
@@ -87,3 +88,32 @@ def test_it_never_replaces_a_sample_it_did_not_make(script, tmp_path, out_dir, c
     mock = mock_session(tmp_path / "mock")
     assert script.main([str(mock), "--out-dir", str(out_dir), "--id", hero, "--replace"]) == 2
     assert "not made by this script" in capsys.readouterr().err
+
+
+def test_it_refuses_a_file_another_entry_names(script, tmp_path, out_dir, capsys) -> None:
+    """Codex P2 on #80: the hero's id is 7178110a0b06-swing-0027 but its swing file is
+    swing_fh_over_rotation.json, so --id fh_over_rotation passed the id check and overwrote it."""
+    hero_swing = tmp_path / "hero_swing.json"
+    shutil.copy(REPO / "public" / "swings" / "swing_fh_over_rotation.json", out_dir / "swing_fh_over_rotation.json")
+    shutil.copy(out_dir / "swing_fh_over_rotation.json", hero_swing)
+    before = (out_dir / "catalogue.json").read_text()
+    mock = mock_session(tmp_path / "mock")
+    assert script.main([str(mock), "--out-dir", str(out_dir), "--id", "fh_over_rotation"]) == 2
+    err = capsys.readouterr().err
+    # its swing and coach files are both the hero's: the first one named is refused
+    assert "_fh_over_rotation.json belongs to catalogue entry '7178110a0b06-swing-0027'" in err
+    assert (out_dir / "catalogue.json").read_text() == before
+    assert (out_dir / "swing_fh_over_rotation.json").read_bytes() == hero_swing.read_bytes()
+    assert sorted(p.name for p in out_dir.iterdir()) == ["catalogue.json", "swing_fh_over_rotation.json"]
+
+
+def test_it_refuses_a_file_already_on_disk_but_replaces_its_own(script, tmp_path, out_dir, capsys) -> None:
+    stray = out_dir / "coach_mock_wrist_synth_07.json"
+    stray.write_text("{}")   # not in the catalogue: someone else's file
+    mock = mock_session(tmp_path / "mock")
+    assert script.main([str(mock), "--out-dir", str(out_dir)]) == 2
+    assert "coach_mock_wrist_synth_07.json already exists" in capsys.readouterr().err
+    assert stray.read_text() == "{}"
+    stray.unlink()
+    assert script.main([str(mock), "--out-dir", str(out_dir)]) == 0
+    assert script.main([str(mock), "--out-dir", str(out_dir), "--replace"]) == 0   # its own files: replaced
