@@ -273,3 +273,91 @@ def test_a_gyro_peak_before_the_impact_moves_the_roll_window_and_the_fill_marker
     assert e["roll_change_abs_deg"] == wrist_report_entry(rec, mss.gyro_peak_sync(sync, sid, contact - 0.05), sid)[
         "roll_change_abs_deg"]
     assert series["swings"][sid]["forearm_fill"]["t_ms"] == [30, 50, 70]  # ms from the gyro peak now
+
+
+# ---- Codex on #93: taken file names, and --sensor-tap as the tap run ----
+
+def _cli_inputs(tmp_path):
+    """A MOCK clip, a MOCK sensor export (wrist.synth) and a copy of the demo's catalogue + backhand files."""
+    import json
+    import shutil
+    from wrist.synth import make_session
+    truth = make_session(tmp_path / "session")
+    out = tmp_path / "swings"
+    out.mkdir()
+    swings = SCRIPT.parents[1] / "public" / "swings"
+    catalogue = json.loads((swings / "catalogue.json").read_text())
+    shutil.copy(swings / "catalogue.json", out / "catalogue.json")
+    backhand = next(e for e in catalogue["swings"] if e["id"] == "sample_2116_backhand_stereo")
+    names = [backhand["swing"], backhand["coach"], *(f["file"] for f in backhand["fixes"].values() if f.get("file"))]
+    for name in names:
+        shutil.copy(swings / name, out / name)
+    return mock_clip(tmp_path / "clip.avi"), truth, out, names
+
+
+def test_an_id_whose_files_another_entry_names_is_refused_before_anything_is_written(mss, tmp_path, capsys):
+    """--id 2116_bh_stereo passed the id check, then overwrote the demo backhand's swing and coach files."""
+    clip, truth, out, names = _cli_inputs(tmp_path)
+    before = {n: (out / n).read_bytes() for n in ["catalogue.json", *names]}
+    check = tmp_path / "tapcheck.jpg"
+    args = [str(clip), str(truth["export"]), "--tap", "0.5", "--window", "1", "5", "--stroke", "backhand",
+            "--id", "2116_bh_stereo", "--out-dir", str(out), "--check-image", str(check)]
+    assert mss.main(args) == 1
+    err = capsys.readouterr().err
+    assert "_2116_bh_stereo.json belongs to catalogue entry 'sample_2116_backhand_stereo'" in err
+    assert "nothing written" in err and not check.exists() and not check.with_name("pipeline_2116_bh_stereo.log").exists()
+    assert {n: (out / n).read_bytes() for n in before} == before
+    assert sorted(p.name for p in out.iterdir()) == sorted(before)
+
+
+def test_taken_files_allow_only_this_scripts_own_sample_being_replaced(mss, tmp_path):
+    out = tmp_path / "swings"
+    out.mkdir()
+    mine = {"id": "s1", "swing": "swing_s1.json", "coach": "coach_s1.json", "wristSeries": "wrist_s1.json",
+            "fixes": {"bend_elbow": {"file": "compare_s1_bend_elbow.json"}}, "madeBy": mss.MADE_BY}
+    catalogue = {"swings": [mine, {"id": "other", "swing": "swing_x.json", "coach": "coach_x.json", "fixes": {}}]}
+    for name in mss.entry_files(mine):
+        (out / name).write_text("{}")
+    names = mss.sample_files("s1", ["bend_elbow"])
+    mss.refuse_taken_files(names, catalogue, out, mine)            # replacing its own: allowed
+    with pytest.raises(mss.SampleError, match="_s1.json belongs to catalogue entry 's1'"):
+        mss.refuse_taken_files(names, catalogue, out, None)        # not replacing: it's s1's file
+    (out / "coach_s2.json").write_text("{}")                       # on disk, in no entry
+    with pytest.raises(mss.SampleError, match="coach_s2.json already exists"):
+        mss.refuse_taken_files(mss.sample_files("s2", []), catalogue, out, None)
+    with pytest.raises(mss.SampleError, match="swing_x.json belongs to catalogue entry 'other'"):
+        mss.refuse_taken_files(["swing_x.json"], catalogue, out, mine)
+
+
+def test_sensor_tap_replaces_a_false_early_tap_run(mss, tmp_path, monkeypatch, capsys):
+    """A false run found first (1.9 s early): --sensor-tap names the real first tap, and the tap check
+    and the impact guard (max(taps)) get the run that starts there, not the false one."""
+    import dataclasses
+    from wrist.load import load_recording
+    clip, truth, out, _ = _cli_inputs(tmp_path)
+    rec = load_recording(truth["export"])
+    spikes = mss.find_spikes(rec, mss.SPIKE_K)
+    real = mss.first_tap_event(rec, spikes)
+    assert real is not None and len(real) >= 2 and real[0] - 1.9 > rec.t[0]
+    tap = next(s for s in spikes if abs(s.t - real[0]) < 0.1)
+    # more than TAP_GAP_S[1] (1.5 s) before the real run, so it is a run of its own
+    false_run = [dataclasses.replace(tap, t=real[0] - 1.9), dataclasses.replace(tap, t=real[0] - 1.6)]
+    with_false = sorted(false_run + spikes, key=lambda s: s.t)
+    detected = mss.first_tap_event(rec, with_false)
+    assert detected[0] < real[0] - 1.5  # the detection now picks the false run
+    assert mss.operator_tap_run(rec, with_false, real[0]) == real
+    assert mss.operator_tap_run(rec, with_false, real[0] + 30.0) == [real[0] + 30.0]  # no run there: the tap alone
+
+    seen = {}
+    monkeypatch.setattr(mss, "find_spikes", lambda r, k: with_false)
+    monkeypatch.setattr(mss, "find_hands_box", lambda *a: None)
+
+    def stop(clip_, tap_play, taps, slowdown, out_, box):
+        seen["taps"] = list(taps)
+        raise mss.SampleError("stop after the tap check")
+    monkeypatch.setattr(mss, "tap_check_image", stop)
+    args = [str(clip), str(truth["export"]), "--tap", "0.5", "--window", "1", "5", "--stroke", "backhand",
+            "--sensor-tap", str(real[0]), "--out-dir", str(out), "--check-image", str(tmp_path / "check.jpg")]
+    assert mss.main(args) == 1  # the stop above
+    assert seen["taps"] == real and max(seen["taps"]) == real[-1]
+    assert f"replaces the detected tap run at {detected[0]:.3f} s" in capsys.readouterr().out

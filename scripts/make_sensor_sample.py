@@ -69,7 +69,8 @@ What it does, in order (nothing is written until every step has passed):
     entry naming them, with "wristSeries", is APPENDED to catalogue.json. Every other entry,
     defaultSwing and the top-level fix lists stay exactly as they were, so the demo's hero and
     backhand (scripts/demo_smoke.py) are untouched. Only a sample this script made can be
-    replaced, and only with --replace.
+    replaced, and only with --replace, and no file it would write may belong to another catalogue
+    entry or already exist (checked before anything, even the tap check, is written).
 
 Every file is checked with the same parsers demo_smoke.py uses for /ghost before anything is
 written. Then open /ghost?swing=<id>: the Wrist sensor panel is on the coach's call step.
@@ -230,12 +231,14 @@ def tap_onset(rec: Recording, peak_t: float, hp: np.ndarray) -> float:
     return float(rec.t[first])
 
 
-def first_tap_event(rec: Recording, spikes: list) -> list[float] | None:
-    """Onset times of the first run of two or more taps, or None."""
+def first_tap_event(rec: Recording, spikes: list, from_s: float | None = None) -> list[float] | None:
+    """Onset times of the first run of two or more taps (only taps from `from_s` on, when given), or None."""
     hp = spike_signal(rec)
     taps = []
     for s in spikes:
         if s.gyro_dps >= MIN_SWING_DPS or s.height < MIN_TAP_G * G:
+            continue
+        if from_s is not None and s.t < from_s - TAP_MERGE_S:
             continue
         if taps and s.t - taps[-1].t < TAP_MERGE_S:
             if s.height > taps[-1].height:
@@ -252,6 +255,16 @@ def first_tap_event(rec: Recording, spikes: list) -> list[float] | None:
     if len(run) < 2:
         return None
     return [round(tap_onset(rec, s.t, hp), 3) for s in run]
+
+
+def operator_tap_run(rec: Recording, spikes: list, sensor_tap: float) -> list[float]:
+    """--sensor-tap is the first tap's onset, and the run that starts there replaces any detected run
+    (the tap check and the impact guard then use it): the operator's onset, then the taps detected
+    after it in the same run. Just [sensor_tap] when no run starts there."""
+    run = first_tap_event(rec, spikes, from_s=sensor_tap)
+    if run is None or abs(run[0] - sensor_tap) > TAP_MERGE_S:
+        return [sensor_tap]
+    return [sensor_tap, *run[1:]]
 
 
 TILE_H = 360  # px: tap-check and sheet rows
@@ -610,6 +623,33 @@ def wrist_for_sample(rec: Recording, sync: dict[str, Any], axis: str, swing_id: 
     return gp_metrics, gp_series, filled, info
 
 
+def sample_files(sample_id: str, fixes) -> list[str]:
+    """Every file a sample with this id can write: swing, coach, wrist series, one compare per fix."""
+    return [f"swing_{sample_id}.json", f"coach_{sample_id}.json", f"wrist_{sample_id}.json",
+            *(f"compare_{sample_id}_{fix}.json" for fix in fixes)]
+
+
+def entry_files(entry: dict) -> set[str]:
+    """Every file a catalogue entry names: its swing, coach, wrist series and compare files."""
+    names = {entry.get(k) for k in ("swing", "coach", "wristSeries")}
+    names |= {f.get("file") for f in (entry.get("fixes") or {}).values() if isinstance(f, dict)}
+    return {n for n in names if isinstance(n, str)}
+
+
+def refuse_taken_files(names, catalogue: dict, out_dir: Path, replacing: dict | None) -> None:
+    """Refuse a file name another catalogue entry names, or one already in out_dir, unless it is this
+    script's own sample being replaced (--replace). The id check alone misses e.g. --id 2116_bh_stereo,
+    whose swing_2116_bh_stereo.json is the demo backhand's swing file. (The same rule as
+    scripts/make_mock_wrist_sample.py; every entry but the one being replaced owns its files.)"""
+    owners = {name: s.get("id") for s in catalogue["swings"] if s is not replacing for name in entry_files(s)}
+    mine = entry_files(replacing) if replacing is not None and replacing.get("madeBy") == MADE_BY else set()
+    for name in sorted(names):
+        if name in owners:
+            raise SampleError(f"{name} belongs to catalogue entry {owners[name]!r}: pick another --id")
+        if (out_dir / name).exists() and name not in mine:
+            raise SampleError(f"{name} already exists in {out_dir}: pick another --id")
+
+
 def make_sample(args: argparse.Namespace) -> int:
     clip, sensor, out_dir = args.clip.resolve(), args.sensor.resolve(), args.out_dir.resolve()
     for p in (clip, sensor):
@@ -644,8 +684,10 @@ def make_sample(args: argparse.Namespace) -> int:
     spikes = find_spikes(rec, SPIKE_K)
     taps = first_tap_event(rec, spikes)
     if args.sensor_tap is not None:
-        sensor_tap = args.sensor_tap
-        taps = taps or [sensor_tap]
+        sensor_tap, detected = args.sensor_tap, taps
+        taps = operator_tap_run(rec, spikes, sensor_tap)
+        if detected and abs(detected[0] - sensor_tap) > TAP_MERGE_S:
+            print(f"tap sync: --sensor-tap {sensor_tap:.3f} s replaces the detected tap run at {detected[0]:.3f} s")
     elif taps is None:
         raise SampleError("no run of two or more taps found in the sensor recording: pass --sensor-tap")
     else:
@@ -660,16 +702,6 @@ def make_sample(args: argparse.Namespace) -> int:
     sample_id = args.id or re.sub(r"[^A-Za-z0-9_-]", "_", f"sensor_{clip.stem}_{start:.0f}s")
     if not ID_RE.fullmatch(sample_id):
         raise SampleError("--id may only use letters, digits, _ and -")
-    check_path = (args.check_image or REPO / "data" / "raw" / f"tapcheck_{sample_id}.jpg").resolve()
-    log_path = check_path.with_name(f"pipeline_{sample_id}.log")
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_path.write_text("")  # this run's MediaPipe / LiteRT logs only
-    box = find_hands_box(clip, tap_play, fps, log_path)
-    tap_times = tap_check_image(clip, tap_play, taps, slowdown, check_path, box)
-    print(f"TAP CHECK: the hand should land on the phone at video {', '.join(f'{t:.3f}' for t in tap_times)} s "
-          f"-> open {check_path}\n  Every row: the hand on the phone in the zoom, and on tap 1 not yet "
-          f"{BEFORE_FRAMES} frames before. If not, fix --tap (or --slowdown if only the later taps are off).")
-
     catalogue_path = out_dir / "catalogue.json"
     catalogue = json.loads(catalogue_path.read_text(encoding="utf-8"))
     existing = next((i for i, s in enumerate(catalogue["swings"]) if s.get("id") == sample_id), None)
@@ -679,6 +711,19 @@ def make_sample(args: argparse.Namespace) -> int:
             raise SampleError(f"{sample_id!r} is an existing sample this script didn't make: pick another --id")
         if not args.replace:
             raise SampleError(f"{sample_id!r} already exists: pass --replace to overwrite it, or pick another --id")
+    replacing = catalogue["swings"][existing] if existing is not None else None
+    # Every name this sample could write (a compare file only for a fix that works): checked now, so a
+    # refusal writes nothing, not even the tap check, and again just before writing.
+    refuse_taken_files(sample_files(sample_id, FIXES), catalogue, out_dir, replacing)
+    check_path = (args.check_image or REPO / "data" / "raw" / f"tapcheck_{sample_id}.jpg").resolve()
+    log_path = check_path.with_name(f"pipeline_{sample_id}.log")
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text("")  # this run's MediaPipe / LiteRT logs only
+    box = find_hands_box(clip, tap_play, fps, log_path)
+    tap_times = tap_check_image(clip, tap_play, taps, slowdown, check_path, box)
+    print(f"TAP CHECK: the hand should land on the phone at video {', '.join(f'{t:.3f}' for t in tap_times)} s "
+          f"-> open {check_path}\n  Every row: the hand on the phone in the zoom, and on tap 1 not yet "
+          f"{BEFORE_FRAMES} frames before. If not, fix --tap (or --slowdown if only the later taps are off).")
 
     work = Path(tempfile.mkdtemp(prefix="sensor-sample-"))
     try:
@@ -865,6 +910,7 @@ def make_sample(args: argparse.Namespace) -> int:
                 [s for s in swings_list if s["id"] != sample_id] != [s for s in catalogue["swings"] if s["id"] != sample_id]:
             raise SampleError("internal: the other samples would change")
 
+        refuse_taken_files(list(text), catalogue, out_dir, replacing)
         for name, body in text.items():
             (out_dir / name).write_text(body, encoding="utf-8")
         tmp = catalogue_path.with_suffix(".json.tmp")
