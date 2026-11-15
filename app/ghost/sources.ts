@@ -8,8 +8,10 @@ import {
   parseCatalogue,
   parseCoach,
   parseCompare,
+  parseVoice,
   type Catalogue,
   type CoachCaption,
+  type CoachVoice,
   type CompareResult,
 } from "./compare";
 import { loadSwing, type LoadedSwing } from "./swing";
@@ -19,6 +21,10 @@ const API = "/api"; // the proxy answers 502 when the Python service isn't runni
 const SAMPLES_DIR = "/swings";
 const API_LIST_TIMEOUT_MS = 4000;
 const API_TIMEOUT_MS = 30000; // coach and compare run physics on the server
+// A first voice call waits on Claude, then the TTS. The web proxy (app/api/[...path]/route.ts)
+// aborts at 30 s, and the voice service keeps Claude plus TTS under about 25 s, so give up just
+// before the proxy would.
+const VOICE_TIMEOUT_MS = 28000;
 
 /** One fix the picker offers for a swing. */
 export type FixOption = {
@@ -111,15 +117,21 @@ function postJson<T>(url: string, body: unknown, parse: (value: unknown) => T): 
 }
 
 // One promise per resource, so switching fixes or steps never refetches. `attempt` is part of
-// the key: Try again bumps it for a fresh request. A failed promise is dropped from the cache.
+// the key: Try again bumps it for a fresh request. A failed promise is dropped from the cache,
+// and so is a value `keep` says no to (a missing voice), so the next ask tries again.
 const cache = new Map<string, Promise<unknown>>();
 
-function cached<T>(key: string, make: () => Promise<T>): Promise<T> {
+function cached<T>(key: string, make: () => Promise<T>, keep: (value: T) => boolean = () => true): Promise<T> {
   const hit = cache.get(key);
   if (hit) return hit as Promise<T>;
   const promise = make();
   cache.set(key, promise);
-  promise.catch(() => cache.delete(key));
+  const drop = () => {
+    if (cache.get(key) === promise) cache.delete(key);
+  };
+  promise.then((value) => {
+    if (!keep(value)) drop();
+  }, drop);
   return promise;
 }
 
@@ -296,6 +308,24 @@ export function loadCoachFor(entry: SwingEntry, attempt: number): Promise<CoachC
     entry.origin === "sample" && entry.coachFile
       ? getJson(`${SAMPLES_DIR}/${entry.coachFile}`, parseCoach)
       : postJson(`${API}/coach/${encodeURIComponent(entry.id)}`, {}, parseCoach),
+  );
+}
+
+/**
+ * The coach's cue as speech (`GET /api/coach/{id}/voice`, Henoch's #60), or null. Never rejects:
+ * a 404 (no voice route yet, or a swing the service doesn't know), any error, a timeout or a bad
+ * answer all mean "keep the plain caption", without a message. A voice is kept until the page
+ * reloads (the same promise, so coming back to the caption shows it at once). Null isn't kept,
+ * so the next ask, e.g. once the service is up, tries again.
+ */
+export function loadVoiceFor(entry: SwingEntry): Promise<CoachVoice | null> {
+  return cached(
+    `voice:${entry.key}`,
+    () =>
+      getJson(`${API}/coach/${encodeURIComponent(entry.id)}/voice`, parseVoice, {
+        signal: AbortSignal.timeout(VOICE_TIMEOUT_MS),
+      }).catch(() => null),
+    (voice) => voice !== null,
   );
 }
 

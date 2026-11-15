@@ -1,17 +1,25 @@
 // Coach caption laid over the 3D view, like a subtitle: the top fault, its cue and, when the
 // ghost shows a different fix, the coach's ghost_note. Orange = what the player did (the
 // fault), cyan = the fix (the cue). "No fault" never claims more than the coach checked.
+// Once the coach's voice (#60) loads, its cue replaces the plain one, with a play button when
+// there's audio and "worded by Claude" when Claude wrote it. The clip stops when the caption goes.
 
-import { RotateCcw } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { RotateCcw, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { GHOST_COLOUR, YOU_COLOUR } from "./colours";
-import { groupNotJudged, listWords, notCheckedFaults, type CoachCaption } from "./compare";
+import { groupNotJudged, listWords, notCheckedFaults, type CoachCaption, type CoachVoice } from "./compare";
 
 export type CaptionState =
   | { kind: "loading" }
   | { kind: "error"; message: string; onRetry: () => void }
-  | { kind: "ready"; caption: CoachCaption };
+  | {
+      kind: "ready";
+      caption: CoachCaption;
+      /** The spoken cue, once it has loaded. Null or absent: the plain caption. */
+      voice?: CoachVoice | null;
+    };
 
 /** "Stance 80 deg open" -> "Stance 80° open". Wording only; the number is the file's. */
 export function tidyLabel(label: string): string {
@@ -74,8 +82,14 @@ export function CoachCaptionBar({ state, size }: { state: CaptionState; size: "l
               )}
               style={{ color: GHOST_COLOUR }}
             >
-              “{state.caption.cue}”
+              “{state.voice?.cue ?? state.caption.cue}”
             </blockquote>
+            {state.voice && (state.voice.audioUrl || state.voice.wordedByClaude) && (
+              <div className="mt-2 flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
+                {state.voice.audioUrl && <PlayVoice url={state.voice.audioUrl} large={large} />}
+                {state.voice.wordedByClaude && <span className="text-xs text-muted-foreground">worded by Claude</span>}
+              </div>
+            )}
             {state.caption.ghostNote && (
               <p className={cn("mt-1.5 text-balance text-muted-foreground", large ? "text-sm sm:text-base" : "text-xs sm:text-sm")}>
                 {state.caption.ghostNote}
@@ -86,6 +100,59 @@ export function CoachCaptionBar({ state, size }: { state: CaptionState; size: "l
         )}
       </figure>
     </div>
+  );
+}
+
+/** The clip playing now, from any caption, so a new play stops it instead of talking over it. */
+let playing: HTMLAudioElement | null = null;
+
+/** Stops a clip and lets the browser drop it (an inline data: clip can be hundreds of KB). */
+function release(audio: HTMLAudioElement) {
+  audio.pause();
+  audio.removeAttribute("src");
+  audio.load();
+  if (playing === audio) playing = null;
+}
+
+function PlayVoice({ url, large }: { url: string; large: boolean }) {
+  const [busy, setBusy] = useState(false);
+  /** This button's latest clip. */
+  const clip = useRef<HTMLAudioElement | null>(null);
+
+  // The button is going (back to the swing list, another swing, leaving /ghost): stop and release
+  // its clip. Next can keep /ghost alive in the background, which runs this cleanup but keeps
+  // state, hence the reset.
+  useEffect(
+    () => () => {
+      if (clip.current) release(clip.current);
+      clip.current = null;
+      setBusy(false);
+    },
+    [],
+  );
+
+  function play() {
+    if (playing) release(playing);
+    const audio = new Audio(url);
+    playing = audio;
+    clip.current = audio;
+    // An older clip stopping fires these too; only the latest one resets the button.
+    const done = () => {
+      if (clip.current === audio) setBusy(false);
+    };
+    audio.addEventListener("ended", done);
+    audio.addEventListener("pause", done);
+    audio.addEventListener("error", done);
+    setBusy(true);
+    // A clip the browser can't play stays quiet: the cue is on screen anyway.
+    audio.play().catch(done);
+  }
+
+  return (
+    <Button type="button" variant="outline" size={large ? "sm" : "xs"} className="pointer-events-auto" onClick={play}>
+      <Volume2 data-icon="inline-start" />
+      {busy ? "Playing…" : "Hear the coach"}
+    </Button>
   );
 }
 
