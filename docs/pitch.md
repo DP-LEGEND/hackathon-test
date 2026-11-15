@@ -75,7 +75,8 @@ Same clicks as the runbook's beats 1–3, faster. The wrist sensor (beat 4) move
 | OPERATOR clicks | On screen | PRESENTER says |
 |---|---|---|
 | Switch to browser tab 2 | The new swing at the coach's call: *"Reading the coach's call…"*, then the call, or *"No fault found"* or *"No fault found in what was checked"* (see below) | This one we filmed today on one phone. Slow motion, hitting hand, and forehand or backhand are all detected automatically. The coach measures it live. *(Read the caption exactly as shown.)* |
-| Only if the ghost shows the badge *Coach's pick*: **Show the ghost**, then **Show the court** | The ghost (*Coach's pick*), then both *PREDICTED* paths | And there's their ghost, computed just now. |
+| If the coach named a fault: **Show the ghost** | *"Making the … ghost…"*, then the ghost and its fix | *(Say nothing yet; look at the badge.)* |
+| If the fix shows the badge *Coach's pick*: **Show the court** | Both *PREDICTED* paths | And there's their ghost, computed just now. |
 
 **If the caption says "No fault found" or "No fault found in what was checked":** read it as shown. Then do one of these:
 - Stop the beat there and go to *How it works*.

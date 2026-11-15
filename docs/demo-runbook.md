@@ -61,7 +61,16 @@ This Mac has Node 22, and the repo targets Node 26. Rehearse with the same Node 
 
 **4. Have the fresh clip ready.** Film one swing at **60 fps (normal video, not slow motion)**: a few seconds, one player, whole body in frame. AirDrop it to the Mac and rename it `~/Downloads/fresh.mov`. Upload it once in rehearsal through `/upload` to time it. If the page says *"Still processing, but this page stopped waiting"*, the clip took longer than the app waits, so trim it closer to the swing.
 
-**Rehearse in a separate folder.** Every upload is saved under `GHOST_SWINGS_DIR/live-<id>/`, and the service lists every saved swing. So a rehearsal upload in the stage folder would show up on stage. For rehearsal, start terminal tab 1 (below) with the same `cd ~/hackathon-demo/services`, then this instead:
+**Rehearse in a separate folder.** Every upload is saved under `GHOST_SWINGS_DIR/live-<id>/`, and the service lists every saved swing. So a rehearsal upload in the stage folder would show up on stage. If `~/ghost-rehearsal` already exists from an earlier rehearsal, move it aside first:
+
+```
+mv ~/ghost-rehearsal ~/ghost-rehearsal-old-$(date +%H%M)
+```
+```
+mkdir -p ~/ghost-rehearsal
+```
+
+For rehearsal, start terminal tab 1 (below) with the same `cd ~/hackathon-demo/services`, then this instead:
 
 ```
 GHOST_SWINGS_DIR=~/ghost-rehearsal ~/ghost-env/bin/python -m uvicorn pipeline.server:app --port 8000
@@ -174,7 +183,8 @@ The clip was sent at 0:00 from browser tab 2 (`/upload`: **Choose a video**, set
 | Click | Screen shows | PRESENTER says |
 |---|---|---|
 | Switch to browser tab 2 | It has opened `/ghost?swing=<id>` at **the coach's call** for the fresh swing: *"Reading the coach's call…"*, then the call, or *"No fault found"* or *"No fault found in what was checked"* (see below). If it still shows the progress panel, see *Upload still processing* in the fallback table | One phone. Speed, hitting hand and forehand/backhand are detected automatically. Depth is estimated from one camera. Then read the caption as shown: its numbers depend on the swing. |
-| Only if the ghost shows the badge *Coach's pick*: **Show the ghost**, then **Show the court** | *"Making the … ghost…"*, then the ghost (badge *Coach's pick*) and both PREDICTED paths | Same as before, computed just now. |
+| If the coach named a fault: **Show the ghost** | *"Making the … ghost…"*, then the ghost and its fix | *(Say nothing yet; look at the badge.)* |
+| If the fix shows the badge *Coach's pick*: **Show the court** | Both PREDICTED paths | Same as before, computed just now. |
 
 If browser tab 2 says *"Your ghost is ready."* but hasn't moved on, click **Open it in Ghost**.
 
