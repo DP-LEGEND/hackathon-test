@@ -14,13 +14,21 @@ import wave
 import numpy as np
 
 from pipeline.live import playback_hits_to_real
+from pipeline.multi_sync import match_sequence, select_swing_peaks
 from pipeline.segment import audio_hits
-from pipeline.video import VideoInfo, run_tool, tool
+from pipeline.video import VideoInfo, run_tool, timing_at, tool
 
 
 SAMPLE_RATE = 16_000
-MATCH_TOLERANCE_S = .035
 MAX_HITS = 128
+MAX_CANDIDATE_HITS = 8192
+
+
+class SyncError(ValueError):
+    """A controlled multi-upload sync failure retaining its timing evidence."""
+    def __init__(self, message: str, debug: dict):
+        super().__init__(message)
+        self.debug = debug
 
 
 def _duration(info: VideoInfo) -> float:
@@ -57,81 +65,55 @@ between edit segments has no video evidence and cannot define a sync point.
     return elapsed + (seconds - last['playbackEnd']) * last['rate'] / factor
 
 
-def _extract_hits(clip: Path, info: VideoInfo, wav: Path) -> tuple[np.ndarray, np.ndarray]:
-    """Return normalized real hit times and local transient energy for ranking."""
+def _decode_candidates(clip: Path, wav: Path) -> tuple[np.ndarray, np.ndarray]:
+    """Decode transient candidates once, preserving RMS amplitude for selection."""
     run_tool([tool('ffmpeg'), '-v', 'error', '-nostdin', '-y',
               '-protocol_whitelist', 'file,pipe', '-format_whitelist', 'mov,avi',
               '-i', str(clip.resolve()), '-map', '0:a:0', '-vn', '-ac', '1',
               '-ar', str(SAMPLE_RATE), '-c:a', 'pcm_s16le', '-t', '300', str(wav)], timeout=30)
-    peaks = audio_hits(str(wav), rise_db=25)
-    if len(peaks) > MAX_HITS:
-        raise ValueError('Too many audio transients for a reliable two-camera sync')
+    peaks = audio_hits(str(wav), min_gap_s=.04, rise_db=25)
+    if len(peaks) > MAX_CANDIDATE_HITS:
+        raise ValueError('Too many audio candidates for a reliable two-camera sync')
     with wave.open(str(wav), 'rb') as stream:
         if (stream.getnchannels(), stream.getsampwidth(), stream.getframerate()) != (1, 2, SAMPLE_RATE):
             raise ValueError('Invalid decoded audio for two-camera sync')
         samples = np.frombuffer(stream.readframes(stream.getnframes()), dtype='<i2').astype(float)
     times, strength = [], []
-    duration = _duration(info)
     for peak in peaks:
-        mapped = playback_hits_to_real(info, np.asarray([peak], dtype=float))
-        if len(mapped) != 1 or not 0 <= mapped[0] < duration:
-            continue
         # audio_hits supplies the band-pass/prominence gate. Energy only ranks
         # accepted transients; it cannot introduce an undetected loud sound.
         lo = max(0, int((peak - .01) * SAMPLE_RATE))
         hi = min(len(samples), int((peak + .025) * SAMPLE_RATE))
         if hi > lo:
-            times.append(float(mapped[0]))
-            strength.append(float(np.mean(samples[lo:hi] ** 2)))
+            times.append(float(peak))
+            strength.append(float(np.sqrt(np.mean(samples[lo:hi] ** 2))))
     return np.asarray(times), np.asarray(strength)
 
 
-def _dominant(strength: np.ndarray) -> int | None:
-    if not len(strength):
-        return None
-    order = np.argsort(strength)
-    if len(order) == 1 or strength[order[-1]] >= 4 * max(strength[order[-2]], 1):
-        return int(order[-1])
-    return None
+def extract_playback_peaks(clip: Path, wav: Path) -> tuple[np.ndarray, np.ndarray]:
+    """Provisional playback peaks for local-rate estimation before normalization.
+
+    Final sync re-decodes all candidates and applies dominance in real seconds;
+    this provisional clock never decides which events survive the final filter.
+    The caller owns the temporary WAV and its cleanup.
+    """
+    return select_swing_peaks(*_decode_candidates(clip, wav))
 
 
-def _match_hits(a: np.ndarray, b: np.ndarray, energy_a: np.ndarray,
-                energy_b: np.ndarray) -> tuple[float, int, float]:
-    """Prefer a unique shared transient pattern; isolated dominant peaks also work.
-
-Regular/repeated patterns with equally good distinct alignments are rejected.
-This avoids silently assuming zero or matching the first noise in each clip.
-"""
-    if not len(a) or not len(b):
-        raise ValueError('No ball-hit audio peak found in both clips; provide offset_b_s')
-    if len(a) == len(b) == 1:
-        return float(b[0] - a[0]), 1, 0.0
-    candidates = []
-    for offset in np.unique(np.round((b[:, None] - a).ravel(), 4)):
-        distance = abs(a[:, None] + offset - b)
-        pairs = sorted((float(distance[i, j]), i, j)
-                       for i, j in zip(*np.nonzero(distance <= MATCH_TOLERANCE_S)))
-        used_a, used_b, differences = set(), set(), []
-        for _, i, j in pairs:
-            if i not in used_a and j not in used_b:
-                used_a.add(i)
-                used_b.add(j)
-                differences.append(float(b[j] - a[i]))
-        if not differences:
-            continue
-        refined = float(np.median(differences))
-        residual = float(np.max(abs(np.asarray(differences) - refined)))
-        candidates.append((len(differences), residual, refined))
-    candidates.sort(key=lambda row: (-row[0], row[1], abs(row[2])))
-    best = candidates[0]
-    competitors = [row for row in candidates[1:] if abs(row[2] - best[2]) > 2 * MATCH_TOLERANCE_S]
-    if (best[0] >= 2 and best[0] >= math.ceil(.6 * min(len(a), len(b)))
-            and (not competitors or competitors[0][0] < best[0])):
-        return best[2], best[0], best[1]
-    strongest_a, strongest_b = _dominant(energy_a), _dominant(energy_b)
-    if strongest_a is not None and strongest_b is not None:
-        return float(b[strongest_b] - a[strongest_a]), 1, 0.0
-    raise ValueError('Ball-hit audio sync is ambiguous; provide offset_b_s')
+def _extract_hits(clip: Path, info: VideoInfo, wav: Path) -> tuple[np.ndarray, np.ndarray]:
+    """Dominant swings on the real clock, including per-edit slowdown changes."""
+    playback, strength = _decode_candidates(clip, wav)
+    duration = _duration(info)
+    times, amplitudes = [], []
+    for peak, amplitude in zip(playback, strength):
+        mapped = playback_hits_to_real(info, np.asarray([peak], dtype=float))
+        if len(mapped) == 1 and 0 <= mapped[0] < duration:
+            times.append(float(mapped[0]))
+            amplitudes.append(float(amplitude))
+    times, amplitudes = select_swing_peaks(times, amplitudes)
+    if len(times) > MAX_HITS:
+        raise ValueError('Too many dominant audio swings for a reliable two-camera sync')
+    return times, amplitudes
 
 
 def _write_markers(path: Path, hits: np.ndarray, duration: float) -> Path | None:
@@ -163,29 +145,47 @@ An explicit offset is B *playback* seconds at the beginning of A, the existing
 process.Options convention. Missing audio never blocks an explicit offset.
 Automatic sync failures raise ValueError so the caller can warn and use mono.
 """
-    duration_a, _ = _duration(info_a), _duration(info_b)
     work.mkdir(parents=True, exist_ok=True)
     wav_a, wav_b = work / 'audio-a.wav', work / 'audio-b.wav'
     warnings = []
+    metadata = {'method': 'provided-offset' if offset_b_s is not None else 'audio-swing-sequence',
+                'audioSwingTimesA': [], 'audioSwingTimesB': [],
+                'audioSwingPlaybackTimesA': [], 'audioSwingPlaybackTimesB': [],
+                'audioSwingSlowdownsA': [], 'audioSwingSlowdownsB': [],
+                'audioPeakStrengthsA': [], 'audioPeakStrengthsB': [],
+                'matchedAudioHits': 0, 'audioResidualMs': None,
+                'offsetBRealSeconds': None, 'sequencePairs': []}
+
+    def record(source: str, hits: np.ndarray, strength: np.ndarray, info: VideoInfo) -> None:
+        local = [timing_at(info, float(hit)) for hit in hits]
+        metadata.update({f'audioSwingTimes{source}': hits.tolist(),
+                         f'audioSwingPlaybackTimes{source}': [p for p, _ in local],
+                         f'audioSwingSlowdowns{source}': [factor for _, factor in local],
+                         f'audioPeakStrengths{source}': strength.tolist(),
+                         f'audioHits{source}': len(hits)})
+
     try:
+        duration_a, _ = _duration(info_a), _duration(info_b)
         try:
             hits_a, energy_a = _extract_hits(clip_a, info_a, wav_a)
         except (ValueError, RuntimeError, OSError, wave.Error) as exc:
             if offset_b_s is None:
-                raise ValueError('Camera A has no usable ball-hit audio; provide offset_b_s') from exc
+                raise ValueError('offset not found: Camera A has no usable ball-hit audio; provide offset_b_s') from exc
             hits_a, energy_a = np.array([]), np.array([])
+        record('A', hits_a, energy_a, info_a)
         if offset_b_s is not None:
             offset = playback_offset_to_real(info_b, offset_b_s)
-            metadata = {'method': 'provided-offset', 'offsetBPlaybackSeconds': float(offset_b_s),
-                        'matchedAudioHits': 0, 'audioResidualMs': None}
+            metadata['offsetBPlaybackSeconds'] = float(offset_b_s)
         else:
             try:
                 hits_b, energy_b = _extract_hits(clip_b, info_b, wav_b)
             except (ValueError, RuntimeError, OSError, wave.Error) as exc:
-                raise ValueError('Camera B has no usable ball-hit audio; provide offset_b_s') from exc
-            offset, count, residual = _match_hits(hits_a, hits_b, energy_a, energy_b)
-            metadata = {'method': 'audio-hit-peaks', 'matchedAudioHits': count,
-                        'audioResidualMs': residual * 1000, 'audioHitsB': len(hits_b)}
+                raise ValueError('offset not found: Camera B has no usable ball-hit audio; provide offset_b_s') from exc
+            record('B', hits_b, energy_b, info_b)
+            alignment = match_sequence(hits_a, hits_b)
+            offset = alignment['offsetSeconds']
+            metadata.update(matchedAudioHits=alignment['matchedCount'],
+                            audioResidualMs=alignment['residualMs'], sequencePairs=alignment['pairs'])
         markers = _write_markers(work / 'audio-hit-markers-a.wav', hits_a, duration_a)
         if markers is None:
             warnings.append('Camera A audio is unavailable; contact timing uses the existing wrist-speed estimate.')
@@ -193,6 +193,9 @@ Automatic sync failures raise ValueError so the caller can warn and use mono.
                         contactAudio='detected-transient timing markers' if markers else None,
                         warnings=warnings)
         return offset, markers, metadata
+    except ValueError as exc:
+        metadata.update(error=str(exc), warnings=warnings)
+        raise SyncError(str(exc), metadata) from exc
     finally:
         for path in (wav_a, wav_b):
             try:
