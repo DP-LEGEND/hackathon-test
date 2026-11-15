@@ -80,7 +80,7 @@ The camera can't see a rolled wrist, and it can only estimate racket speed. A ph
 - Reads a Sensor Logger recording (accelerometer, gyroscope and orientation at 100 Hz) and syncs it to the video. The sync uses two taps on the phone and the racket-impact spikes, and reports the alignment error for each swing.
 - Measures the forearm roll from −150 to +100 ms around contact, which feeds the coach's `rolled_wrist` fault. A swing without usable sensor data lists `rolled_wrist` as "not measured".
 - Estimates racket speed from the camera's wrist speed plus the gyro's spin, and the predicted ball uses it when a swing has one. It also fills in wrist and elbow positions the camera lost behind the body, and gives a swing tempo and the impact's peak g and ring-down (reported, not judged). All of these are labelled ESTIMATE.
-- On `/ghost`, the coach's call shows a **Wrist sensor** panel: roll through contact, wrist speed at contact, and two small charts, labelled MEASURED (sensor). It appears on saved swings that carry sensor data; the API doesn't serve wrist data for live swings yet.
+- The web app has a **Wrist sensor** panel for the coach's call: roll through contact, wrist speed at contact, and two small charts, labelled MEASURED (sensor). Neither demo swing has sensor data yet, so it doesn't appear on `/ghost` today. The API doesn't serve wrist data for live swings yet either.
 - So far it's tested on **mock data only**, and labelled MOCK where it appears: rebuilt joints within 1 cm and racket speed within 4% of the mock truth. The `rolled_wrist` threshold comes from mock swings and has to be retuned on real ones.
 
 ## In progress / demoed from branch
