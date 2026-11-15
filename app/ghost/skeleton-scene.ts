@@ -244,12 +244,52 @@ function pathTag(text: string, colour: string, above: boolean): CSS2DObject {
     "rounded-full border bg-background/90 px-2.5 py-1 font-mono text-[11px] leading-none font-semibold tracking-wide whitespace-nowrap shadow-[0_4px_16px_rgb(0_0_0/0.45)]";
   el.style.color = colour;
   el.style.borderColor = colour;
-  el.style.margin = above ? "0 0 6px" : "6px 0 0";
   el.textContent = text;
   const tag = new CSS2DObject(el);
   tag.center.set(0.5, above ? 1 : 0); // above or below its anchor so the two tags don't overlap
   return tag;
 }
+
+/** Room between a PREDICTED tag and its landing spot, an overlay or another tag (px). */
+const TAG_GAP = 6;
+/** How close a tag may come to the edge of the view (px). */
+const TAG_INSET = 8;
+
+type Box = { left: number; top: number; width: number; height: number };
+
+function overlaps(a: Box, b: Box): boolean {
+  return a.left < b.left + b.width && b.left < a.left + a.width && a.top < b.top + b.height && b.top < a.top + a.height;
+}
+
+/**
+ * The nearest place to `wanted` that is inside the view and clear of every box in `blocked` (the
+ * overlays over the view, then tags already placed): the tag slides just past one or two of them,
+ * up, down or sideways. If nowhere is clear it stays where it was wanted, inside the view.
+ */
+function clearOf(wanted: Box, blocked: Box[], width: number, height: number): Box {
+  const inside = (b: Box): Box => ({
+    ...b,
+    left: Math.min(Math.max(b.left, TAG_INSET), Math.max(TAG_INSET, width - TAG_INSET - b.width)),
+    top: Math.min(Math.max(b.top, TAG_INSET), Math.max(TAG_INSET, height - TAG_INSET - b.height)),
+  });
+  const free = (b: Box) => !blocked.some((o) => overlaps(b, o));
+  const pastEach = (b: Box) =>
+    blocked.flatMap((o) => [
+      inside({ ...b, top: o.top - b.height }),
+      inside({ ...b, top: o.top + o.height }),
+      inside({ ...b, left: o.left - b.width }),
+      inside({ ...b, left: o.left + o.width }),
+    ]);
+  const start = inside(wanted);
+  if (free(start)) return start;
+  const once = pastEach(start);
+  const clear = [...once, ...once.flatMap(pastEach)].filter(free);
+  if (clear.length === 0) return start;
+  const away = (b: Box) => Math.hypot(b.left - wanted.left, b.top - wanted.top);
+  return clear.reduce((best, b) => (away(b) < away(best) ? b : best));
+}
+
+const tagPoint = new THREE.Vector3();
 
 /**
  * Same trick as the skeletons: the ghost's path is fatter and drawn back faces only, so where
@@ -452,6 +492,10 @@ export class SkeletonScene {
   private balls: THREE.Group | null = null;
   /** The ghost's own ball path inside `balls` (null when there's one shared path). */
   private ghostBall: THREE.Group | null = null;
+  /** The PREDICTED tags of the paths on show. */
+  private tags: CSS2DObject[] = [];
+  /** Where the overlays laid over the view are (legend, caption), so the tags stay clear of them. */
+  private overlays: () => DOMRect[] = () => [];
   private floor: FloorOffsets = { you: 0, ghost: 0 };
   private coordinates: SwingCoordinates = { system: "hip-centred", youWrist: null };
   private ballStart: Vec3 | null = null;
@@ -550,6 +594,7 @@ export class SkeletonScene {
       disposeTree(this.balls);
       this.balls = null;
       this.ghostBall = null;
+      this.tags = [];
     }
     if (ballPaths) {
       const group = new THREE.Group();
@@ -566,8 +611,51 @@ export class SkeletonScene {
       );
       ball.position.fromArray(ballPaths.you.points[0]);
       group.add(ball);
+      group.traverse((object) => {
+        if (object instanceof CSS2DObject) this.tags.push(object);
+      });
       this.balls = group;
       this.scene.add(group);
+    }
+  }
+
+  /** The overlays drawn over the view (their screen rectangles), for the tags to keep clear of. */
+  setTagOverlays(overlays: () => DOMRect[]) {
+    this.overlays = overlays;
+  }
+
+  /**
+   * Keeps each PREDICTED tag readable: inside the view, clear of the overlays laid over it (the
+   * legend and the coach's caption) and of the other tag, moved as little as it can from its
+   * landing spot. Its colour still says whose path it is.
+   */
+  private keepTagsInView() {
+    if (this.tags.length === 0) return;
+    const width = this.container.clientWidth;
+    const height = this.container.clientHeight;
+    if (width === 0 || height === 0) return;
+    const origin = this.container.getBoundingClientRect();
+    const blocked: Box[] = this.overlays()
+      .filter((r) => r.width > 0 && r.height > 0)
+      .map((r) => ({
+        left: r.left - origin.left - TAG_GAP,
+        top: r.top - origin.top - TAG_GAP,
+        width: r.width + 2 * TAG_GAP,
+        height: r.height + 2 * TAG_GAP,
+      }));
+    for (const tag of this.tags) {
+      const el = tag.element;
+      if (el.style.display === "none") continue; // behind the camera
+      tagPoint.setFromMatrixPosition(tag.matrixWorld).project(this.camera);
+      const x = (tagPoint.x * 0.5 + 0.5) * width;
+      const y = (-tagPoint.y * 0.5 + 0.5) * height;
+      const w = el.offsetWidth;
+      const h = el.offsetHeight;
+      const above = tag.center.y === 1;
+      const wanted = { left: x - w / 2, top: above ? y - TAG_GAP - h : y + TAG_GAP, width: w, height: h };
+      const box = clearOf(wanted, blocked, width, height);
+      blocked.push({ left: box.left - TAG_GAP, top: box.top - TAG_GAP, width: w + 2 * TAG_GAP, height: h + 2 * TAG_GAP });
+      el.style.transform = `translate(${Math.round(box.left)}px, ${Math.round(box.top)}px)`;
     }
   }
 
@@ -598,6 +686,7 @@ export class SkeletonScene {
     this.controls.update(); // needed every frame for damping
     this.renderer.render(this.scene, this.camera);
     this.labels.render(this.scene, this.camera);
+    this.keepTagsInView();
   }
 
   dispose() {

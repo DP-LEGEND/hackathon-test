@@ -134,6 +134,12 @@ export function GhostStage({
         sceneRef.current = s;
         s.setSideBySide(sideBySideRef.current);
         s.setView(viewRef.current);
+        // The PREDICTED tags keep clear of whatever is laid over the view (marked data-tag-avoid).
+        s.setTagOverlays(() =>
+          Array.from(container.parentElement?.querySelectorAll<HTMLElement>("[data-tag-avoid]") ?? [], (el) =>
+            el.getBoundingClientRect(),
+          ),
+        );
 
         let applied: StageLayout | null = null;
         let started = false;
@@ -285,7 +291,10 @@ export function GhostStage({
             </div>
           )}
           {ready && !error && (
-            <div className="pointer-events-none absolute top-3 left-3 flex max-w-[calc(100%-1.5rem)] flex-col items-start gap-2.5 sm:top-5 sm:left-5 sm:max-w-xs">
+            <div
+              data-tag-avoid
+              className="pointer-events-none absolute top-3 left-3 flex max-w-[calc(100%-1.5rem)] flex-col items-start gap-2.5 sm:top-5 sm:left-5 sm:max-w-xs"
+            >
               <p className={cn(look.label, "flex flex-wrap gap-x-2.5 [text-shadow:0_1px_2px_rgb(0_0_0/0.6)]")}>
                 <span className="text-primary">{view === "player" ? "Player view" : "Court view"}</span>
                 <span className="text-muted-foreground">3D replay</span>

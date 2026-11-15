@@ -410,6 +410,7 @@ export function GhostDemo({ requestedSwing }: { requestedSwing: string | null })
                           ? "no correction: your swing unchanged"
                           : `${fixName(compare.fix.id).toLowerCase()} ${formatValue(compare.fix.amount, compare.fix.unit)}`,
                         mock: !compare.ghostIsReal,
+                        aim: compare.aim,
                       }
                     : null
                 }
@@ -423,7 +424,10 @@ export function GhostDemo({ requestedSwing }: { requestedSwing: string | null })
             }
           >
             {onCourt && (
-              <p className="pointer-events-none absolute top-5 right-5 hidden max-w-[34%] text-right text-xs leading-relaxed text-muted-foreground md:block">
+              <p
+                data-tag-avoid
+                className="pointer-events-none absolute top-5 right-5 hidden max-w-[34%] text-right text-xs leading-relaxed text-muted-foreground md:block"
+              >
                 {coordinates.system === "court"
                   ? "Court 6.40 × 9.75 m · player where physics placed them"
                   : "Court 6.40 × 9.75 m · player placed with the hitting hand over the ball's assumed start (display only)"}

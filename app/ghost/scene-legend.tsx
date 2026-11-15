@@ -5,7 +5,7 @@
 import type { ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
 import { GHOST_COLOUR, YOU_COLOUR } from "./colours";
-import { OUTCOME_WORDS, type BallPath } from "./compare";
+import { OUTCOME_WORDS, type BallPath, type GhostAim } from "./compare";
 import { SAME_PATH_MESSAGE } from "./delta-panel";
 
 export function SceneLegend({
@@ -13,8 +13,11 @@ export function SceneLegend({
   balls,
   monoDepth,
 }: {
-  /** What the ghost shows, e.g. "close stance 64.9°", and whether it's a real fix. Null = hidden. */
-  ghost: { label: string; mock: boolean } | null;
+  /**
+   * What the ghost shows, e.g. "close stance 64.9°", whether it's a real fix, and the stated shot
+   * it aims at (#73) with physics' label for it. Null = hidden.
+   */
+  ghost: { label: string; mock: boolean; aim: GhostAim | null } | null;
   /**
    * `same`: both PREDICTED paths are identical. `noCorrection`: physics made no correction, so
    * they match because the ghost is your swing unchanged, not because a fix moved only the body.
@@ -34,6 +37,16 @@ export function SceneLegend({
             </Badge>
           )}
         </Key>
+      )}
+      {ghost?.aim && (
+        <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 pl-[18px] text-xs text-muted-foreground">
+          <span>aiming {ghost.aim.intent}</span>
+          {ghost.aim.label && (
+            <Badge variant="outline" className="h-5 rounded-full font-mono tracking-wide">
+              {ghost.aim.label}
+            </Badge>
+          )}
+        </p>
       )}
       {balls && (
         <div className="mt-1 flex flex-col gap-1 border-t pt-2.5">

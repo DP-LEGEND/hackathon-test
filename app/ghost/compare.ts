@@ -31,8 +31,22 @@ export type CompareSide = {
 export type Change = { you: number | null; ghost: number | null; change: number | null };
 export type MetricChange = Change & { key: string; unit: string };
 
+/**
+ * The shot the ghost aims at (#73): the player's stated intent, which physics turns the ghost
+ * towards (`fix.aiming`, with `assumptions.aim` saying how and labelling it). Only when physics
+ * applied it.
+ */
+export type GhostAim = {
+  /** What the player said they meant to hit, e.g. "straight drive". */
+  intent: string;
+  /** Exactly as compare wrote it (e.g. "STATED"), or null when the file gives none. */
+  label: string | null;
+};
+
 export type CompareResult = {
   fix: { id: string; amount: number; unit: string };
+  /** The ghost's aim when physics turned it to a stated shot (#73); null in files without one. */
+  aim: GhostAim | null;
   hand: "R" | "L";
   /** True when the ghost is the swing with a real fix applied (physics/ghost.py), not a copy. */
   ghostIsReal: boolean;
@@ -490,12 +504,36 @@ function readHowPredicted(
     add({ key: "stroke", name: "Stroke", value: stroke.value, label: labelOf(stroke), method: source });
   }
 
+  // #73: the stated shot the ghost is turned towards, with physics' label and method.
+  const aim = readAim(c, assumptions);
+  if (aim) {
+    add({ key: "aim", name: "The ghost aims at", value: aim.intent, label: aim.label, method: methodOf(optional(assumptions.aim)) });
+  }
+
   return {
     facts,
     contactFrame: isFiniteNumber(c.contactFrame) && Number.isInteger(c.contactFrame) ? c.contactFrame : null,
     contactMethod: typeof c.contactMethod === "string" && c.contactMethod !== "" ? c.contactMethod : null,
     note: typeof assumptions.note === "string" ? assumptions.note : "",
   };
+}
+
+/**
+ * #73's aim: `fix.aiming` names the shot, `assumptions.aim` labels it and says whether physics
+ * applied it. Null when the file has no aim, physics didn't apply it, or there's no correction.
+ */
+function readAim(c: Record<string, unknown>, assumptions: Record<string, unknown>): GhostAim | null {
+  if (c.noCorrection === true) return null;
+  const fix = optional(c.fix);
+  const aim = optional(assumptions.aim);
+  const intent =
+    typeof fix?.aiming === "string" && fix.aiming.trim() !== ""
+      ? fix.aiming.trim()
+      : typeof aim?.intent === "string" && aim.intent.trim() !== ""
+        ? aim.intent.trim()
+        : null;
+  if (intent === null || aim?.applied === false) return null;
+  return { intent, label: labelOf(aim) };
 }
 
 /** Checks an untrusted `physics.compare` JSON value. Throws CompareDataError. */
@@ -528,6 +566,7 @@ export function parseCompare(value: unknown): CompareResult {
 
   return {
     fix: { id: text(fix.id, "fix.id"), amount: num(fix.amount, "fix.amount"), unit: text(fix.unit, "fix.unit") },
+    aim: readAim(c, assumptions),
     hand,
     coordinateSystem: typeof c.coordinateSystem === "string" ? c.coordinateSystem : null,
     ghostIsReal,
