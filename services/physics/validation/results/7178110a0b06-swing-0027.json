@@ -1,0 +1,333 @@
+{
+ "swing": "7178110a0b06-swing-0027",
+ "clip": "IMG_2115.MOV",
+ "stroke": "forehand",
+ "method": "tracked",
+ "notes": [
+  "contact pixel from the incoming ball's track, extrapolated to the contact frame"
+ ],
+ "contact": {
+  "fileFrame": 30450,
+  "source": "audio transient (swing metadata.sourceContactFrame)",
+  "px": [
+   1092.2,
+   711.9
+  ],
+  "fpsReal": 120.0,
+  "slowdown": 4.0,
+  "feetPx": [
+   [
+    841.8,
+    902.6
+   ],
+   [
+    814.3,
+    891.5
+   ],
+   [
+    887.5,
+    902.2
+   ],
+   [
+    851.7,
+    927.0
+   ]
+  ],
+  "feetFloorM": [
+   4.88,
+   4.47
+  ],
+  "depthPrior": "contact within 0.5 m (1 sd) of the feet along the court; feet from the pipeline's pose model, placed on the floor by the camera"
+ },
+ "camera": {
+  "focalPx": 1536.2,
+  "positionM": [
+   5.355,
+   1.134,
+   9.673
+  ],
+  "landmarks": 11,
+  "landmarkRmsPx": 3.09,
+  "source": "hand-picked on a median of 41 frames spread over the clip (the player is removed); red lines at their centre, which sits 0.025 m below the WSF top-edge heights and 0.025 m in front of the short line's back edge"
+ },
+ "trackedPoints": [
+  [
+   30466,
+   0.1333,
+   755.5,
+   567.8
+  ],
+  [
+   30467,
+   0.1417,
+   747.6,
+   567.0
+  ],
+  [
+   30468,
+   0.15,
+   739.6,
+   566.5
+  ],
+  [
+   30469,
+   0.1583,
+   735.5,
+   566.2
+  ],
+  [
+   30470,
+   0.1667,
+   727.3,
+   566.0
+  ],
+  [
+   30471,
+   0.175,
+   719.1,
+   565.8
+  ],
+  [
+   30472,
+   0.1833,
+   706.4,
+   565.6
+  ],
+  [
+   30473,
+   0.1917,
+   697.5,
+   565.5
+  ],
+  [
+   30474,
+   0.2,
+   688.6,
+   565.7
+  ],
+  [
+   30475,
+   0.2083,
+   679.6,
+   565.9
+  ],
+  [
+   30476,
+   0.2167,
+   675.2,
+   566.0
+  ],
+  [
+   30477,
+   0.225,
+   665.8,
+   566.2
+  ],
+  [
+   30478,
+   0.2333,
+   656.3,
+   566.9
+  ],
+  [
+   30479,
+   0.2417,
+   646.9,
+   567.6
+  ],
+  [
+   30480,
+   0.25,
+   632.1,
+   569.0
+  ],
+  [
+   30481,
+   0.2583,
+   622.0,
+   570.0
+  ],
+  [
+   30482,
+   0.2667,
+   612.0,
+   571.1
+  ],
+  [
+   30483,
+   0.275,
+   601.4,
+   572.3
+  ],
+  [
+   30484,
+   0.2833,
+   590.9,
+   573.8
+  ],
+  [
+   30485,
+   0.2917,
+   580.3,
+   575.4
+  ],
+  [
+   30486,
+   0.3,
+   569.3,
+   577.4
+  ],
+  [
+   30487,
+   0.3083,
+   558.2,
+   579.3
+  ],
+  [
+   30488,
+   0.3167,
+   546.7,
+   581.3
+  ],
+  [
+   30489,
+   0.325,
+   541.1,
+   582.4
+  ],
+  [
+   30490,
+   0.3333,
+   529.4,
+   584.7
+  ],
+  [
+   30491,
+   0.3417,
+   517.5,
+   587.3
+  ],
+  [
+   30492,
+   0.35,
+   499.4,
+   591.4
+  ],
+  [
+   30493,
+   0.3583,
+   486.9,
+   594.3
+  ],
+  [
+   30494,
+   0.3667,
+   474.3,
+   597.5
+  ],
+  [
+   30495,
+   0.375,
+   461.5,
+   601.0
+  ],
+  [
+   30496,
+   0.3833,
+   448.4,
+   604.7
+  ],
+  [
+   30497,
+   0.3917,
+   435.2,
+   608.4
+  ],
+  [
+   30498,
+   0.4,
+   421.6,
+   612.4
+  ],
+  [
+   30499,
+   0.4083,
+   407.8,
+   616.7
+  ],
+  [
+   30500,
+   0.4167,
+   393.6,
+   621.3
+  ],
+  [
+   30501,
+   0.425,
+   386.5,
+   623.5
+  ]
+ ],
+ "tracked": {
+  "contactPointM": [
+   5.734,
+   0.616,
+   4.481
+  ],
+  "speedKmh": 136.0,
+  "azimuthDeg": -21.2,
+  "elevationDeg": 7.6,
+  "frontWall": {
+   "xM": 3.997,
+   "heightM": 1.171,
+   "tS": 0.133
+  },
+  "reboundVelocityMs": [
+   -4.63,
+   0.77,
+   9.81
+  ],
+  "fit": {
+   "rmsPx": 2.62,
+   "pointsBeforeWall": 0,
+   "pointsAfterWall": 36,
+   "pointsDropped": 0,
+   "sigma1": {
+    "speedKmh": 41.465,
+    "azimuthDeg": 3.267,
+    "elevationDeg": 1.218,
+    "frontWallXM": 0.259,
+    "frontWallHeightM": 0.037,
+    "timeToWallS": 0.043
+   }
+  }
+ },
+ "predicted": {
+  "label": "PREDICTED",
+  "contactPointM": [
+   5.457,
+   0.6,
+   4.217
+  ],
+  "speedKmh": 133.2,
+  "azimuthDeg": -13.5,
+  "azimuthLabel": "ESTIMATE",
+  "elevationDeg": 12.0,
+  "elevationLabel": "ASSUMED",
+  "frontWall": {
+   "xM": 4.445,
+   "heightM": 1.448,
+   "tS": 0.124
+  }
+ },
+ "error": {
+  "directionDeg": -7.7,
+  "frontWallHeightM": -0.28,
+  "frontWallXM": -0.45,
+  "speedKmh": 2.8,
+  "elevationDeg": -4.4,
+  "timeToWallS": 0.009,
+  "contactSpotM": 0.38
+ },
+ "debugImage": "data/processed/validation/7178110a0b06-swing-0027.jpg"
+}
