@@ -17,6 +17,7 @@ import {
   type CompareResult,
   type NotJudged,
 } from "./compare";
+import { look } from "./look";
 import { ReasonList } from "./reason-list";
 
 /** compare `notMeasured` keys the Ball card flags on its own rows, so the body card doesn't list them. */
@@ -165,7 +166,9 @@ export function BallChanges({
       title={
         <>
           Ball
-          <Badge variant="outline">PREDICTED</Badge>
+          <Badge variant="outline" className={cn(look.chip, "font-sans")}>
+            PREDICTED
+          </Badge>
         </>
       }
       note={note}
@@ -191,51 +194,71 @@ function DeltaCard({
   after?: ReactNode;
   footnote?: string;
 }) {
+  // A table from tablet width up. On a phone each row stacks: the measure across the card, then
+  // You, Ghost and Change in three columns, so no value wraps ("133.2 km/h" stays on one line).
+  // The explicit roles keep it a table for screen readers when the rows become grids.
   return (
-    <section aria-labelledby={id} className="flex flex-col gap-2 rounded-xl border bg-card p-3 sm:p-4">
-      <div className="flex flex-col gap-0.5">
-        <h3 id={id} className="flex items-center gap-2 text-sm font-medium">
+    <section aria-labelledby={id} className={cn(look.card, look.pad, "flex flex-col gap-4")}>
+      <div className="flex flex-col gap-1.5">
+        <h3 id={id} className={cn(look.title, "flex flex-wrap items-center gap-2")}>
           {title}
         </h3>
-        <p className="text-xs text-muted-foreground">{note}</p>
+        <p className="text-[13px] leading-relaxed text-muted-foreground">{note}</p>
       </div>
-      <table className="w-full text-sm tabular-nums">
-        <thead>
-          <tr className="text-xs text-muted-foreground">
-            <th scope="col" className="py-1 pr-2 text-left font-normal">
+      <table role="table" className="block w-full text-sm tabular-nums sm:table">
+        <thead role="rowgroup" className="block sm:table-header-group">
+          <tr role="row" className="grid grid-cols-3 gap-x-3 pb-2 text-xs text-muted-foreground sm:table-row sm:pb-0">
+            <th role="columnheader" scope="col" className="sr-only text-left font-normal sm:not-sr-only sm:py-2 sm:pr-3">
               Measure
             </th>
-            <th scope="col" className="px-2 py-1 text-right font-normal" style={{ color: YOU_COLOUR }}>
+            <th role="columnheader" scope="col" className="text-right font-normal sm:py-2 sm:pl-3" style={{ color: YOU_COLOUR }}>
               You
             </th>
-            <th scope="col" className="px-2 py-1 text-right font-normal" style={{ color: GHOST_COLOUR }}>
+            <th role="columnheader" scope="col" className="text-right font-normal sm:py-2 sm:pl-3" style={{ color: GHOST_COLOUR }}>
               Ghost
             </th>
-            <th scope="col" className="py-1 pl-2 text-right font-normal">
+            <th role="columnheader" scope="col" className="text-right font-normal sm:py-2 sm:pl-3">
               Change
             </th>
           </tr>
         </thead>
-        <tbody>
+        <tbody role="rowgroup" className="block sm:table-row-group">
           {rows.map((row) => (
-            <tr key={row.key} className={cn("border-t align-top", !row.changed && "text-muted-foreground")}>
-              <th scope="row" className="py-1.5 pr-2 text-left font-normal">
+            <tr
+              role="row"
+              key={row.key}
+              className={cn(
+                "grid grid-cols-3 gap-x-3 gap-y-1 border-t py-2.5 align-top sm:table-row sm:py-0",
+                !row.changed && "text-muted-foreground",
+              )}
+            >
+              <th role="rowheader" scope="row" className="col-span-3 text-left font-normal sm:py-2.5 sm:pr-3">
                 {row.name}
                 {row.caveat && <span className="mt-0.5 block text-xs text-pretty">{row.caveat}</span>}
               </th>
-              <td className="px-2 py-1.5 text-right" style={row.changed ? { color: YOU_COLOUR } : undefined}>
+              <td
+                role="cell"
+                className={cn(look.value, "text-right sm:py-2.5 sm:pl-3")}
+                style={row.changed ? { color: YOU_COLOUR } : undefined}
+              >
                 {row.you}
               </td>
-              <td className="px-2 py-1.5 text-right" style={row.changed ? { color: GHOST_COLOUR } : undefined}>
+              <td
+                role="cell"
+                className={cn(look.value, "text-right sm:py-2.5 sm:pl-3")}
+                style={row.changed ? { color: GHOST_COLOUR } : undefined}
+              >
                 {row.ghost}
               </td>
-              <td className={cn("py-1.5 pl-2 text-right", row.changed && "text-foreground")}>{row.change}</td>
+              <td role="cell" className={cn(look.value, "text-right sm:py-2.5 sm:pl-3", row.changed && "text-foreground")}>
+                {row.change}
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
       {after}
-      {footnote && <p className="text-xs text-muted-foreground">{footnote}</p>}
+      {footnote && <p className="border-t pt-3 text-xs leading-relaxed text-muted-foreground">{footnote}</p>}
     </section>
   );
 }

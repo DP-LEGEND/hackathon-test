@@ -241,7 +241,7 @@ export type BallPathView = {
 function pathTag(text: string, colour: string, above: boolean): CSS2DObject {
   const el = document.createElement("div");
   el.className =
-    "rounded-md border bg-background/90 px-2 py-0.5 font-mono text-xs leading-tight font-semibold tracking-wide whitespace-nowrap";
+    "rounded-full border bg-background/90 px-2.5 py-1 font-mono text-[11px] leading-none font-semibold tracking-wide whitespace-nowrap shadow-[0_4px_16px_rgb(0_0_0/0.45)]";
   el.style.color = colour;
   el.style.borderColor = colour;
   el.style.margin = above ? "0 0 6px" : "6px 0 0";
@@ -317,13 +317,16 @@ function loop(corners: Vec3[]): number[] {
   return corners.flatMap((c, i) => [...c, ...corners[(i + 1) % corners.length]]);
 }
 
+/** Court line colour from the Figma court (frame 21:723): a teal grey, quieter than the figures. */
+const COURT_LINE = 0x547077;
+
 function buildCourt(): THREE.Group {
   const { width: W, length: L } = COURT;
   const court = new THREE.Group();
 
   const floor = new THREE.Mesh(
     new THREE.PlaneGeometry(W, L),
-    new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.035, depthWrite: false }),
+    new THREE.MeshBasicMaterial({ color: COURT_LINE, transparent: true, opacity: 0.12, depthWrite: false }),
   );
   floor.rotation.x = -Math.PI / 2;
   floor.position.set(W / 2, 0, L / 2);
@@ -333,7 +336,7 @@ function buildCourt(): THREE.Group {
   const grid: number[] = [];
   for (let x = 1; x < W; x += 1) grid.push(x, 0.002, 0, x, 0.002, L);
   for (let z = 1; z < L; z += 1) grid.push(0, 0.002, z, W, 0.002, z);
-  court.add(lines(grid, 0xffffff, 0.09));
+  court.add(lines(grid, COURT_LINE, 0.22));
 
   // Floor markings: outline, short line, half-court line, service boxes.
   const y = 0.004;
@@ -348,7 +351,7 @@ function buildCourt(): THREE.Group {
     W - box, y, sl, W - box, y, sl + box,
     W - box, y, sl + box, W, y, sl + box,
   ];
-  court.add(lines(floorLines, 0xd4d8de, 0.5));
+  court.add(lines(floorLines, COURT_LINE, 1));
 
   // Wall lines: front wall (out line, service line, tin), side-wall out lines, back wall.
   const { frontWallOut: fo, backWallOut: bo, serviceLine, tin } = COURT;
@@ -361,7 +364,7 @@ function buildCourt(): THREE.Group {
     0, 0, L, 0, bo, L, W, 0, L, W, bo, L,
     0, bo, L, W, bo, L,
   ];
-  court.add(lines(wallLines, 0xd4d8de, 0.28));
+  court.add(lines(wallLines, COURT_LINE, 0.75));
   return court;
 }
 

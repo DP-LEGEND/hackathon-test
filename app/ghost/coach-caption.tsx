@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { GHOST_COLOUR, YOU_COLOUR } from "./colours";
 import { groupNotJudged, listWords, notCheckedFaults, type CoachCaption, type CoachVoice } from "./compare";
+import { look } from "./look";
 
 export type CaptionState =
   | { kind: "loading" }
@@ -56,16 +57,16 @@ export function CoachCaptionBar({ state, size }: { state: CaptionState; size: "l
   const partial = state.kind === "ready" && noFaultInWhatWasChecked(state.caption);
   const voice = state.kind === "ready" && !partial ? (state.voice ?? null) : null;
   return (
-    <div className="pointer-events-none absolute inset-x-3 bottom-3 flex justify-center">
+    <div className="pointer-events-none absolute inset-x-3 bottom-3 flex justify-center sm:inset-x-5 sm:bottom-5">
       <figure
         className={cn(
-          "w-full max-w-3xl rounded-xl border bg-background/92 text-center shadow-lg",
-          large ? "px-4 py-3 sm:px-6 sm:py-4" : "px-3 py-2 sm:px-5 sm:py-2.5",
+          "w-full max-w-3xl rounded-[20px] border bg-background/92 text-center shadow-[0_12px_40px_rgb(0_0_0/0.4)]",
+          large ? "px-4 py-3.5 sm:px-8 sm:py-5" : "px-3 py-2.5 sm:px-6 sm:py-3",
           state.kind === "error" && "pointer-events-auto",
         )}
         aria-live="polite"
       >
-        <figcaption className="text-[0.7rem] font-semibold tracking-[0.14em] text-muted-foreground uppercase">
+        <figcaption className={cn(look.label, "text-muted-foreground")}>
           Coach&apos;s call
           {state.kind === "ready" && state.caption.fault && (
             <span className="font-normal tracking-normal normal-case"> · {state.caption.fault.confidence} confidence</span>
@@ -73,9 +74,9 @@ export function CoachCaptionBar({ state, size }: { state: CaptionState; size: "l
         </figcaption>
         {state.kind === "loading" && <p className="mt-1 text-sm text-muted-foreground">Reading the coach&apos;s call…</p>}
         {state.kind === "error" && (
-          <div className="mt-1 flex flex-wrap items-center justify-center gap-x-3 gap-y-2">
+          <div className="mt-1.5 flex flex-wrap items-center justify-center gap-x-3 gap-y-2">
             <p className="text-sm text-muted-foreground">The coach&apos;s call didn&apos;t load: {state.message}</p>
-            <Button variant="outline" size="sm" onClick={state.onRetry}>
+            <Button variant="outline" size="sm" className={look.pill} onClick={state.onRetry}>
               <RotateCcw data-icon="inline-start" />
               Try again
             </Button>
@@ -84,7 +85,7 @@ export function CoachCaptionBar({ state, size }: { state: CaptionState; size: "l
         {state.kind === "ready" && (
           <>
             <p
-              className={cn("mt-1 font-medium text-balance", large ? "text-lg sm:text-2xl" : "text-sm sm:text-base")}
+              className={cn("mt-1.5 font-medium text-balance", large ? "text-lg sm:text-[22px]" : "text-sm sm:text-base")}
               style={{ color: YOU_COLOUR }}
             >
               {state.caption.fault
@@ -95,8 +96,8 @@ export function CoachCaptionBar({ state, size }: { state: CaptionState; size: "l
             </p>
             <blockquote
               className={cn(
-                "mt-1 leading-tight font-semibold text-balance",
-                large ? "text-2xl sm:text-4xl" : "text-lg sm:text-2xl",
+                "ghost-swing-title mt-1 leading-tight text-balance",
+                large ? "text-2xl tracking-[-0.5px] sm:text-[34px]" : "text-lg sm:text-2xl",
               )}
               style={{ color: GHOST_COLOUR }}
             >
@@ -167,7 +168,13 @@ function PlayVoice({ url, large }: { url: string; large: boolean }) {
   }
 
   return (
-    <Button type="button" variant="outline" size={large ? "sm" : "xs"} className="pointer-events-auto" onClick={play}>
+    <Button
+      type="button"
+      variant="outline"
+      size={large ? "sm" : "xs"}
+      className={cn(look.pill, "pointer-events-auto")}
+      onClick={play}
+    >
       <Volume2 data-icon="inline-start" />
       {busy ? "Playing…" : "Hear the coach"}
     </Button>

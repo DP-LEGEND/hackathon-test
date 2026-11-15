@@ -4,11 +4,25 @@
 // optionally both PREDICTED ball paths. Owns the playback clock and camera buttons; what to
 // show comes from the demo flow (ghost-demo.tsx). The three.js scene is loaded on demand.
 
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
-import { Columns2, Crosshair, Grid3x3, Layers, Pause, PersonStanding, Play, RotateCcw, Turtle } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type ReactNode } from "react";
+import {
+  CircleAlert,
+  Columns2,
+  Crosshair,
+  Grid3x3,
+  Layers,
+  LoaderCircle,
+  Pause,
+  PersonStanding,
+  Play,
+  RotateCcw,
+  Turtle,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { GHOST_COLOUR, YOU_COLOUR } from "./colours";
 import { JointLegend } from "./joint-legend";
+import { look } from "./look";
 import { fadedJointsAt, jointWords, summariseGuesses } from "./provenance";
 import type { BallPathView, CameraView, ReplayLayout, SkeletonScene } from "./skeleton-scene";
 import {
@@ -48,6 +62,7 @@ export function GhostStage({
   view,
   onViewChange,
   status,
+  legend,
   children,
 }: {
   you: LoadedSwing | null;
@@ -61,7 +76,9 @@ export function GhostStage({
   onViewChange: (view: CameraView) => void;
   /** Covers the view while the swing loads or fails. */
   status: StageStatus;
-  /** Overlays drawn over the view (legend, caption). */
+  /** The key to the view, top left under the view's name. */
+  legend?: ReactNode;
+  /** Other overlays drawn over the view (caption, court note). */
   children?: ReactNode;
 }) {
   const [sceneError, setSceneError] = useState<string | null>(null);
@@ -230,121 +247,165 @@ export function GhostStage({
       ? { message: status.message, onRetry: status.onRetry }
       : null;
 
+  // The scrubber's mint fill ends under the thumb's centre (the thumb travels inside the track).
+  const played = timeline && span > 0 ? Math.min(Math.max((tau - timeline.start) / span, 0), 1) : 0;
+  const scrubStyle = { "--fill": `calc(${played} * (100% - ${THUMB_PX}px) + ${THUMB_PX / 2}px)` } as CSSProperties;
+  const toggle = "aria-pressed:border-primary aria-pressed:bg-accent aria-pressed:text-primary";
+
   return (
     <section aria-label="Swing replay" className="flex flex-col gap-3">
-      <div className="relative h-[min(72vh,760px)] min-h-[26rem] overflow-hidden rounded-xl border bg-card">
-        <div
-          ref={viewportRef}
-          role="img"
-          aria-label="3D replay on a squash court: your swing in orange, the ghost and its fix in cyan, PREDICTED ball paths when shown. Drag to rotate, scroll to zoom."
-          className="absolute inset-0 cursor-grab active:cursor-grabbing"
-        />
-        {status?.kind === "loading" && !error && (
-          <p className="absolute inset-0 grid place-items-center text-sm text-muted-foreground" role="status">
-            {status.message}
-          </p>
-        )}
-        {error && (
+      <div className="overflow-hidden rounded-[24px] border bg-(--media)">
+        <div className="relative h-[min(62vh,680px)] min-h-[24rem]">
           <div
-            role="alert"
-            className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-card p-6 text-center"
-          >
-            <p className="max-w-md text-sm text-foreground">{error.message}</p>
-            <Button variant="outline" onClick={error.onRetry}>
+            ref={viewportRef}
+            role="img"
+            aria-label="3D replay on a squash court: your swing in orange, the ghost and its fix in cyan, PREDICTED ball paths when shown. Drag to rotate, scroll to zoom."
+            className="absolute inset-0 cursor-grab active:cursor-grabbing"
+          />
+          {status?.kind === "loading" && !error && (
+            <div
+              role="status"
+              className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-sm text-muted-foreground"
+            >
+              <LoaderCircle aria-hidden className="size-6 text-primary motion-safe:animate-spin" />
+              {status.message}
+            </div>
+          )}
+          {error && (
+            <div
+              role="alert"
+              className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-(--media) p-6 text-center"
+            >
+              <CircleAlert aria-hidden className="size-6 text-destructive" />
+              <p className="max-w-md text-sm text-foreground">{error.message}</p>
+              <Button variant="outline" className={look.pill} onClick={error.onRetry}>
+                <RotateCcw data-icon="inline-start" />
+                Try again
+              </Button>
+            </div>
+          )}
+          {ready && !error && (
+            <div className="pointer-events-none absolute top-3 left-3 flex max-w-[calc(100%-1.5rem)] flex-col items-start gap-2.5 sm:top-5 sm:left-5 sm:max-w-xs">
+              <p className={cn(look.label, "flex flex-wrap gap-x-2.5 [text-shadow:0_1px_2px_rgb(0_0_0/0.6)]")}>
+                <span className="text-primary">{view === "player" ? "Player view" : "Court view"}</span>
+                <span className="text-muted-foreground">3D replay</span>
+              </p>
+              {legend}
+            </div>
+          )}
+          {ready && !error && children}
+        </div>
+
+        <div className="flex flex-col gap-3 border-t bg-(--panel) px-3 py-3 sm:px-5 sm:py-4">
+          <div className="flex items-center gap-3 sm:gap-4">
+            <Button
+              size="icon"
+              aria-label={playing ? "Pause" : "Play"}
+              onClick={() => setPlayback(!playing)}
+              disabled={!ready}
+              className="size-11 shrink-0 rounded-full"
+            >
+              {playing ? <Pause className="size-5" /> : <Play className="size-5 translate-x-px" />}
+            </Button>
+            <div className="relative min-w-0 flex-1 pt-4">
+              {timeline && (
+                <span
+                  aria-hidden
+                  className="pointer-events-none absolute top-0 flex h-[30px] -translate-x-1/2 flex-col items-center text-[0.65rem] leading-none text-muted-foreground"
+                  style={{ left: `calc(${contactPct}% + ${(0.5 - contactPct / 100) * THUMB_PX}px)` }}
+                >
+                  contact
+                  <span className="mt-0.5 w-px flex-1 bg-muted-foreground/70" />
+                </span>
+              )}
+              <label htmlFor="ghost-scrub" className="sr-only">
+                Swing time
+              </label>
+              <input
+                id="ghost-scrub"
+                type="range"
+                className="ghost-swing-range"
+                style={scrubStyle}
+                min={timeline?.start ?? 0}
+                max={timeline?.end ?? 1}
+                step={timeline?.step ?? 0.01}
+                value={tau}
+                onChange={onScrub}
+                disabled={!ready}
+                aria-valuetext={`${timeLabel}, your frame ${youFrame}${ghost ? `, ghost frame ${ghostFrame}` : ""}${
+                  fadedNow.length > 0 ? `, estimated: ${fadedNow.join(", ")}` : ""
+                }`}
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="w-full font-mono text-xs text-muted-foreground tabular-nums sm:mr-auto sm:w-auto">
+              <span className="text-foreground">{timeLabel || "–"}</span>
+              {ready && (
+                <>
+                  {" · "}
+                  <span style={{ color: YOU_COLOUR }}>you f{youFrame}</span>
+                  {fadedLabel && <span className="opacity-60"> (est. {fadedLabel})</span>}
+                  {ghost && (
+                    <>
+                      {" · "}
+                      <span style={{ color: GHOST_COLOUR }}>ghost f{ghostFrame}</span>
+                    </>
+                  )}
+                  {" · "}
+                  {slowMo ? `${SLOW_MO}×` : "1×"}
+                </>
+              )}
+            </p>
+            <Button
+              variant="outline"
+              className={cn(look.pill, toggle)}
+              onClick={toggleSlowMo}
+              aria-pressed={slowMo}
+              disabled={!ready}
+            >
+              <Turtle data-icon="inline-start" />
+              0.25× slow-mo
+            </Button>
+            <Button variant="outline" className={look.pill} onClick={() => seek(0)} disabled={!ready}>
+              <Crosshair data-icon="inline-start" />
+              Contact
+            </Button>
+            <Button
+              variant="outline"
+              className={look.pill}
+              onClick={() => onViewChange(view === "player" ? "court" : "player")}
+              disabled={!ready}
+            >
+              {view === "player" ? <Grid3x3 data-icon="inline-start" /> : <PersonStanding data-icon="inline-start" />}
+              {view === "player" ? "Court view" : "Player view"}
+            </Button>
+            <Button
+              variant="outline"
+              className={cn(look.pill, toggle)}
+              onClick={toggleSideBySide}
+              aria-pressed={sideBySide}
+              disabled={!ready || !ghost}
+            >
+              {sideBySide ? <Layers data-icon="inline-start" /> : <Columns2 data-icon="inline-start" />}
+              {sideBySide ? "Overlay" : "Side by side"}
+            </Button>
+            <Button variant="ghost" className={look.pill} onClick={() => sceneRef.current?.resetView()} disabled={!ready}>
               <RotateCcw data-icon="inline-start" />
-              Try again
+              Reset view
             </Button>
           </div>
-        )}
-        {ready && !error && children}
+          {sideBySide && ghost && coordinates.system === "court" && balls?.ghost && (
+            <p className="text-xs text-muted-foreground">
+              Side by side: the ghost and its PREDICTED ball path are drawn to the side, so the ghost&apos;s ball lands
+              off its real spot (display only).
+            </p>
+          )}
+        </div>
       </div>
 
       {ready && !error && <JointLegend summary={guessSummary} marked={marked} />}
-
-      <div className="flex flex-col gap-3 rounded-xl border bg-card p-3 sm:p-4">
-        <div className="relative pt-4">
-          {timeline && (
-            <span
-              aria-hidden
-              className="pointer-events-none absolute top-0 flex -translate-x-1/2 flex-col items-center text-[0.65rem] leading-none text-muted-foreground"
-              style={{ left: `calc(${contactPct}% + ${(0.5 - contactPct / 100) * THUMB_PX}px)` }}
-            >
-              contact
-              <span className="mt-0.5 h-2 w-px bg-muted-foreground" />
-            </span>
-          )}
-          <label htmlFor="ghost-scrub" className="sr-only">
-            Swing time
-          </label>
-          <input
-            id="ghost-scrub"
-            type="range"
-            className="w-full accent-foreground disabled:opacity-50"
-            min={timeline?.start ?? 0}
-            max={timeline?.end ?? 1}
-            step={timeline?.step ?? 0.01}
-            value={tau}
-            onChange={onScrub}
-            disabled={!ready}
-            aria-valuetext={`${timeLabel}, your frame ${youFrame}${ghost ? `, ghost frame ${ghostFrame}` : ""}${
-              fadedNow.length > 0 ? `, estimated: ${fadedNow.join(", ")}` : ""
-            }`}
-          />
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <Button onClick={() => setPlayback(!playing)} disabled={!ready} className="min-w-24">
-            {playing ? <Pause data-icon="inline-start" /> : <Play data-icon="inline-start" />}
-            {playing ? "Pause" : "Play"}
-          </Button>
-          <Button variant={slowMo ? "secondary" : "outline"} onClick={toggleSlowMo} aria-pressed={slowMo} disabled={!ready}>
-            <Turtle data-icon="inline-start" />
-            0.25× slow-mo
-          </Button>
-          <Button variant="outline" onClick={() => seek(0)} disabled={!ready}>
-            <Crosshair data-icon="inline-start" />
-            Contact
-          </Button>
-
-          <p className="mx-auto px-2 font-mono text-xs text-muted-foreground tabular-nums">
-            <span className="text-foreground">{timeLabel || "–"}</span>
-            {ready && (
-              <>
-                {" · "}
-                <span style={{ color: YOU_COLOUR }}>you f{youFrame}</span>
-                {fadedLabel && <span className="opacity-60"> (est. {fadedLabel})</span>}
-                {ghost && (
-                  <>
-                    {" · "}
-                    <span style={{ color: GHOST_COLOUR }}>ghost f{ghostFrame}</span>
-                  </>
-                )}
-                {" · "}
-                {slowMo ? `${SLOW_MO}×` : "1×"}
-              </>
-            )}
-          </p>
-
-          <Button variant="outline" onClick={() => onViewChange(view === "player" ? "court" : "player")} disabled={!ready}>
-            {view === "player" ? <Grid3x3 data-icon="inline-start" /> : <PersonStanding data-icon="inline-start" />}
-            {view === "player" ? "Court view" : "Player view"}
-          </Button>
-          <Button variant="outline" onClick={toggleSideBySide} aria-pressed={sideBySide} disabled={!ready || !ghost}>
-            {sideBySide ? <Layers data-icon="inline-start" /> : <Columns2 data-icon="inline-start" />}
-            {sideBySide ? "Overlay" : "Side by side"}
-          </Button>
-          <Button variant="ghost" onClick={() => sceneRef.current?.resetView()} disabled={!ready}>
-            <RotateCcw data-icon="inline-start" />
-            Reset view
-          </Button>
-        </div>
-        {sideBySide && ghost && coordinates.system === "court" && balls?.ghost && (
-          <p className="text-xs text-muted-foreground">
-            Side by side: the ghost and its PREDICTED ball path are drawn to the side, so the ghost&apos;s ball lands
-            off its real spot (display only).
-          </p>
-        )}
-      </div>
     </section>
   );
 }

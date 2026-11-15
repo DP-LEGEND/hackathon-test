@@ -24,20 +24,20 @@ export function SceneLegend({
   monoDepth: boolean;
 }) {
   return (
-    <div className="pointer-events-none absolute top-3 left-3 flex max-w-[calc(100%-1.5rem)] flex-col gap-1.5 rounded-xl border bg-background/92 px-3 py-2.5 text-sm shadow-lg sm:max-w-xs">
+    <div className="flex max-w-full flex-col gap-1.5 rounded-2xl border bg-background/90 px-3.5 py-3 text-[13px] shadow-[0_8px_30px_rgb(0_0_0/0.35)]">
       <Key colour={YOU_COLOUR} name="You" detail={monoDepth ? "what you did · one-camera depth" : "what you did"} />
       {ghost && (
         <Key colour={GHOST_COLOUR} name="Ghost" detail={ghost.label}>
           {ghost.mock && (
-            <Badge variant="outline" className="border-amber-400/50 text-amber-300">
+            <Badge variant="outline" className="h-5 rounded-full border-amber-400/50 text-amber-300">
               MOCK
             </Badge>
           )}
         </Key>
       )}
       {balls && (
-        <div className="mt-1 flex flex-col gap-1 border-t pt-2">
-          <p className="font-mono text-xs font-bold tracking-[0.14em]">PREDICTED BALL {balls.same ? "PATH" : "PATHS"}</p>
+        <div className="mt-1 flex flex-col gap-1 border-t pt-2.5">
+          <p className="text-[11px] leading-4 font-semibold tracking-[0.14em]">PREDICTED BALL {balls.same ? "PATH" : "PATHS"}</p>
           <p className="text-xs text-muted-foreground">No real ball: from the ball model.</p>
           {balls.same ? (
             <>
@@ -64,10 +64,10 @@ export function SceneLegend({
 
 function BallRow({ colour, who, ball }: { colour: string; who: string; ball: BallPath }) {
   return (
-    <p className="flex items-center gap-2 text-xs tabular-nums">
+    <p className="flex flex-wrap items-center gap-x-2 text-xs tabular-nums">
       <span aria-hidden className="h-1 w-5 shrink-0 rounded-full" style={{ backgroundColor: colour }} />
       <span style={{ color: colour }}>{who}</span>
-      <span className="text-muted-foreground">
+      <span className="whitespace-nowrap text-muted-foreground">
         {OUTCOME_WORDS[ball.outcome]} · {ball.speedKmh} km/h
       </span>
     </p>
@@ -87,7 +87,7 @@ function Key({
 }) {
   return (
     <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-      <span aria-hidden className="size-3 shrink-0 rounded-full" style={{ backgroundColor: colour }} />
+      <span aria-hidden className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: colour }} />
       <span className="font-semibold" style={{ color: colour }}>
         {name}
       </span>
