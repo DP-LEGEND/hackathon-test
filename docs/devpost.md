@@ -153,15 +153,15 @@ We built a fault-injection data generator on 94 real swings, then started an Aut
 
 - **A fault-injection data generator** (`services/physics/synth.py`). It takes a real swing, injects one fault of known size into the 3D skeleton (a more bent elbow at contact, less shoulder turn, or an earlier wrist release), then re-measures it with the same code the coach uses. Labels come from the re-measured change, not the requested one. From our 94 real swings it wrote 2,758 labelled rows.
 - **Cleaned for training** (`services/physics/adaption_prep.py`).
-  - Only the 24 swings that every label marks clean are used, so "none" really means no fault. Re-generated from those, that's 1,414 rows.
+  - Only the 24 swings that every label marks clean are used, so "none" really means no fault. Re-generated from those, that's 1,414 rows: 1,048 for training and 366 for testing.
   - The answer is the fault's name, never a number, so the model can't invent measurements.
-  - Train and test are split by source swing (18 and 6 swings), so no swing appears on both sides.
-- **Exported in Adaption's format.** We uploaded 1,373 prompt/completion rows in raw mode, built from the training swings only. The test split was never uploaded.
+  - Train and test are split by source swing (18 swings for training, 6 for testing), so no swing appears on both sides.
+- **Exported in Adaption's format.** The training split is 1,048 rows from 18 swings. Faults outnumber "none" (18 rows), so we repeated the "none" rows up to 343, about the size of each fault class, giving the 1,373 prompt/completion rows we uploaded in raw mode. The 366 test rows from the other 6 swings were never uploaded (the export script checks this).
 - **Started an AutoScientist fine-tune of Qwen3.5-2B** (running at submission; win rate below if it finished). Qwen3.5-2B is a small 2-billion-parameter model; the run uses LoRA and Adaption's defaults: up to 3 rounds, stopping early at a 0.7 win rate. `services/physics/adaption_status.py` tracks the run.
   - **Win rate vs the base model: [WIN RATE, or: the run hadn't finished at submission].** This is Adaption's own measure, judged on evaluations it derives from our training data. It isn't accuracy on our held-out swings.
 - **What the data taught us** (`services/physics/adaption_eval.py`). We scored a code rule and Claude Opus 5.5 on the same held-out swings.
-  - **The injector is reliable.** Compared with the unedited copy of the same swing, every test swing is named correctly (366 of 366).
-  - **A player's average swing isn't a tight enough baseline.** Compared with the average of 8 to 10 of the player's clean swings, the code rule scores 34% and Claude 37%, against 33% for always answering the most common fault. The injected faults (median 16 to 19°, and 45 ms) are smaller than one player's own swing-to-swing spread (about 30°, and 65 to 82 ms).
+  - **The injector is reliable.** Compared with the unedited copy of the same swing, all 366 test rows, from the 6 test swings, are named correctly (366 of 366).
+  - **A player's average swing isn't a tight enough baseline.** Compared with the average of 8 to 10 of the player's clean swings, the code rule scores 34% on those 366 test rows and Claude 37% on a 200-row sample of them, against 33% for always answering the most common fault. The injected faults (median 16 to 19°, and 45 ms) are smaller than one player's own swing-to-swing spread (about 30°, and 65 to 82 ms).
   - That tells us what the next data has to be: more clean swings per player, so the baseline gets tight enough for faults to stand out.
 - **Not in the live demo yet.** Ghost's coach is still the code-plus-Claude flow above. The aim is a small model that can name the fault without calling a large model.
 
