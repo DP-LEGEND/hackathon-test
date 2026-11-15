@@ -49,6 +49,7 @@ import { StateCard } from "./state-card";
 import type { SwingCoordinates } from "./swing";
 import { SwingPicker, type CatalogueState } from "./swing-picker";
 import { useAsync, type Async } from "./use-async";
+import { ValidationBadge } from "./validation-badge";
 import { WristSensorPanel } from "./wrist-panel";
 
 const STEPS = [
@@ -235,6 +236,14 @@ export function GhostDemo({ requestedSwing }: { requestedSwing: string | null })
   const voicePromise = useMemo(() => (entry && voiceWanted ? loadVoiceFor(entry) : null), [entry, voiceWanted]);
   const voice = useAsync(voicePromise);
 
+  // Physics' chain from body to ball (compare `fix.explain`), under the cue on the coach's call.
+  // Only for the fix the coach's top fault names, so it always explains the cue on screen; never
+  // when physics made no correction.
+  const coachExplain =
+    step === "coach" && compare && !compare.noCorrection && coachCaption?.fault?.fix === compare.fix.id
+      ? compare.fix.explain
+      : null;
+
   const caption: CaptionState =
     coach.status === "ready"
       ? { kind: "ready", caption: coach.value, voice: voice.status === "ready" ? voice.value : null }
@@ -402,25 +411,28 @@ export function GhostDemo({ requestedSwing }: { requestedSwing: string | null })
             onViewChange={setView}
             status={stageStatus}
             legend={
-              <SceneLegend
-                ghost={
-                  showGhost && compare
-                    ? {
-                        label: compare.noCorrection
-                          ? "no correction: your swing unchanged"
-                          : `${fixName(compare.fix.id).toLowerCase()} ${formatValue(compare.fix.amount, compare.fix.unit)}`,
-                        mock: !compare.ghostIsReal,
-                        aim: compare.aim,
-                      }
-                    : null
-                }
-                balls={
-                  onCourt && compare
-                    ? { you: compare.you.ball, ghost: compare.ghost.ball, same: samePath, noCorrection: compare.noCorrection }
-                    : null
-                }
-                monoDepth={you?.source === "mono"}
-              />
+              <>
+                <SceneLegend
+                  ghost={
+                    showGhost && compare
+                      ? {
+                          label: compare.noCorrection
+                            ? "no correction: your swing unchanged"
+                            : `${fixName(compare.fix.id).toLowerCase()} ${formatValue(compare.fix.amount, compare.fix.unit)}`,
+                          mock: !compare.ghostIsReal,
+                          aim: compare.aim,
+                        }
+                      : null
+                  }
+                  balls={
+                    onCourt && compare
+                      ? { you: compare.you.ball, ghost: compare.ghost.ball, same: samePath, noCorrection: compare.noCorrection }
+                      : null
+                  }
+                  monoDepth={you?.source === "mono"}
+                />
+                {onCourt && compare?.validation && <ValidationBadge validation={compare.validation} />}
+              </>
             }
           >
             {onCourt && (
@@ -434,7 +446,12 @@ export function GhostDemo({ requestedSwing }: { requestedSwing: string | null })
               </p>
             )}
             {/* Keyed by swing, so a new swing never keeps the last one's clip playing. */}
-            <CoachCaptionBar key={entry.key} state={caption} size={step === "coach" ? "large" : "compact"} />
+            <CoachCaptionBar
+              key={entry.key}
+              state={caption}
+              size={step === "coach" ? "large" : "compact"}
+              explain={coachExplain}
+            />
           </GhostStage>
 
           {step === "coach" && <CoachDetails state={caption} />}
