@@ -139,9 +139,12 @@ def test_compare_output_is_all_court_coordinates(forehand, fh_elbow):
 @pytest.mark.parametrize("fix,amount", [("straighten_elbow", 12), ("bend_elbow", 12), ("turn_shoulders_less", 15)])
 def test_each_ball_starts_at_its_own_racket_head_at_contact(forehand, fix, amount):
     r = compare(forehand, fix, amount)
+    back = r["assumptions"]["laterContact"]["backM"]  # the straight-drive ghost meets the ball further back
+    assert r["assumptions"]["laterContact"]["applied"] is (back > 0)
     for side in ("you", "ghost"):
         start = r[side]["ball"]["points"][0]
-        assert start == pytest.approx(_head(r, side), abs=5e-4)  # ball points are rounded to the mm
+        expected = np.asarray(_head(r, side)) + ([0.0, 0.0, back] if side == "ghost" else 0.0)
+        assert start == pytest.approx(expected, abs=5e-4)  # ball points are rounded to the mm
         assert start == r["assumptions"]["launch"][side]["point"]
 
 
@@ -483,12 +486,14 @@ def test_hero_aiming_a_straight_drive_holds_the_smallest_turn_that_sends_it_stra
     # the MEASURED spot, are pinned in test_court_spot.py.
     d = r["delta"]["ball"]
     assert (d["speedKmh"]["you"], d["speedKmh"]["ghost"]) == (133.2, 119.1)
-    assert (d["frontWallHeightM"]["you"], d["frontWallHeightM"]["ghost"]) == (1.92, 1.86)
-    assert (d["landingDepthM"]["you"], d["landingDepthM"]["ghost"]) == (8.97, 8.04)
+    assert (d["frontWallHeightM"]["you"], d["frontWallHeightM"]["ghost"]) == (1.92, 1.89)
+    assert (d["landingDepthM"]["you"], d["landingDepthM"]["ghost"]) == (8.97, 7.98)
     # Labelled on screen: the court note under the PREDICTED ball, and the fix for the legend.
     assert r["fix"]["aiming"] == "straight drive" and "aiming" not in plain["fix"]
-    assert a["note"].endswith("Aiming: straight drive (the player's stated intent). Smallest change that sends "
-                              "your drive straight: −13.5° of shoulder turn at contact.")
+    assert ("Aiming: straight drive (the player's stated intent). Smallest change that sends "
+            "your drive straight: −13.5° of shoulder turn at contact.") in a["note"]
+    assert a["note"].endswith("ASSUMPTION: the straight-drive ghost meets the ball later, 0.2 m further back "
+                              "beside the body.")
 
 
 def test_the_hold_is_capped_at_the_fix(forehand):

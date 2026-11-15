@@ -15,7 +15,7 @@ It prints one PASS (green) or FAIL (red) line per check and exits 1 if any check
                says over_rotation; the compare file for the coach's fix is in court coordinates at
                the ASSUMED 12 deg from the MEASURED hit spot, and shows exactly the PREDICTED
                numbers the runbook and pitch quote: ball speed 133.2 -> 119.1 km/h, front wall
-               1.45 -> 1.44 m, and the real-ball check: predicted 1.45 m vs 1.17 m tracked.
+               1.45 -> 1.47 m, and the real-ball check: predicted 1.45 m vs 1.17 m tracked.
   3. backhand  The saved backhand: the coach's fault is null (nothing to fix), and its ball shows
                exactly 130.4 km/h and front wall 0.77 m, at 3 deg from the MEASURED spot x = 1.572.
   4. pages     /ghost and /upload answer 200.
@@ -64,7 +64,7 @@ PAGE_TIMEOUT_S = 15.0  # a page: the Next dev server compiles it on the first re
 # exactly: a changed saved file changes what's on screen. None isn't checked (beat 2 stops at the
 # coach's call, so the backhand's ghost numbers are never said).
 HERO_SPEED_KMH = (133.2, 119.1)
-HERO_WALL_M = (1.45, 1.44)
+HERO_WALL_M = (1.45, 1.47)
 BACKHAND_SPEED_KMH = (130.4, None)
 BACKHAND_WALL_M = (0.77, None)
 # Where each player hit from, MEASURED from the video (services/physics/court_spot.py), and the

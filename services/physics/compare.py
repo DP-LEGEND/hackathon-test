@@ -149,6 +149,11 @@ TARGET_INTENT = "straight drive"
 # The largest turn a fix other than the shoulder fixes may hold at contact to aim the ghost, deg
 # (a shoulder fix is capped at its own size). The aim itself is clamped to this too.
 AIM_HOLD_LIMIT_DEG = AZIMUTH_LIMIT_DEG
+# Straight drive: struck later than a cross-court, with the ball further back beside the body
+# (coaching knowledge, not measured). ASSUMPTION: the straight-drive ghost meets the ball this much
+# further back along the shot line (away from the front wall) than your racket head at contact.
+# Its racket speed and its body are unchanged; only where the ball leaves the racket moves.
+LATER_CONTACT_BACK_M = 0.2
 _TARGET = object()  # compare()'s default intent: TARGET_INTENT, labelled TARGET
 # assumptions.aim.why when usable wrist-sensor data aims both balls by the racket face (wrist_face.py).
 FACE_AIMS_WHY = ("the wrist sensor's forearm roll aims both balls by the racket face (ASSUMED face model), "
@@ -553,7 +558,7 @@ def _in_court_frame(swing: dict) -> bool:
 
 def _on_court(swing: dict, fps_real, hand: str, contact: int, shift: np.ndarray,
               elevation_deg: float, racket: dict, azimuth: dict | None = None,
-              aim: dict | None = None) -> tuple[dict, dict]:
+              aim: dict | None = None, back_m: float = 0.0) -> tuple[dict, dict]:
     """One swing: metrics, the swing on the court, its PREDICTED ball (from `racket`), and its launch.
 
     `shift` is the player's court_shift, so you and the ghost stand in exactly the same place.
@@ -562,11 +567,13 @@ def _on_court(swing: dict, fps_real, hand: str, contact: int, shift: np.ndarray,
     Metrics are measured on the swing as given; they don't depend on where it stands.
     `aim`: the wrist-sensor aim (wrist_face.face_aim) to use instead of the wrist's direction,
     which is then kept only as `cameraAim`, a cross-check. None (no sensor data) = as before.
+    `back_m`: the ball leaves this much further back from the front wall (+z) than the racket head
+    at contact (the straight-drive ghost's later contact, LATER_CONTACT_BACK_M). 0 = at the head.
     """
     m = measure(swing, fps_real, hand)
     metrics = {k: _num(m[k]) for k in METRICS}
     Pc = court_axes(to_array(swing)) + shift
-    point = [round(float(c), 3) for c in racket_head(Pc, hand)[contact]]
+    point = [round(float(c), 3) for c in racket_head(Pc, hand)[contact] + np.array([0.0, 0.0, back_m])]
     if not 0 < point[1] < 3:
         raise ValueError(f"the racket head at contact is {point[1]:.2f} m above the floor; "
                          "the ball model needs 0 to 3 m")
@@ -970,8 +977,10 @@ def compare(swing: dict, fix_name: str, amount: float, fps_real: float | None = 
         swing, estimate_racket_speed(played, fps_real, hand), estimate_racket_speed(ghost_swing, fps_real, hand))
     you, you_launch = _on_court(played, fps_real, hand, contact, shift, elevation, you_racket, you_aim, you_face)
     ghost_cam = ghost_azimuth(you_aim, Pc, court_axes(to_array(ghost_swing)), hand, contact)
+    # A straight-drive ghost that aims (the hold applies) also meets the ball later, further back.
+    late = (aim is not None and aim["applied"] and aim["intent"] == TARGET_INTENT and float(amount) != 0.0)
     ghost, ghost_launch = _on_court(ghost_swing, fps_real, hand, contact, shift, elevation, ghost_racket,
-                                    ghost_cam, ghost_face)
+                                    ghost_cam, ghost_face, back_m=LATER_CONTACT_BACK_M if late else 0.0)
     if aim_skip:  # a real roll the coach can't judge: the camera's aim, saying why
         for launch in (you_launch, ghost_launch):
             az = launch["azimuth"]
@@ -998,6 +1007,17 @@ def compare(swing: dict, fix_name: str, amount: float, fps_real: float | None = 
     else:
         fix["explain"] = explain_fix(fix_name, float(amount), stroke, you, ghost, you_launch, ghost_launch,
                                      aim, elevation, spot is not None, racket_note)
+    later = {"applied": late, "backM": LATER_CONTACT_BACK_M if late else 0.0, "label": "ASSUMPTION",
+             "method": ("ASSUMPTION (coaching knowledge, not measured): a straight drive is struck later than a "
+                        "cross-court, with the ball further back beside the body, so the straight-drive ghost's "
+                        f"ball leaves {LATER_CONTACT_BACK_M:g} m further back along the shot line than its racket "
+                        "head at contact. Its racket speed and body are unchanged.")}
+    if late:
+        line = (f"Contact later, ball further back beside the body: the ghost meets the ball "
+                f"{LATER_CONTACT_BACK_M:g} m further back along the shot line (ASSUMPTION).")
+        fix["explain"] = f"{fix['explain']} {line}" if fix.get("explain") else line
+        note += (f" ASSUMPTION: the straight-drive ghost meets the ball later, {LATER_CONTACT_BACK_M:g} m "
+                 "further back beside the body.")
     validation = None if tracked is None else _validation(swing, you["ball"], you_launch["azimuth"], tracked)
     out = {
         "fix": fix,
@@ -1011,6 +1031,7 @@ def compare(swing: dict, fix_name: str, amount: float, fps_real: float | None = 
         "delta": delta,
         "notMeasured": guessed,
         "assumptions": {
+            "laterContact": later,
             "stroke": {"value": stroke, "source": stroke_source, "label": STROKE_LABELS[stroke_source]},
             "anchor": {
                 "x": anchor[0], "z": anchor[1], "assumed": True, "label": "ASSUMED",

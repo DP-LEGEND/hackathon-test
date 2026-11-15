@@ -93,7 +93,7 @@ Same clicks as the runbook's beats 1–4, faster. The wrist sensor (runbook beat
 |---|---|---|---|
 | The top card, **Forehand · over-rotation** | The coach's call: *"Over-rotation: hips turn 157°"* | A real forehand, filmed in slow motion and rebuilt in 3D. Our code measured it: the hips turn 157 degrees. Too much. That's the one fix. | 13 (incl. 2 s click) |
 | **Show the ghost**, then **0.25× slow-mo** (it's already playing) | Orange swing, cyan ghost. *Turn shoulders less*, *Coach's pick* | Orange is the swing they played. Cyan is their ghost: same body, same swing, shoulders turning less. | 9 (incl. 2 s click) |
-| **Show the court** | Two paths, each *PREDICTED*: orange goes cross-court, cyan goes straight down the right wall. Front wall height 1.45 → 1.44 m | Where each ball goes: predicted, not tracked. Theirs goes cross-court; the ghost's goes straight down the wall. In the real video, the tracked ball hit the front wall at 1.17 metres; Ghost predicted 1.45 from body motion alone: 0.28 off, launch angle assumed. | 20 (incl. 2 s click) |
+| **Show the court** | Two paths, each *PREDICTED*: orange goes cross-court, cyan goes straight down the right wall. Front wall height 1.45 → 1.47 m | Where each ball goes: predicted, not tracked. Theirs goes cross-court; the ghost's goes straight down the wall. In the real video, the tracked ball hit the front wall at 1.17 metres; Ghost predicted 1.45 from body motion alone: 0.28 off, launch angle assumed. | 20 (incl. 2 s click) |
 
 ### Backhand (1:16–1:34, 18 s)
 

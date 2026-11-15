@@ -231,7 +231,7 @@ Browser tab 1 is http://localhost:3000/ghost, opened directly: `/` is now a land
 | The top card, **"Forehand · over-rotation (acted and flagged) · iPhone 120 fps (IMG_2115 16:55)"** (badges *Saved sample*, *Demo swing*) | **The coach's call:** *"Over-rotation: hips turn 157°"*, cue *"Turn a little less and stay balanced through the ball."* | Code measured the swing; the coach names one fix and only quotes numbers the code measured. |
 | **Show the ghost** | **Your ghost makes the fix.** Fix *Turn shoulders less*, badge *Coach's pick*. *What the fix changes:* Shoulder turn 137.6° → 85°. It's already playing: click **0.25× slow-mo** only | Orange is the swing they played, cyan is the same body with one fix. |
 | **Show the court** | **Where the ball goes:** two paths, each labelled *PREDICTED · … · in*: orange goes cross-court, cyan goes straight down the right wall | These are **PREDICTED**; there's no real ball on screen. Launch angle is **assumed, 12° for a forehand**. Theirs goes cross-court; the ghost's goes straight down the wall. In the real video, the tracked ball hit the front wall at 1.17 m; Ghost predicted 1.45 m from body motion alone (0.28 m off, launch angle assumed). We set the 12° from this clip, so it's a check, not a test. |
-| Scroll down with the pointer **beside** the replay, not over it (scrolling over the 3D view zooms it) | The **Ball** panel (*PREDICTED*): ball speed 133.2 → 119.1 km/h, **front wall height 1.45 → 1.44 m** | *(Read the front wall heights from this panel.)* |
+| Scroll down with the pointer **beside** the replay, not over it (scrolling over the 3D view zooms it) | The **Ball** panel (*PREDICTED*): ball speed 133.2 → 119.1 km/h, **front wall height 1.45 → 1.47 m** | *(Read the front wall heights from this panel.)* |
 | Scroll back up to the top, again with the pointer beside the replay | The step bar and **Try another swing** | |
 
 ### Beat 2: backhand, nothing to fix (1:16–1:34)
@@ -289,8 +289,8 @@ All of these come from the saved samples in `public/swings/` and are the same on
 | Body change | Shoulder turn 137.6° → 85° | Not shown |
 | Ball speed (PREDICTED) | 133.2 → 119.1 km/h | Not shown |
 | **Ball direction (PREDICTED)** | **Cross-court (13.5° across) → straight down the right wall** | Straight (aim ASSUMED), not shown |
-| **Front wall height (PREDICTED)** | **1.45 → 1.44 m** | 0.77 m, not shown in beat 2 |
-| Lands from front wall | 9.69 → 8.84 m | Not shown |
+| **Front wall height (PREDICTED)** | **1.45 → 1.47 m** | 0.77 m, not shown in beat 2 |
+| Lands from front wall | 9.69 → 8.78 m | Not shown |
 | Racket speed (ESTIMATE) | 28.3 → 25.3 m/s | Not shown |
 | **Launch angle (ASSUMED)** | **12°**, not on screen | 3°, not said in beat 2 |
 | Court | Two paths | Not shown |

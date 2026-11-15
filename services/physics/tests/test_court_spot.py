@@ -185,6 +185,35 @@ def test_explain_quotes_only_numbers_compare_measured_or_solved(forehand, fix, a
     assert "down the right wall" in text  # every ghost aims a straight drive
 
 
+def test_the_straight_drive_ghost_meets_the_ball_later_further_back(forehand, monkeypatch):
+    # Coaching knowledge (ASSUMPTION): a straight drive is struck later, the ball further back beside
+    # the body. The ghost's ball leaves LATER_CONTACT_BACK_M further back along the shot line; its
+    # racket speed, its aim and your whole side are unchanged.
+    import physics.compare as cmp
+    spot = json.loads((SPOTS / "7178110a0b06-swing-0027.json").read_text())
+    args = dict(fps_real=120, side="forehand", intent="straight drive", spot=spot)
+    late = compare(forehand, "turn_shoulders_less", 52.6, **args)
+    monkeypatch.setattr(cmp, "LATER_CONTACT_BACK_M", 0.0)
+    plain = compare(forehand, "turn_shoulders_less", 52.6, **args)
+    later = late["assumptions"]["laterContact"]
+    assert later["applied"] is True and later["backM"] == 0.2 and later["label"] == "ASSUMPTION"
+    g, p = late["assumptions"]["launch"]["ghost"]["point"], plain["assumptions"]["launch"]["ghost"]["point"]
+    assert g[2] - p[2] == pytest.approx(0.2, abs=1e-3) and (g[0], g[1]) == (p[0], p[1])  # +z: away from the front wall
+    assert late["ghost"]["racketSpeed"] == plain["ghost"]["racketSpeed"]
+    assert late["delta"]["ball"]["speedKmh"] == plain["delta"]["ball"]["speedKmh"]
+    assert late["you"] == plain["you"]  # your swing and PREDICTED ball don't change
+    assert late["assumptions"]["launch"]["ghost"]["azimuth"]["value"] == 0.0  # still straight down the wall
+    assert late["assumptions"]["aim"]["applied"] is True
+    assert "Contact later, ball further back beside the body" in late["fix"]["explain"]
+    assert "ASSUMPTION: the straight-drive ghost meets the ball later" in late["delta"]["summary"][-1] or \
+        "ASSUMPTION: the straight-drive ghost meets the ball later" in json.dumps(late["assumptions"])
+    # Without an aim there is no later contact.
+    monkeypatch.setattr(cmp, "LATER_CONTACT_BACK_M", 0.2)
+    unaimed = compare(forehand, "turn_shoulders_less", 52.6, fps_real=120, side="forehand", intent=None, spot=spot)
+    assert unaimed["assumptions"]["laterContact"]["applied"] is False
+    assert "Contact later" not in unaimed["fix"]["explain"]
+
+
 def test_the_demo_numbers_the_docs_quote(forehand):
     # docs/pitch.md, docs/demo-runbook.md, docs/devpost*.md and scripts/demo_smoke.py quote these:
     # the hero forehand from the MEASURED spot, aiming the player's stated straight drive.
@@ -193,8 +222,8 @@ def test_the_demo_numbers_the_docs_quote(forehand):
                 spot=spot, tracked=_result())
     d = r["delta"]["ball"]
     assert (d["speedKmh"]["you"], d["speedKmh"]["ghost"]) == (133.2, 119.1)
-    assert (d["frontWallHeightM"]["you"], d["frontWallHeightM"]["ghost"]) == (1.45, 1.44)
-    assert (d["landingDepthM"]["you"], d["landingDepthM"]["ghost"]) == (9.69, 8.84)
+    assert (d["frontWallHeightM"]["you"], d["frontWallHeightM"]["ghost"]) == (1.45, 1.47)
+    assert (d["landingDepthM"]["you"], d["landingDepthM"]["ghost"]) == (9.69, 8.78)
     launch = r["assumptions"]["launch"]
     assert (launch["you"]["azimuth"]["value"], launch["ghost"]["azimuth"]["value"]) == (-13.5, 0.0)  # cross-court -> straight
     v = r["validation"]

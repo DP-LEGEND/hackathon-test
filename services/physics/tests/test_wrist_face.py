@@ -231,7 +231,7 @@ def test_locked_hero_numbers_are_unchanged() -> None:
     r = compare(swing, "turn_shoulders_less", amount, fps_real=saved["fpsReal"])
     ball = r["delta"]["ball"]
     assert (ball["speedKmh"]["you"], ball["speedKmh"]["ghost"]) == (133.2, 119.1)
-    assert (ball["frontWallHeightM"]["you"], ball["frontWallHeightM"]["ghost"]) == (1.92, 1.86)  # main's (#73)
+    assert (ball["frontWallHeightM"]["you"], ball["frontWallHeightM"]["ghost"]) == (1.92, 1.89)  # #73, plus the later contact
     assert "face" not in r["assumptions"]
 
 
