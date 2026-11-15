@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { ArrowDown, ArrowRight, ArrowUpRight } from "lucide-react";
+import { ArrowDown, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { StageSelector } from "./selector";
 import styles from "./styles";
@@ -37,8 +37,10 @@ export function LandingHero() {
     </div>
     <div className={styles.heroMessage}>
       <p className={styles.heroEyebrow}>AI-powered squash analysis</p><h1 id="hero-title">See your swing. Find your edge.</h1>
-      <Button nativeButton={false} role="link" render={<Link href="/upload" />} className={styles.heroCta}>Analyse your swing <ArrowRight aria-hidden /></Button>
-      <Link href="/demo" className={styles.secondaryLink}>Watch demo <ArrowUpRight size={16} aria-hidden /></Link>
+      <div className={styles.heroActions}>
+        <Button nativeButton={false} role="link" render={<Link href="/demo?swing=7178110a0b06-swing-0027" />} className={styles.heroCta}>See the demo <ArrowRight aria-hidden /></Button>
+        <Button nativeButton={false} role="link" variant="outline" render={<Link href="/upload" />} className={styles.heroCta}>Analyse your swing <ArrowRight aria-hidden /></Button>
+      </div>
     </div>
     <div className={styles.heroFooter}><span>Your game. Another dimension.</span><a href="#process">Scroll to explore <ArrowDown size={16} aria-hidden /></a></div>
   </section>;
