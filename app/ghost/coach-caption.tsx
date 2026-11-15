@@ -145,7 +145,7 @@ export function CoachCaptionBar({
               {fraction === null
                 ? cue
                 : revealWords(cue, fraction).map((w, i) => (
-                    <span key={i} className={cn("transition-opacity duration-150", !w.lit && "opacity-35")}>
+                    <span key={i} className={cn("transition-opacity duration-150", !w.lit && "opacity-60")}>
                       {w.text}
                     </span>
                   ))}
