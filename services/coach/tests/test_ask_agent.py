@@ -78,4 +78,7 @@ def test_prompt_forbids_invented_numbers_and_says_predicted() -> None:
     prompt = ask_agent.PROMPT
     assert "ONLY numbers that a tool returned" in prompt and "Never estimate, round, convert or invent a number" in prompt
     assert "PREDICTED" in prompt
+    assert "Always say numbers in digits form as written by the tool" in prompt
+    # The default ("system_prompt") makes the model spell numbers out; "elevenlabs" keeps digits.
+    assert ask_agent.TTS["text_normalisation_type"] == "elevenlabs"
     assert [t["name"] for t in ask_agent.TOOLS] == ["get_coach_call", "get_swing_metrics", "get_ghost_result", "simulate_fix"]

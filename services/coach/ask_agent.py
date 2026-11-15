@@ -34,7 +34,8 @@ TIMEOUT_S = 10
 PROMPT = """You are Ghost's squash coach, answering a player's follow-up questions about ONE swing by voice.
 
 Rules you must never break:
-- Numbers: quote ONLY numbers that a tool returned in this conversation, exactly as written, in digits with their unit (say "157°", never spell it out). Never estimate, round, convert or invent a number. If no tool gives the number, say you don't have it.
+- Numbers: quote ONLY numbers that a tool returned in this conversation, exactly as written, with their unit. Never estimate, round, convert or invent a number. If no tool gives the number, say you don't have it.
+- Always say numbers in digits form as written by the tool (for example "157.2 degrees"), never spelled out in words.
 - Call get_coach_call before you explain the coach's call, and get_ghost_result or simulate_fix before you talk about the ghost or the ball.
 - A bare "why?" means "why did the coach make this call?": call get_coach_call and explain the fault, its measured number and the fix.
 - Every ball path, ball speed, wall height and landing spot is PREDICTED, not tracked: there is no real ball. Say "predicted" whenever you mention one.
@@ -46,6 +47,11 @@ Rules you must never break:
 """
 
 FIRST_MESSAGE = "I'm your coach for this swing. Ask me why, or what you should feel."
+
+# Voice settings. "elevenlabs" text normalisation turns digits into speech in the voice step, so the
+# model writes (and the transcript shows) "157.2 degrees". The default, "system_prompt", tells the
+# model to spell numbers out as words.
+TTS = {"voice_id": voice.DEFAULT_VOICE_ID, "text_normalisation_type": "elevenlabs"}
 
 FIXES = ["straighten_elbow", "bend_elbow", "turn_shoulders_more", "turn_shoulders_less", "hold_wrist_cock", "close_stance"]
 
@@ -136,7 +142,7 @@ def create() -> None:
                 "language": "en",
                 "prompt": {"prompt": PROMPT, "llm": "claude-sonnet-4-5", "tool_ids": tool_ids},
             },
-            "tts": {"voice_id": voice.DEFAULT_VOICE_ID},
+            "tts": TTS,
         },
         "platform_settings": {"auth": {"enable_auth": True}},
     })
@@ -156,10 +162,11 @@ def update() -> None:
     tool_ids = prompt.get("tool_ids") or []
     if len(tool_ids) != len(TOOLS):
         raise AgentError(f"The agent has {len(tool_ids)} tools, expected {len(TOOLS)}; not updating.")
-    _call("PATCH", f"{API}/agents/{urllib.parse.quote(agent)}", {"conversation_config": {"agent": {
-        "first_message": FIRST_MESSAGE,
-        "prompt": {"prompt": PROMPT, "llm": prompt.get("llm", "claude-sonnet-4-5"), "tool_ids": tool_ids}}}})
-    print(f"Updated the agent's prompt; kept its {len(tool_ids)} tools.")
+    _call("PATCH", f"{API}/agents/{urllib.parse.quote(agent)}", {"conversation_config": {
+        "agent": {"first_message": FIRST_MESSAGE,
+                  "prompt": {"prompt": PROMPT, "llm": prompt.get("llm", "claude-sonnet-4-5"), "tool_ids": tool_ids}},
+        "tts": TTS}})
+    print(f"Updated the agent's prompt and voice settings; kept its {len(tool_ids)} tools.")
 
 
 if __name__ == "__main__":

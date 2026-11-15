@@ -1,13 +1,12 @@
 // The "Ask the coach" agent's client tools (lib/integrations/voice/ask-coach.tsx). Each one returns
-// the data this swing view already loaded from our service, as the screen shows it: values pass
-// through formatValue, labels (ESTIMATE, PREDICTED, ...) are kept, and nothing is computed here.
+// the data this swing view already loaded from our service: the file's own numbers, in digits with
+// the unit in words ("157.2 degrees") so the agent says them as digits; labels (ESTIMATE,
+// PREDICTED, ...) are kept, and nothing is computed here.
 // The agent may only quote numbers these tools return (services/coach/ask_agent.py).
 
 import { checkedEverything, noFaultInWhatWasChecked, PARTIAL_CHECK_CUE, tidyLabel } from "./coach-caption";
 import {
   fixName,
-  formatChange,
-  formatValue,
   metricName,
   OUTCOME_WORDS,
   type CoachCaption,
@@ -26,6 +25,28 @@ export type AskCoachData = {
 
 export type AskCoachTool = (parameters: Record<string, unknown>) => Promise<unknown>;
 
+const UNIT_WORDS: Record<string, string> = {
+  deg: "degrees",
+  ms: "milliseconds",
+  "km/h": "kilometres per hour",
+  m: "metres",
+  "m/s": "metres per second",
+};
+
+/** A value as the agent should say it: the file's number in digits, the unit in words ("157.2 degrees"). */
+export function say(value: number | null, unit: string): string {
+  if (value === null) return "not available";
+  const words = UNIT_WORDS[unit] ?? unit;
+  return words ? `${value} ${words}` : String(value);
+}
+
+/** A change with its sign, e.g. "-52.6 degrees"; "no change" for zero. */
+export function sayChange(value: number | null, unit: string): string {
+  if (value === null) return "not available";
+  if (value === 0) return "no change";
+  return `${value > 0 ? "+" : ""}${say(value, unit)}`;
+}
+
 export function coachCall(caption: CoachCaption | null) {
   if (!caption) return { error: "The coach's call hasn't loaded yet." };
   const fault = caption.fault;
@@ -40,8 +61,8 @@ export function coachCall(caption: CoachCaption | null) {
     fault: fault
       ? {
           name: tidyLabel(fault.label),
-          measured: formatValue(fault.value, fault.unit),
-          fault_starts_at: formatValue(fault.threshold, fault.unit),
+          measured: say(fault.value, fault.unit),
+          fault_starts_at: say(fault.threshold, fault.unit),
           confidence: fault.confidence,
           fix: fixName(fault.fix),
           threshold_comes_from: fault.source,
@@ -54,9 +75,9 @@ export function coachCall(caption: CoachCaption | null) {
 
 export function swingMetrics(compare: CompareResult) {
   return {
-    measured_from_the_pose: compare.metrics.map((m) => ({ name: metricName(m.key), value: formatValue(m.you, m.unit) })),
+    measured_from_the_pose: compare.metrics.map((m) => ({ name: metricName(m.key), value: say(m.you, m.unit) })),
     racket_speed: {
-      value: formatValue(compare.you.racketSpeed.value, compare.you.racketSpeed.unit),
+      value: say(compare.you.racketSpeed.value, compare.you.racketSpeed.unit),
       label: compare.you.racketSpeed.label,
     },
     read_a_guessed_joint: compare.notMeasured.map((n) => metricName(n.measurement)),
@@ -66,13 +87,13 @@ export function swingMetrics(compare: CompareResult) {
 export function ghostResult(compare: CompareResult, option: FixOption | null) {
   const ball = (who: "you" | "ghost") => ({
     outcome: OUTCOME_WORDS[compare.ball.outcome[who]],
-    speed: formatValue(compare.ball.speedKmh[who], "km/h"),
-    front_wall_height: formatValue(compare.ball.frontWallHeightM[who], "m"),
-    lands_from_front_wall: formatValue(compare.ball.landingDepthM[who], "m"),
+    speed: say(compare.ball.speedKmh[who], "km/h"),
+    front_wall_height: say(compare.ball.frontWallHeightM[who], "m"),
+    lands_from_front_wall: say(compare.ball.landingDepthM[who], "m"),
   });
   return {
     fix: fixName(compare.fix.id),
-    size: formatValue(compare.fix.amount, compare.fix.unit),
+    size: say(compare.fix.amount, compare.fix.unit),
     coachs_pick: option?.flagged ?? false,
     demo_size_not_a_coached_fix: option ? !option.flagged : false,
     ghost_is_your_swing_unchanged: compare.noCorrection,
@@ -81,9 +102,9 @@ export function ghostResult(compare: CompareResult, option: FixOption | null) {
       .filter((m) => m.change !== null && m.change !== 0)
       .map((m) => ({
         name: metricName(m.key),
-        you: formatValue(m.you, m.unit),
-        ghost: formatValue(m.ghost, m.unit),
-        change: formatChange(m.change, m.unit),
+        you: say(m.you, m.unit),
+        ghost: say(m.ghost, m.unit),
+        change: sayChange(m.change, m.unit),
       })),
     ball_label: "PREDICTED: there is no real ball, both paths come from the ball model",
     you: ball("you"),
