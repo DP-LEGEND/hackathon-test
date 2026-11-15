@@ -14,7 +14,8 @@ import pytest
 
 from coach.agent import GHOST_SHOWS_NEXT, GHOST_SHOWS_NONE, NO_FAULT_CUE, coach_swing
 from coach.faults import (
-    FAULTS, GUESS, LABELLED, MEASUREMENTS, THRESHOLDS, WRIST_MOCK, WRIST_SENSOR, detect_faults,
+    FAULTS, GUESS, LABELLED, MEASUREMENTS, THRESHOLDS, WRIST_MOCK, WRIST_SENSOR, WRIST_SESSION_BH,
+    WRIST_SESSION_FH, detect_faults,
     measure_swing, severity, unmeasured_faults,
 )
 from physics.ghost import EDITS, FIXES, apply_fix
@@ -64,7 +65,7 @@ def test_library_covers_the_six_faults(stroke: str) -> None:
     assert set(THRESHOLDS[stroke]) == SIX
     for rule in THRESHOLDS[stroke].values():
         assert rule["measurement"] in MEASUREMENTS
-        assert rule["source"] in (LABELLED, GUESS, WRIST_SENSOR, WRIST_MOCK)
+        assert rule["source"] in (LABELLED, GUESS, WRIST_SENSOR, WRIST_MOCK, WRIST_SESSION_BH, WRIST_SESSION_FH)
         assert rule["severe_at"] != rule["threshold"]
         assert severity(rule["target"], rule) == 0, "target must be inside the threshold"
         if "amount_from" in rule:
