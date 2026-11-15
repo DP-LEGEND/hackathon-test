@@ -13,12 +13,15 @@ from pathlib import Path
 import pytest
 
 from coach.agent import coach_swing, main as agent_main
-from coach.faults import MOCK_SENSOR_NOTE, THRESHOLDS, detect_faults, measure_swing, severity
+from coach.faults import (
+    MOCK_ROLLED_WRIST, MOCK_SENSOR_NOTE, THRESHOLDS, WRIST_MOCK, detect_faults, measure_swing, severity,
+)
 from coach.wrist_sensor import NO_SENSOR, attach_wrist, sensor_metrics
 from wrist.load import load_recording
 from wrist.metrics import wrist_metrics
 from wrist.sync import read_contacts, synchronise
 from wrist.synth import make_session
+from wrist.tune import tune
 
 SAMPLE = Path(__file__).resolve().parents[3] / "data" / "samples" / "swing_sample.json"
 RULE = THRESHOLDS["backhand"]["rolled_wrist"]
@@ -30,8 +33,10 @@ def sample() -> dict:
 
 
 def wrist(roll: float, usable: bool = True, mock: bool = False, **extra) -> dict:
+    """A wrist-sensor entry timed as the real lines were tuned (the gyro peak) unless extra says otherwise."""
     return {"usable": usable, "mock": mock, "roll_change_deg": -roll, "roll_change_abs_deg": roll,
-            "peak_roll_rate_abs_dps": 8 * roll, "peak_angular_speed_dps": 1300, "skip_reason": None, **extra}
+            "peak_roll_rate_abs_dps": 8 * roll, "peak_angular_speed_dps": 1300, "skip_reason": None,
+            "contact_source": "gyro peak", **extra}
 
 
 def rolled(swing: dict, stroke: str = "backhand") -> dict | None:
@@ -89,7 +94,7 @@ def test_untrusted_wrist_data_is_skipped_with_why(sample: dict, entry, why: str)
 def test_sensor_metrics_maps_the_wrist_file_keys() -> None:
     out = sensor_metrics(wrist(50.0))
     assert out == {"forearm_roll_deg": 50.0, "forearm_roll_rate_dps": 400.0, "forearm_speed_dps": 1300.0,
-                   "wrist_sensor": "sensor", "wrist_sensor_skipped": None}
+                   "wrist_sensor": "sensor", "wrist_sensor_skipped": None, "wrist_contact_source": "gyro peak"}
 
 
 def test_attach_wrist_by_swing_id_without_mutating(sample: dict) -> None:
@@ -119,15 +124,36 @@ def test_agent_cli_attaches_the_wrist_file(sample: dict, tmp_path: Path, monkeyp
 
 
 def test_end_to_end_from_a_mock_sensor_export(sample: dict, tmp_path: Path) -> None:
-    """Synthetic export -> wrist metrics -> coach: rolled swings fire, normal ones don't."""
+    """Synthetic export -> wrist metrics -> coach: rolled swings fire, normal ones don't.
+
+    The synthetic forearm rolls far less than a real one (rolled ~62 deg vs real 128-165), so the
+    coach judges mock data by MOCK_ROLLED_WRIST (what wrist.tune picks on this mock session), not
+    the real-tuned lines, and the fix amount runs down to the mock good median.
+    """
     truth = make_session(tmp_path)
     rec = load_recording(truth["export"])
     sync = synchronise(rec, read_contacts(truth["contacts"]), video_tap_s=truth["video_tap_s"])
     metrics, _ = wrist_metrics(rec, sync)
+    mock_rule = tune(metrics, {sid: t["label"] for sid, t in truth["swings"].items()})["verdict"]["rule"]
+    assert mock_rule == MOCK_ROLLED_WRIST and mock_rule["source"] == WRIST_MOCK
     for swing_id, t in truth["swings"].items():
         swing = attach_wrist({**sample, "id": swing_id}, metrics)
         f = rolled(swing)
         if t["label"] == "rolled_wrist":
             assert f is not None and f["label"].endswith(MOCK_SENSOR_NOTE), swing_id
+            assert f["source"] == WRIST_MOCK and f["threshold"] == MOCK_ROLLED_WRIST["threshold"]
+            assert f["fix_amount"] == pytest.approx(round(f["value"] - MOCK_ROLLED_WRIST["target"], 1))
         else:
             assert f is None, swing_id
+
+
+@pytest.mark.parametrize("stroke", ["backhand", "forehand"])
+def test_a_real_swing_at_the_mock_rolled_roll_does_not_fire(sample: dict, stroke: str) -> None:
+    """Codex P2 on #74: 62 deg is a rolled MOCK swing but a normal real one (real good rolls are
+    95-145 deg): real data keeps the per-stroke lines, mock data gets MOCK_ROLLED_WRIST."""
+    assert rolled({**sample, "wrist": wrist(62.0)}, stroke) is None   # real, gyro-peak timed
+    f = rolled({**sample, "wrist": wrist(62.0, mock=True)}, stroke)
+    assert f is not None and f["threshold"] == MOCK_ROLLED_WRIST["threshold"] and f["source"] == WRIST_MOCK
+    # the mock rule has no timing gate: a mock entry timed by its impact spike is still judged
+    f = rolled({**sample, "wrist": wrist(62.0, mock=True, contact_source="impact spike")}, stroke)
+    assert f is not None and f["label"].endswith(MOCK_SENSOR_NOTE)

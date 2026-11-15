@@ -1,8 +1,7 @@
 <!--
 TODO (before judging): beat 4 and every beat time follow docs/pitch.md from PR #70, so merge #70
-first. The Wi-Fi row's local fonts arrive with #76. #73 changes the forehand ghost's front wall
-(1.88 → 1.86 m) and landing (7.32 → 8.04 m) in this file: leave those numbers to #73. The aim
-answer under "Rules on stage" is #73's behaviour.
+first. The Wi-Fi row's local fonts arrive with #76. The aim answer under "Rules on stage" is
+#73's behaviour.
 Earlier: written against main at 34b9298 (wrist sensor #44 merged).
 Beat 3 uses the /upload page (#48, merged in cca6a0d; flow checked in app/upload/ on main).
 If #53 (ghost honesty: measured vs guessed joints) merges, re-check beat 2 and the
@@ -206,6 +205,10 @@ Beat 4 shows this tab only if **all four** hold. Otherwise beat 4 is spoken and 
 3. **http://localhost:8000/health**: shows `{"ok":true}`. Reload it if you're unsure whether the service is up.
 4. **The backup video**, once it's recorded at the freeze.
 
+**Saved-sample backup:** with the web app and Python service running, run `npx playwright install chromium` once to prepare the browser and video encoder.
+Run `node scripts/record_backup_demo.ts` (Node 26); set `GHOST_DEMO_URL` for a different localhost port.
+It saves silent 1920×1080 video to ignored `out/backup-demo.webm`, holding each beat for 3 seconds using saved samples only (no live upload, camera or keys). Never commit the video.
+
 **Warm up:** in tab 1, click through the forehand and the backhand all the way to the court, then click **Try another swing**. The dashed box under the swing list should say *"The live service is running but has no processed swings…"*. That's right for the show: `~/ghost-stage` stays empty until the stage upload. If it lists live swings, terminal tab 1 isn't running with an empty `~/ghost-stage`. If it says *"The live Python service isn't running"*, terminal tab 1 isn't up.
 
 ## The 3-minute click path
@@ -228,7 +231,7 @@ Browser tab 1 is http://localhost:3000/ghost, opened directly: `/` is now a land
 | The top card, **"Forehand · over-rotation (acted and flagged) · iPhone 120 fps (IMG_2115 16:55)"** (badges *Saved sample*, *Demo swing*) | **The coach's call:** *"Over-rotation: hips turn 157°"*, cue *"Turn a little less and stay balanced through the ball."* | Code measured the swing; the coach names one fix and only quotes numbers the code measured. |
 | **Show the ghost** | **Your ghost makes the fix.** Fix *Turn shoulders less*, badge *Coach's pick*. *What the fix changes:* Shoulder turn 137.6° → 85°. It's already playing: click **0.25× slow-mo** only | Orange is the swing they played, cyan is the same body with one fix. |
 | **Show the court** | **Where the ball goes:** two paths, each labelled *PREDICTED · … · in* | These are **PREDICTED**; there's no real ball. Launch angle is **assumed, 12° for a forehand**. Checked by eye against the video, the real ball hit about 1.8 m. We set the 12° from this clip, so it's a sanity check, not a test. |
-| Scroll down with the pointer **beside** the replay, not over it (scrolling over the 3D view zooms it) | The **Ball** panel (*PREDICTED*): ball speed 133.2 → 119.1 km/h, **front wall height 1.92 → 1.88 m** | *(Read the front wall heights from this panel.)* |
+| Scroll down with the pointer **beside** the replay, not over it (scrolling over the 3D view zooms it) | The **Ball** panel (*PREDICTED*): ball speed 133.2 → 119.1 km/h, **front wall height 1.92 → 1.86 m** | *(Read the front wall heights from this panel.)* |
 | Scroll back up to the top, again with the pointer beside the replay | The step bar and **Try another swing** | |
 
 ### Beat 2: backhand, nothing to fix (1:16–1:34)
@@ -285,8 +288,8 @@ All of these come from the saved samples in `public/swings/` and are the same on
 | Ghost fix (Coach's pick) | Turn shoulders less, 52.6° | None: the coach flagged nothing, so beat 2 stops at the coach's call |
 | Body change | Shoulder turn 137.6° → 85° | Not shown |
 | Ball speed (PREDICTED) | 133.2 → 119.1 km/h | Not shown |
-| **Front wall height (PREDICTED)** | **1.92 → 1.88 m** | 0.78 m, not shown in beat 2 |
-| Lands from front wall | 8.97 → 7.32 m | Not shown |
+| **Front wall height (PREDICTED)** | **1.92 → 1.86 m** | 0.78 m, not shown in beat 2 |
+| Lands from front wall | 8.97 → 8.04 m | Not shown |
 | Racket speed (ESTIMATE) | 28.3 → 25.3 m/s | Not shown |
 | **Launch angle (ASSUMED)** | **12°**, not on screen | 3°, not said in beat 2 |
 | Court | Two paths | Not shown |
