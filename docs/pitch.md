@@ -15,20 +15,20 @@ there are mock (the mock run gives 62.1° vs 16.5° medians). Say them only from
 
 **PRESENTER** speaks. **OPERATOR** clicks. Every click is below. The full set-up, checks and fallbacks are in [docs/demo-runbook.md](demo-runbook.md). Rehearse with a stopwatch.
 
-| Section | Time | Length |
-|---|---|---|
-| Hook | 0:00–0:16 | 16 s |
-| Problem | 0:16–0:34 | 18 s |
-| Live demo: forehand | 0:34–1:18 | 44 s |
-| Live demo: backhand | 1:18–1:36 | 18 s |
-| Live demo: wrist sensor | 1:36–1:59 | 23 s (13 s if spoken only) |
-| Live demo: fresh clip | 1:59–2:21 | 22 s |
-| How it works | 2:21–2:40 | 19 s |
-| Honesty | 2:40–2:48 | 8 s |
-| What's next | 2:48–2:59 | 11 s |
-| **Total** | | **2:59** (under 3:00; 2:49 if the wrist beat is spoken) |
+| Section | Time | Length | Time if the wrist beat is spoken |
+|---|---|---|---|
+| Hook | 0:00–0:16 | 16 s | same |
+| Problem | 0:16–0:34 | 18 s | same |
+| Live demo: forehand | 0:34–1:18 | 44 s | same |
+| Live demo: backhand | 1:18–1:36 | 18 s | same |
+| Live demo: wrist sensor | 1:36–1:59 | 23 s | 1:36–1:49 (13 s) |
+| Live demo: fresh clip | 1:59–2:21 | 22 s | 1:49–2:11 |
+| How it works | 2:21–2:40 | 19 s | 2:11–2:30 |
+| Honesty | 2:40–2:48 | 8 s | 2:30–2:38 |
+| What's next | 2:48–2:59 | 11 s | 2:38–2:49 |
+| **Total** | | **2:59** (under 3:00) | **2:49** |
 
-Seconds are speaking time at 150 words a minute plus the click and loading gaps noted in each beat.
+Seconds are speaking time at 150 words a minute plus the click and loading gaps noted in each beat. **If the wrist beat is spoken, don't wait:** go straight on, and every later beat starts 10 s earlier (the last column, and the second time in each heading below).
 
 **Rules**
 - Only say a measurement that's on screen. There are two named exceptions, as in the runbook:
@@ -40,7 +40,10 @@ Seconds are speaking time at 150 words a minute plus the click and loading gaps 
 **Before you start** (the runbook has the full checks):
 - **Terminal tab 1:** `cd ~/hackathon-demo/services`, then `mkdir -p ~/ghost-stage` (it must be empty), then `GHOST_SWINGS_DIR=~/ghost-stage ~/ghost-env/bin/python -m uvicorn pipeline.server:app --port 8000`
 - **Terminal tab 2:** `cd ~/hackathon-demo`, then `npm run dev`
-- **Terminal tab 3 (only if the morning sensor sample is ready):** `cd ~/hackathon-demo/services`, then `~/ghost-env/bin/python -m wrist.tune <morning wrist_metrics.json> ../data/labels/labels.csv --run <run>`, already printed. Its first line must **not** say *MOCK DATA*; if it does, don't show this tab.
+- **Terminal tab 3 (only if the morning sensor sample is ready):** `cd ~/hackathon-demo/services`, then `~/ghost-env/bin/python -m wrist.tune <morning wrist_metrics.json> ../data/labels/labels.csv --run <run>`, already printed. Show this tab only if **all three** hold; otherwise use the spoken wrist beat:
+  1. The first line does **not** say *MOCK DATA*, and it shows **at least 5 normal and 5 rolled** usable swings (wrist.tune's own minimum).
+  2. There's a `roll_change_abs_deg (deg)` block with a `normal median …` line, a `rolled median …` line and an `in-sample: …` line. If it says *"roll_change_abs_deg: not measured in both groups"*, there are no medians to read.
+  3. The rolled median is larger than the normal median.
 - **Browser tab 1:** http://localhost:3000/ghost, full screen on **Pick a swing**
 - **Browser tab 2:** http://localhost:3000/upload. **Choose a video**, pick `~/Downloads/fresh.mov` (one swing, 60 fps), and leave **Hitting hand**, **Stroke** and **Slowdown** on **Auto**. Don't click **Build my ghost** yet.
 
@@ -61,7 +64,7 @@ The replay in `/ghost` plays by itself. Don't click **Play/Pause**: it would pau
 > A coach says "turn your shoulders less", and you can't picture it.
 > Video shows what you did, not the better swing on your body, or where that ball would have gone.
 
-## Live demo (0:34–2:21, 107 s)
+## Live demo (0:34–2:21, 107 s; 0:34–2:11, 97 s, if the wrist beat is spoken)
 
 Same clicks as the runbook's beats 1–4, faster. The wrist sensor (runbook beat 4) now comes straight after the backhand. Don't fill the clicks and loading with talk.
 
@@ -80,21 +83,21 @@ Same clicks as the runbook's beats 1–4, faster. The wrist sensor (runbook beat
 | **Try another swing**, then **Backhand · two-camera stereo** | The coach's call: *"No fault found in what was checked"*, cue *"Nothing to fix in what the coach could check."* | A backhand, on two cameras at once. Nothing to fix in what the coach could check, and it says what it couldn't: the wrist, with no sensor, and the right elbow, which the camera couldn't see. | 18 (incl. 3 s clicks) |
 | **Pick a swing** (the step bar at the top) | The swing list | | |
 
-### Wrist sensor (1:36–1:59, 23 s, or 13 s spoken)
+### Wrist sensor (1:36–1:59, 23 s; 1:36–1:49, 13 s, if spoken)
 
 Mark it **ESTIMATE (sensor)**. The coach's call above already lists the wrist as not checked, so this beat follows straight on.
 
-**Only if the morning sensor sample is ready** (terminal tab 3, first line not *MOCK DATA*), shown:
+**Only if terminal tab 3 passes all three checks** in *Before you start* (not *MOCK DATA* with at least 5 normal and 5 rolled usable swings; both `roll_change_abs_deg` medians and the in-sample line printed; rolled median larger), shown:
 
 | OPERATOR clicks | On screen | PRESENTER says | s |
 |---|---|---|---|
 | Switch to terminal tab 3 | The morning `wrist.tune` output: `roll_change_abs_deg`, rolled vs normal medians, the in-sample split | The camera can't see wrist roll — it says so on screen. So we strapped a phone to the forearm. It's an estimate from one session: normal backhands turned [normal median]° through contact, rolled ones [rolled median]°, and every swing was sorted correctly. *(Read both medians exactly as tab 3 prints them under roll_change_abs_deg. Say 'estimate'. Don't subtract them out loud. Only say 'every swing sorted correctly' if the in-sample line shows 100% of rolled and 0% of normal.)* | 23 (incl. 2 s switch) |
 
-**Otherwise, spoken only (13 s).** Switch nothing, and don't say a number: without the sample there's no real measurement to quote.
+**Otherwise, spoken only (13 s, 1:36–1:49).** Switch nothing, and don't say a number: without usable sample output there's no real measurement to quote. Then go straight on to the fresh clip at 1:49; every later beat uses its second, earlier time.
 
 > The camera can't see wrist roll — it says so on screen. So we strapped a phone to the forearm to measure it. So far we've only tested that on mock data.
 
-### Fresh clip (1:59–2:21, 22 s)
+### Fresh clip (1:59–2:21, 22 s; 1:49–2:11 if the wrist beat was spoken)
 
 | OPERATOR clicks | On screen | PRESENTER says | s |
 |---|---|---|---|
@@ -108,22 +111,22 @@ Mark it **ESTIMATE (sensor)**. The coach's call above already lists the wrist as
 
 **If the coach named a fault but the panel says *"Demo size: the coach didn't flag this fault"*:** say "This is an example edit at demo size, not the coached fix." Never call it the fix, or stop and go to *How it works*.
 
-**If tab 2 still shows the progress panel** (*Finding your swing… / Measuring… / Building your ghost…*) at 1:59, skip this beat and say: "That clip is still processing, so here's how it works." Then go to *How it works*.
+**If tab 2 still shows the progress panel** (*Finding your swing… / Measuring… / Building your ghost…*) when this beat starts (1:59, or 1:49 if the wrist beat was spoken), skip this beat and say: "That clip is still processing, so here's how it works." Then go to *How it works*.
 
-## How it works (2:21–2:40, 19 s)
+## How it works (2:21–2:40, 19 s; 2:11–2:30 if the wrist beat was spoken)
 
 > MediaPipe finds 33 joints in every frame.
 > Two cameras, synced on the sound of the hit, give a 3D skeleton, with no calibration board.
 > The coach is plain code: four of its twelve rules are tuned on our labelled swings, the rest are defaults for now.
 
-## Honesty (2:40–2:48, 8 s)
+## Honesty (2:40–2:48, 8 s; 2:30–2:38 if the wrist beat was spoken)
 
 > Joints and angles are measured.
 > Racket speed is estimated.
 > The launch angle is assumed.
 > Every ball path is predicted.
 
-## What's next (2:48–2:59, 11 s)
+## What's next (2:48–2:59, 11 s; 2:38–2:49 if the wrist beat was spoken)
 
 > Next: track the racket, so speed and angle are measured.
 > Then a watch app instead of the phone.
