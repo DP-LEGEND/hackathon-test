@@ -38,7 +38,7 @@ export function ProgressPanel({
   const percent = progress === null ? null : Math.round(progress * 100);
 
   return (
-    <section aria-labelledby="progress-heading" className="flex flex-col gap-4 rounded-2xl border bg-card p-4 sm:p-5">
+    <section aria-labelledby="progress-heading" className="upload-progress flex flex-col gap-4 rounded-2xl border bg-card p-4 sm:p-5">
       <div className="flex items-baseline justify-between gap-4">
         <h2 id="progress-heading" ref={headingRef} tabIndex={-1} className="text-base font-medium outline-none">
           Working on your swing

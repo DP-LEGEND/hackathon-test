@@ -12,7 +12,7 @@
 .ghost-theme button { cursor:pointer; }.ghost-theme button:disabled { cursor:not-allowed; }
 .ghost-theme [data-slot=button] { min-height:44px; }
 .ghost-theme [data-slot=dialog-close] { min-width:44px; min-height:44px; }
-.ghost-skip { position:fixed; top:12px; left:12px; transform:translateY(-200%); z-index:100; background:var(--primary); color:var(--background); padding:12px 20px; }.ghost-skip:focus { transform:none; }
+.ghost-skip { position:fixed; top:12px; left:12px; transform:translateY(-200%); z-index:100; background:var(--primary); color:var(--background); padding:12px 20px; }.ghost-skip:focus-visible { transform:none; }
 .ghost-navigation { height:104px; padding:0 64px; display:flex; align-items:center; gap:48px; max-width:1600px; margin:auto; position:relative; z-index:10; }
 .ghost-brand { font:700 24px var(--ghost-wordmark),sans-serif; letter-spacing:-1px; display:flex; align-items:center; min-height:44px; }
 .ghost-desktopNav { display:flex; align-items:center; gap:48px; }.ghost-desktopNav a { display:flex; align-items:center; min-height:44px; color:var(--muted-foreground); border-bottom:2px solid transparent; }.ghost-desktopNav a:hover,.ghost-desktopNav a[aria-current=page] { color:var(--foreground); border-color:var(--primary); }
