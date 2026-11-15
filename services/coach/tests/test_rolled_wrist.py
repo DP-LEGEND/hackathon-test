@@ -34,8 +34,10 @@ def sample() -> dict:
 
 
 def wrist(roll: float, usable: bool = True, mock: bool = False, **extra) -> dict:
+    """A wrist-sensor entry timed as the real lines were tuned (the gyro peak) unless extra says otherwise."""
     return {"usable": usable, "mock": mock, "roll_change_deg": -roll, "roll_change_abs_deg": roll,
-            "peak_roll_rate_abs_dps": 8 * roll, "peak_angular_speed_dps": 1300, "skip_reason": None, **extra}
+            "peak_roll_rate_abs_dps": 8 * roll, "peak_angular_speed_dps": 1300, "skip_reason": None,
+            "contact_source": "gyro peak", **extra}
 
 
 def rolled(swing: dict, stroke: str = "backhand") -> dict | None:
@@ -94,7 +96,7 @@ def test_untrusted_wrist_data_is_skipped_with_why(sample: dict, entry, why: str)
 def test_sensor_metrics_maps_the_wrist_file_keys() -> None:
     out = sensor_metrics(wrist(50.0))
     assert out == {"forearm_roll_deg": 50.0, "forearm_roll_rate_dps": 400.0, "forearm_speed_dps": 1300.0,
-                   "wrist_sensor": "sensor", "wrist_sensor_skipped": None}
+                   "wrist_sensor": "sensor", "wrist_sensor_skipped": None, "wrist_contact_source": "gyro peak"}
 
 
 def test_attach_wrist_by_swing_id_without_mutating(sample: dict) -> None:

@@ -9,7 +9,8 @@ reads the size (roll_change_abs_deg). Kept here as constants: no sensor files in
 
 Caveat these tests can't see: the split depends on where contact sits. Moving it 25 ms
 earlier makes good and rolled overlap on both strokes, so retune once real hits (contact
-from the ball's impact) are in.
+from the ball's impact) are in. Until then the real lines judge only swings timed the same
+way (contact_source "gyro peak"); any other real swing is listed as not checked.
 """
 
 from __future__ import annotations
@@ -20,7 +21,8 @@ from pathlib import Path
 
 import pytest
 
-from coach.faults import THRESHOLDS, detect_faults
+from coach.agent import coach_swing
+from coach.faults import NOT_GYRO_PEAK, THRESHOLDS, detect_faults
 
 SAMPLE = Path(__file__).resolve().parents[3] / "data" / "samples" / "swing_sample.json"
 
@@ -54,11 +56,62 @@ def sample() -> dict:
     return json.loads(SAMPLE.read_text())
 
 
-def with_roll(sample: dict, swing_id: str, roll: float, sign: int) -> dict:
-    """The sample swing carrying one real swing's wrist numbers (real, not mock)."""
-    wrist = {"usable": True, "mock": False, "roll_change_deg": sign * roll, "roll_change_abs_deg": roll,
-             "peak_roll_rate_abs_dps": 900.0, "peak_angular_speed_dps": 1500.0, "skip_reason": None}
+def with_roll(sample: dict, swing_id: str, roll: float, sign: int, contact_source: str | None = "gyro peak",
+              mock: bool = False) -> dict:
+    """The sample swing carrying one real swing's wrist numbers (real, not mock), timed as the
+    session was (the forearm's fastest turn) unless contact_source says otherwise."""
+    wrist = {"usable": True, "mock": mock, "roll_change_deg": sign * roll, "roll_change_abs_deg": roll,
+             "peak_roll_rate_abs_dps": 900.0, "peak_angular_speed_dps": 1500.0, "skip_reason": None,
+             "contact_source": contact_source}
     return {**sample, "id": swing_id, "wrist": wrist}
+
+
+# Codex P1 on #74: the real lines were tuned with the roll window on the gyro peak; an
+# impact-timed hit's window sits elsewhere, and 25 ms is enough to swap good and rolled.
+ROLLED_MEDIAN = {"forehand": 158.8, "backhand": 137.3}   # past each stroke's threshold
+
+
+@pytest.mark.parametrize("stroke", SESSION)
+def test_a_gyro_peak_timed_real_swing_over_the_line_fires(sample: dict, stroke: str) -> None:
+    roll = ROLLED_MEDIAN[stroke]
+    assert roll > THRESHOLDS[stroke]["rolled_wrist"]["threshold"]
+    result = coach_swing(with_roll(sample, "gp", roll, +1, "gyro peak"), stroke)
+    assert "rolled_wrist" in [result["fault"]["id"], *result["other_faults"]]
+    assert result["metrics"]["wrist_sensor"] == "sensor" and result["metrics"]["forearm_roll_deg"] == roll
+    assert "rolled_wrist" not in result["not_measured"] and "rolled_wrist" not in result["disabled_faults"]
+
+
+@pytest.mark.parametrize("contact_source", ["impact", "impact spike", "double tap", None])
+@pytest.mark.parametrize("stroke", SESSION)
+def test_the_same_roll_timed_any_other_way_is_not_checked(sample: dict, stroke: str,
+                                                          contact_source: str | None) -> None:
+    """No fault, and the coach says the wrist wasn't checked (never that it's firm)."""
+    result = coach_swing(with_roll(sample, "hit", ROLLED_MEDIAN[stroke], +1, contact_source), stroke)
+    fired = [result["fault"]["id"]] + result["other_faults"] if result["fault"] else []
+    assert "rolled_wrist" not in fired
+    assert "rolled_wrist" in result["not_measured"]   # the page's "Not checked on this swing"
+    assert result["disabled_faults"]["rolled_wrist"] == NOT_GYRO_PEAK == (
+        "threshold tuned on gyro-peak-timed practice swings; not checked on impact-timed hits")
+    m = result["metrics"]
+    # wrist_sensor null + this reason: the page's wrist panel shows "not judged" with it, not "firm"
+    assert m["wrist_sensor"] is None and m["wrist_sensor_skipped"] == NOT_GYRO_PEAK
+    assert m["forearm_roll_deg"] is None and m["wrist_contact_source"] == contact_source
+    assert not any(f["id"] == "rolled_wrist" for f in detect_faults(with_roll(sample, "hit", 170.0, +1, contact_source),
+                                                                    stroke))
+
+
+def test_mock_data_keeps_its_own_timing(sample: dict) -> None:
+    """Only the real lines are tied to the gyro peak: mock swings (impact-timed) still reach the coach."""
+    result = coach_swing(with_roll(sample, "mock", 60.8, +1, "impact spike", mock=True), "forehand")
+    assert result["metrics"]["wrist_sensor"] == "mock sensor" and result["metrics"]["wrist_sensor_skipped"] is None
+    assert "rolled_wrist" not in result["disabled_faults"]
+
+
+def test_without_a_sensor_nothing_new_is_said(sample: dict) -> None:
+    result = coach_swing(sample, "forehand")
+    assert result["not_measured"] == ["rolled_wrist"] and "rolled_wrist" not in result["disabled_faults"]
+    assert "wrist_contact_source" not in result["metrics"]
+    assert result["metrics"]["wrist_sensor_skipped"] == "no wrist sensor data for this swing"
 
 
 @pytest.mark.parametrize(("stroke", "swing_id", "roll", "is_rolled"), CASES, ids=[c[1] for c in CASES])
