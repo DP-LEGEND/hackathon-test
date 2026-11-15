@@ -6,8 +6,9 @@ The demo flow has four steps: **pick a swing**, **the coach's call**, **the ghos
 |---|---|
 | `ghost-demo.tsx` | The flow: steps, which swing and fix, loading |
 | `sources.ts` | Swings from the swing API or the saved samples |
-| `ghost-stage.tsx`, `skeleton-scene.ts` | The 3D view (three.js) and playback |
+| `ghost-stage.tsx`, `skeleton-scene.ts`, `skeleton-shape.ts` | The 3D view (three.js) and playback |
 | `compare.ts`, `swing.ts`, `wrist.ts` | Checks the JSON before anything is drawn |
+| `provenance.ts`, `joint-legend.tsx`, `prediction-panel.tsx`, `reason-list.tsx` | Which joints were measured and which guessed, what wasn't judged or measured, and "How this was predicted" |
 | `wrist-panel.tsx` | The Wrist sensor panel on the coach's call |
 
 ## Where swings come from
@@ -18,6 +19,12 @@ The demo flow has four steps: **pick a swing**, **the coach's call**, **the ghos
 ### Opening a swing by link
 
 `/ghost?swing=<id>` opens on that swing at the coach's call. `/upload` ("Try your own swing", linked from the header) sends a clip to the pipeline and then opens the new swing this way. The page waits for both lists before it decides, and a live swing wins over a saved sample with the same ID, so the swing on screen never switches. If neither list has the ID, the page says so and offers **Check again** (re-reads the live list) instead of showing a different swing. The demo reads the query in the browser, so `page.tsx` wraps it in `<Suspense>` (required by `useSearchParams` when the page is prerendered). It is keyed by the ID, so a new `?swing=` starts fresh even when Next has kept the page alive in the background.
+
+### The coach's voice
+
+The page asks `GET /api/coach/{id}/voice` (Henoch's #60) for `{cue, audioUrl, source}` only on a step that shows the caption (the coach's call, the ghost or on court), once the coach has answered and the live service is online. It never asks from the swing list, where the demo swing's coach result preloads, so nothing is worded or paid for until someone opens a swing. A first call can take a few seconds (Claude, then ElevenLabs), so the plain caption shows meanwhile. Then `cue` replaces the caption's cue. **Hear the coach** plays `audioUrl` with `new Audio(audioUrl).play()`, and a new play stops the one before. The clip stops and is released when the caption goes: back to the swing list, another swing, or leaving `/ghost`. The button is hidden when `audioUrl` is null. The caption says **worded by Claude** only when `source` is `"claude"`.
+
+A 404 (before #60 is merged, or a swing the service doesn't know, such as a saved sample whose run isn't in `data/processed`), any error, a 28 s timeout (just under the proxy's 30 s) or a malformed answer all keep the plain caption, with no message. That "no voice" isn't kept: the next time the caption shows, for example after **Check again** finds the service, the page asks again. A voice that did load is kept until the page reloads, including one without audio (no ElevenLabs key), so after adding keys, restart the service and reload the page. Only an inline `data:audio/…` clip or a path on this site is played: one leading `/`, no backslash, and it must resolve to the page's own origin.
 
 The ghost starts on the coach's `ghost_fix` with `ghost_fix_amount`, and the caption shows `ghost_note` when the ghost shows a different fix from the top fault. Older coach files without those fields fall back to the worst fault physics can fix. Fixes the coach didn't flag use a small fixed demo size (`demoAmounts` in the catalogue). A fix physics can't apply to a swing shows its reason. When a fix leaves both PREDICTED paths identical, the court step draws one path and says so.
 
@@ -40,6 +47,26 @@ Every value is labelled **MEASURED (sensor)**, plus **MOCK** when the file says 
 Pipeline skeletons are hip-centred, y up, and face +z. The court's front wall is at z = 0, so `skeleton-scene.ts` turns both figures 180° about y (`[x, y, z] -> [-x, y, -z]`). Seen from behind, a right-handed forehand then hits on the player's right, as in the phone video. On the court step, the player moves so the hitting wrist at the contact frame is exactly over the PREDICTED ball's first point in x and z. The wrist is joint 16 for `R` and 15 for `L`, from `metadata.hand`, else the hand compare used. The ghost moves by the same offset. Height isn't snapped: the wrist is about 0.9 m up at contact and the ball's assumed start is 0.6 m, so the feet stay on the floor and the ball leaves about 30 cm below the hand. Physics would need to start the ball at the measured hand height for both to line up.
 
 None of that applies when a compare response has top-level `"coordinateSystem": "court"`: physics has then already placed the swings in court coordinates. Those swings are drawn exactly as given, with no turn, floor offset or placement. Only the side-by-side 1.1 m ghost shift stays, and the ghost's PREDICTED ball path moves with it, so it still leaves from the ghost's hand. The page notes that this is display only. The camera aims at the hips at contact. Any other value, or no field, means hip-centred. The raw swing shown before a compare loads is always hip-centred.
+
+## Measured or guessed
+
+A guess is never drawn or written as a measurement. `provenance.ts` reads, per frame, whichever of these the swing JSON has. A joint counts as guessed (the camera couldn't see it) when:
+
+- `frames[i].filled[j]` is `true` (docs/interfaces.md, #39);
+- `frames[i].visibility[j]` is below 0.5, the coach's cut-off;
+- `frames[i].approximatedJoints` lists it, by index or by MediaPipe name (`right_wrist`, `RIGHT_WRIST` and `rightWrist` all work);
+- or `metadata.approximatedJoints` lists it, which covers the whole swing, so every frame.
+
+A list with the wrong length, or an entry that isn't a joint, is ignored. A frame with none of these fields draws every joint solid, but absence means unknown, not measured, so the legend never calls those joints measured. The backhand sample has `filled` and `visibility` on every frame (#54). The forehand sample has neither. The ghost is your swing with one fix, so it also takes your flags frame for frame.
+
+- **3D view:** a guessed joint and every bone touching it are drawn at 35% of the figure's opacity, as thin dashes, on that frame only. The head fades with an ear and the neck with a shoulder. The frame counter names what's faded, e.g. `you f28 (est. right wrist)`, and the slider's screen-reader text says it too.
+- **Legend under the view:** faded = estimated (the camera couldn't see it). Solid = measured from video, but only on a frame the file marks, for every figure drawn. On any other frame it reads "Solid: not marked in this file". A file with no frame marks also says so, and a partly marked file says how many frames aren't marked.
+- **"How this was predicted"** (collapsed, under everything): two-camera 3D pose and this swing's camera count (`source`, else `metadata.reconstruction`); how physics stands you on court from the racket head at contact; every input the ball model used, each with the label the compare response gives it (`ESTIMATE`, `ASSUMED`, `RECORDED`, …), never one the page makes up; and how many frames show a faded joint, with which joints and frames. The share of frames counts the joints the figure draws. Guessed points it doesn't draw (face, little fingers, thumbs) are listed on their own.
+- **Coach:** the checks the coach skipped because they'd read a guessed joint (`metrics.guessed_joints`, plus the older `stance_skipped` / `wrist_skipped`) show as "Not judged: … The camera couldn't see the right elbow (visibility 0.41 at contact)." `not_measured` lists the faults it couldn't check. `rolled_wrist` carries the coach's `wrist_sensor_skipped` reason, e.g. "no wrist sensor data for this swing". The caption says plain "No fault found" only when nothing was skipped. Otherwise it says "No fault found in what was checked" and lists what wasn't checked, and the coach details say the same.
+- **What the fix changes:** physics leaves out any body measurement that reads a guessed joint and lists it in compare's `notMeasured` ({measurement: why}). The card lists those as "Not measured: … and why" under the table. On the Ball card, physics keeps ball speed and racket speed but flags them (`ball_speed`, `racket_speed`), so those rows say "Not a measurement" and why. A row the coach says reads a guessed joint says so too.
+- **No correction:** when a fix would edit a guessed joint, the live service returns the unchanged comparison with `noCorrection: true` and the reason in `ghostNote`. Both cards then show that reason. The ghost's key reads "no correction: your swing unchanged", and "This fix changes your body position, not the ball" is hidden, because nothing was changed.
+
+To see it, serve a swing with flags through the live service. Write a folder holding the swing file and a `manifest.json` of `{"files": ["<swing>.json"]}`, then point `GHOST_SWINGS_DIR` at that folder.
 
 To try live swings, run this from the repo folder with the venv activated:
 

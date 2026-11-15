@@ -8,6 +8,7 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { CSS2DObject, CSS2DRenderer } from "three/addons/renderers/CSS2DRenderer.js";
 import type { Vec3 } from "@/lib/ghost/types";
 import { GHOST_COLOUR, YOU_COLOUR } from "./colours";
+import { BONES, HEAD, JOINT_DOTS, NECK, POINT_COUNT, sourceJoints } from "./skeleton-shape";
 import type { SkeletonPose, SwingCoordinates } from "./swing";
 
 /** Standard squash court (World Squash singles), metres. */
@@ -43,23 +44,18 @@ export function turned(p: Vec3): Vec3 {
 const T_SPOT = { x: COURT.width / 2, z: COURT.shortLine } as const;
 const SIDE_BY_SIDE_OFFSET = 1.1; // metres along x, towards the middle of the court
 
-// MediaPipe landmark indices, plus two derived points.
-const NECK = 33; // midpoint of the shoulders
-const HEAD = 34; // midpoint of the ears
-const POINT_COUNT = 35;
-const BONES: ReadonlyArray<readonly [number, number]> = [
-  [11, 12], [11, 23], [12, 24], [23, 24], // torso
-  [11, 13], [13, 15], [15, 19], // left arm and hand
-  [12, 14], [14, 16], [16, 20], // right arm and hand
-  [23, 25], [25, 27], [27, 29], [29, 31], [27, 31], // left leg and foot
-  [24, 26], [26, 28], [28, 30], [30, 32], [28, 32], // right leg and foot
-  [NECK, HEAD],
-];
-const JOINT_DOTS = [11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28];
-
 const BONE_RADIUS = 0.022;
 const JOINT_RADIUS = 0.032;
 const HEAD_RADIUS = 0.1;
+
+// Guessed joints (the camera couldn't see them) and every bone touching one are drawn faded and
+// dashed, frame by frame, so a guess never looks like a measurement.
+const FADED_OPACITY = 0.35; // times the figure's own opacity
+const DASH_PERIOD = 0.07; // metres of bone per dash plus its gap
+const DASH_FILL = 0.55; // share of each period that is dash
+const DASH_THIN = 0.7; // dashed bones are thinner than measured ones
+const MAX_DASHES = 12; // per bone: enough for 0.84 m at DASH_PERIOD
+const HIDDEN = new THREE.Matrix4().makeScale(0, 0, 0);
 
 const PATH_RADIUS = 0.012;
 const BOUNCE_RADIUS = 0.035;
@@ -71,6 +67,8 @@ const tmpMid = new THREE.Vector3();
 const tmpScale = new THREE.Vector3();
 const tmpQuat = new THREE.Quaternion();
 const tmpMatrix = new THREE.Matrix4();
+const dashStart = new THREE.Vector3();
+const dashEnd = new THREE.Vector3();
 
 /** Matrix that turns a unit cylinder (height 1 along y) into a segment from a to b. */
 function segmentMatrix(a: THREE.Vector3, b: THREE.Vector3, thickness: number): THREE.Matrix4 {
@@ -110,9 +108,14 @@ type FigureStyle = {
 class SkeletonFigure {
   readonly group = new THREE.Group();
   private readonly points = Array.from({ length: POINT_COUNT }, () => new THREE.Vector3());
+  /** Per drawn point (33 landmarks plus neck and head): guessed on the current frame. */
+  private readonly guessed = new Array<boolean>(POINT_COUNT).fill(false);
   private readonly bones: THREE.InstancedMesh;
+  private readonly dashes: THREE.InstancedMesh;
   private readonly joints: THREE.InstancedMesh;
+  private readonly fadedJoints: THREE.InstancedMesh;
   private readonly head: THREE.Mesh;
+  private readonly fadedHead: THREE.Mesh;
   private readonly racket: THREE.Mesh;
   private readonly thickness: number;
 
@@ -130,21 +133,33 @@ class SkeletonFigure {
       depthWrite: !transparent,
       side: transparent ? THREE.BackSide : THREE.FrontSide,
     });
+    // Same colour, so orange stays the player and cyan the ghost, but faint.
+    const faded = material.clone();
+    faded.transparent = true;
+    faded.opacity = style.opacity * FADED_OPACITY;
+    faded.depthWrite = false;
     this.thickness = (BONE_RADIUS + style.halo) / BONE_RADIUS;
     const boneGeometry = new THREE.CylinderGeometry(BONE_RADIUS, BONE_RADIUS, 1, 10);
     const jointGeometry = new THREE.SphereGeometry(JOINT_RADIUS + style.halo, 16, 12);
+    const headGeometry = new THREE.SphereGeometry(HEAD_RADIUS + style.halo, 24, 16);
 
     this.bones = new THREE.InstancedMesh(boneGeometry, material, BONES.length);
+    this.dashes = new THREE.InstancedMesh(boneGeometry, faded, BONES.length * MAX_DASHES);
     this.joints = new THREE.InstancedMesh(jointGeometry, material, JOINT_DOTS.length);
-    this.head = new THREE.Mesh(new THREE.SphereGeometry(HEAD_RADIUS + style.halo, 24, 16), material);
+    this.fadedJoints = new THREE.InstancedMesh(jointGeometry, faded, JOINT_DOTS.length);
+    this.head = new THREE.Mesh(headGeometry, material);
+    this.fadedHead = new THREE.Mesh(headGeometry, faded);
+    this.fadedHead.visible = false;
     this.racket = new THREE.Mesh(boneGeometry, material);
     this.racket.matrixAutoUpdate = false;
     this.racket.visible = false;
-    for (const mesh of [this.bones, this.joints]) {
+    for (const mesh of [this.bones, this.dashes, this.joints, this.fadedJoints]) {
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       mesh.frustumCulled = false; // instances move every frame; skip stale bounds
     }
-    this.group.add(this.bones, this.joints, this.head, this.racket);
+    this.dashes.count = 0;
+    this.fadedJoints.count = 0;
+    this.group.add(this.bones, this.dashes, this.joints, this.fadedJoints, this.head, this.fadedHead, this.racket);
     this.group.visible = false; // until the first pose arrives
   }
 
@@ -154,11 +169,43 @@ class SkeletonFigure {
     p[NECK].addVectors(p[11], p[12]).multiplyScalar(0.5);
     p[HEAD].addVectors(p[7], p[8]).multiplyScalar(0.5);
 
-    BONES.forEach(([a, b], i) => this.bones.setMatrixAt(i, segmentMatrix(p[a], p[b], this.thickness)));
+    // This frame only: a landmark is faded when the file marks it guessed; the neck and head
+    // when any landmark they come from is.
+    const guessed = this.guessed;
+    for (let j = 0; j < pose.joints.length; j++) guessed[j] = pose.guessed[j] === true;
+    for (const point of [NECK, HEAD]) guessed[point] = sourceJoints(point).some((j) => guessed[j]);
+
+    let dashes = 0;
+    BONES.forEach(([a, b], i) => {
+      if (guessed[a] || guessed[b]) {
+        this.bones.setMatrixAt(i, HIDDEN);
+        dashes = this.addDashes(p[a], p[b], dashes);
+      } else {
+        this.bones.setMatrixAt(i, segmentMatrix(p[a], p[b], this.thickness));
+      }
+    });
     this.bones.instanceMatrix.needsUpdate = true;
-    JOINT_DOTS.forEach((j, i) => this.joints.setMatrixAt(i, tmpMatrix.makeTranslation(p[j])));
+    this.dashes.count = dashes;
+    this.dashes.instanceMatrix.needsUpdate = true;
+
+    let fadedDots = 0;
+    JOINT_DOTS.forEach((j, i) => {
+      tmpMatrix.makeTranslation(p[j]);
+      if (guessed[j]) {
+        this.fadedJoints.setMatrixAt(fadedDots++, tmpMatrix);
+        this.joints.setMatrixAt(i, HIDDEN);
+      } else {
+        this.joints.setMatrixAt(i, tmpMatrix);
+      }
+    });
     this.joints.instanceMatrix.needsUpdate = true;
+    this.fadedJoints.count = fadedDots;
+    this.fadedJoints.instanceMatrix.needsUpdate = true;
+
     this.head.position.copy(p[HEAD]);
+    this.fadedHead.position.copy(p[HEAD]);
+    this.head.visible = !guessed[HEAD];
+    this.fadedHead.visible = guessed[HEAD];
 
     this.racket.visible = pose.racket !== null;
     if (pose.racket) {
@@ -166,6 +213,17 @@ class SkeletonFigure {
       this.racket.matrix.copy(segmentMatrix(throat, tip, this.thickness * 0.6));
     }
     this.group.visible = true;
+  }
+
+  /** Dashes along a faded bone from instance `next` on; returns the next free instance. */
+  private addDashes(a: THREE.Vector3, b: THREE.Vector3, next: number): number {
+    const n = Math.min(MAX_DASHES, Math.max(1, Math.round(a.distanceTo(b) / DASH_PERIOD)));
+    for (let k = 0; k < n; k++) {
+      dashStart.lerpVectors(a, b, (k + (1 - DASH_FILL) / 2) / n);
+      dashEnd.lerpVectors(a, b, (k + (1 + DASH_FILL) / 2) / n);
+      this.dashes.setMatrixAt(next++, segmentMatrix(dashStart, dashEnd, this.thickness * DASH_THIN));
+    }
+    return next;
   }
 }
 

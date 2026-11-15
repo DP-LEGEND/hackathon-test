@@ -25,6 +25,8 @@ async function forward(request: Request, context: ProxyContext): Promise<Respons
   }
 
   let exceededLimit = false;
+  let timeoutSignal: AbortSignal | undefined;
+  let upstreamSignal: AbortSignal | undefined;
   try {
     const base = new URL(process.env.GHOST_API_URL || "http://localhost:8000");
     if (!["http:", "https:"].includes(base.protocol)) {
@@ -54,6 +56,8 @@ async function forward(request: Request, context: ProxyContext): Promise<Respons
         },
       }));
     }
+    timeoutSignal = AbortSignal.timeout(path[0] === "process" ? 10 * 60_000 : 30_000);
+    upstreamSignal = AbortSignal.any([request.signal, timeoutSignal]);
     const init: RequestInit & { duplex: "half" } = {
       method: request.method,
       headers,
@@ -61,7 +65,7 @@ async function forward(request: Request, context: ProxyContext): Promise<Respons
       duplex: "half",
       cache: "no-store",
       redirect: "manual",
-      signal: AbortSignal.any([request.signal, AbortSignal.timeout(path[0] === "process" ? 10 * 60_000 : 30_000)]),
+      signal: upstreamSignal,
     };
     const upstream = await fetch(base, init);
     const responseHeaders = new Headers({ "Cache-Control": "no-store" });
@@ -72,6 +76,13 @@ async function forward(request: Request, context: ProxyContext): Promise<Respons
     return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });
   } catch {
     if (exceededLimit) return uploadTooLarge();
+    // The combined signal retains the first abort reason even if both fire.
+    if (timeoutSignal?.aborted && upstreamSignal?.reason === timeoutSignal.reason) {
+      return Response.json({ error: "Ghost API is still processing; the proxy stopped waiting." }, { status: 504 });
+    }
+    if (request.signal.aborted) {
+      return Response.json({ error: "Request cancelled." }, { status: 499 });
+    }
     return Response.json(
       { error: "Ghost API is unavailable. Start the FastAPI service and retry." },
       { status: 502 },
