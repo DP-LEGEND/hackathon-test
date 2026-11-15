@@ -110,7 +110,10 @@ def main(argv: list[str] | None = None) -> int:
     o = metrics["sensor"]["orientation_used"]
     if o["source"] == "phone":
         q = metrics["sensor"]["quaternion"]
-        print(f"Orientation: the phone's, quaternions {q['convention']} (gyro mismatch {q['mismatch']:.2f}).")
+        b = o["gyro_bias"]
+        print(f"Orientation: the phone's, quaternions {q['convention']} (gyro mismatch {q['mismatch']:.2f}); "
+              + (f"gyro bias {b['bias_dps']} deg/s removed from the roll (against the phone's orientation)."
+                 if b["bias_dps"] is not None else "gyro bias not removed (too few samples)."))
     else:
         print(f"Orientation: integrated gyro, bias {o['bias_dps']} deg/s removed {o['bias_from']}.")
     for w in metrics["warnings"]:

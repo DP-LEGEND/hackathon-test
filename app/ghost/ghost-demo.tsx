@@ -7,10 +7,11 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { ArrowLeft, ArrowRight, RotateCcw } from "lucide-react";
+import { ArrowLeft, ArrowRight, CircleAlert, RotateCcw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import "./swing-view.css";
 import { CoachCaptionBar, noFaultInWhatWasChecked, type CaptionState } from "./coach-caption";
 import { CoachDetails } from "./coach-details";
 import {
@@ -25,6 +26,7 @@ import {
 import { BallChanges, BodyChanges } from "./delta-panel";
 import { FixPicker } from "./fix-picker";
 import { GhostStage, type StageStatus } from "./ghost-stage";
+import { look } from "./look";
 import { PredictionPanel } from "./prediction-panel";
 import { SceneLegend } from "./scene-legend";
 import type { BallPathView, CameraView } from "./skeleton-scene";
@@ -43,6 +45,7 @@ import {
   type ApiState,
   type FixOption,
 } from "./sources";
+import { StateCard } from "./state-card";
 import type { SwingCoordinates } from "./swing";
 import { SwingPicker, type CatalogueState } from "./swing-picker";
 import { useAsync, type Async } from "./use-async";
@@ -288,14 +291,18 @@ export function GhostDemo({ requestedSwing }: { requestedSwing: string | null })
   const meta = STEPS[index];
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="ghost-swing flex flex-col gap-5 sm:gap-6">
       <StepNav step={step} canAdvance={entry !== null} onGo={goTo} />
 
-      <div className="flex flex-col gap-1">
-        <h2 ref={headingRef} tabIndex={-1} className="text-2xl font-semibold tracking-tight outline-none sm:text-3xl">
+      <div className="flex flex-col gap-1.5">
+        <h2
+          ref={headingRef}
+          tabIndex={-1}
+          className="ghost-swing-display text-[28px] leading-[1.15] tracking-[-0.8px] text-balance outline-none sm:text-[34px] sm:tracking-[-1px]"
+        >
           {meta.heading}
         </h2>
-        <p className="text-sm text-muted-foreground sm:text-base">{meta.intro}</p>
+        <p className="max-w-3xl text-[15px] leading-relaxed text-pretty text-muted-foreground sm:text-base">{meta.intro}</p>
       </div>
 
       {step === "swing" ? (
@@ -315,33 +322,42 @@ export function GhostDemo({ requestedSwing }: { requestedSwing: string | null })
           <SwingGone hasDemo={demoEntry !== null} onLeave={leaveGoneSwing} missing={missing} />
         ) : catalogue.status === "error" ? (
           // Reachable when a ?swing= link opens on this step: without the catalogue there are no swings.
-          <div role="alert" className="flex flex-col items-start gap-3 rounded-xl border bg-card p-6">
-            <p className="text-sm">The swings couldn&apos;t load: {catalogue.message}</p>
-            <Button variant="outline" onClick={retryCatalogue}>
-              <RotateCcw data-icon="inline-start" />
-              Try again
-            </Button>
-          </div>
+          <StateCard
+            tone="error"
+            role="alert"
+            actions={
+              <Button variant="outline" className={look.pill} onClick={retryCatalogue}>
+                <RotateCcw data-icon="inline-start" />
+                Try again
+              </Button>
+            }
+          >
+            <p>The swings couldn&apos;t load: {catalogue.message}</p>
+          </StateCard>
         ) : (
-          <p role="status" className="rounded-xl border bg-card p-6 text-sm text-muted-foreground">
+          <StateCard tone="loading" role="status">
             Loading swings…
-          </p>
+          </StateCard>
         )
       ) : (
         <>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button variant="outline" onClick={() => goTo(STEPS[index - 1].id)}>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-3">
+            <Button variant="outline" className={look.pill} onClick={() => goTo(STEPS[index - 1].id)}>
               <ArrowLeft data-icon="inline-start" />
               Back
             </Button>
-            <p className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
-              <Badge variant={entry.origin === "api" ? "default" : "secondary"}>
+            <p className="order-last flex w-full min-w-0 items-center gap-2 text-sm text-muted-foreground sm:order-none sm:w-auto sm:flex-1">
+              <Badge variant={entry.origin === "api" ? "default" : "secondary"} className={cn(look.chip, "uppercase")}>
                 {entry.origin === "api" ? "Live" : "Sample"}
               </Badge>
               <span className="truncate">{entry.label}</span>
             </p>
             {meta.next && (
-              <Button size="lg" className="ml-auto" onClick={() => goTo(step === "court" ? "swing" : STEPS[index + 1].id)}>
+              <Button
+                size="lg"
+                className={cn(look.pill, "ml-auto px-5 text-[15px]")}
+                onClick={() => goTo(step === "court" ? "swing" : STEPS[index + 1].id)}
+              >
                 {meta.next}
                 <ArrowRight data-icon="inline-end" />
               </Button>
@@ -363,9 +379,13 @@ export function GhostDemo({ requestedSwing }: { requestedSwing: string | null })
                 {compareState.status === "loading" && activeFix ? `Making the ${fixName(activeFix.id).toLowerCase()} ghost…` : ""}
               </p>
               {compareState.status === "error" && (
-                <div role="alert" className="flex flex-wrap items-center gap-3 rounded-xl border border-destructive/40 bg-card p-3 text-sm">
-                  <p className="flex-1">Couldn&apos;t make this ghost: {compareState.message}</p>
-                  <Button variant="outline" size="sm" onClick={() => setCompareAttempt((n) => n + 1)}>
+                <div
+                  role="alert"
+                  className="flex flex-wrap items-center gap-3 rounded-2xl border border-destructive/40 bg-(--panel) py-3 pr-3 pl-4 text-sm"
+                >
+                  <CircleAlert aria-hidden className="size-4 shrink-0 text-destructive" />
+                  <p className="min-w-0 flex-1">Couldn&apos;t make this ghost: {compareState.message}</p>
+                  <Button variant="outline" size="sm" className={look.pill} onClick={() => setCompareAttempt((n) => n + 1)}>
                     Try again
                   </Button>
                 </div>
@@ -381,27 +401,33 @@ export function GhostDemo({ requestedSwing }: { requestedSwing: string | null })
             view={view}
             onViewChange={setView}
             status={stageStatus}
+            legend={
+              <SceneLegend
+                ghost={
+                  showGhost && compare
+                    ? {
+                        label: compare.noCorrection
+                          ? "no correction: your swing unchanged"
+                          : `${fixName(compare.fix.id).toLowerCase()} ${formatValue(compare.fix.amount, compare.fix.unit)}`,
+                        mock: !compare.ghostIsReal,
+                        aim: compare.aim,
+                      }
+                    : null
+                }
+                balls={
+                  onCourt && compare
+                    ? { you: compare.you.ball, ghost: compare.ghost.ball, same: samePath, noCorrection: compare.noCorrection }
+                    : null
+                }
+                monoDepth={you?.source === "mono"}
+              />
+            }
           >
-            <SceneLegend
-              ghost={
-                showGhost && compare
-                  ? {
-                      label: compare.noCorrection
-                        ? "no correction: your swing unchanged"
-                        : `${fixName(compare.fix.id).toLowerCase()} ${formatValue(compare.fix.amount, compare.fix.unit)}`,
-                      mock: !compare.ghostIsReal,
-                    }
-                  : null
-              }
-              balls={
-                onCourt && compare
-                  ? { you: compare.you.ball, ghost: compare.ghost.ball, same: samePath, noCorrection: compare.noCorrection }
-                  : null
-              }
-              monoDepth={you?.source === "mono"}
-            />
             {onCourt && (
-              <p className="pointer-events-none absolute top-3 right-3 hidden max-w-[34%] text-right text-xs text-muted-foreground md:block">
+              <p
+                data-tag-avoid
+                className="pointer-events-none absolute top-5 right-5 hidden max-w-[34%] text-right text-xs leading-relaxed text-muted-foreground md:block"
+              >
                 {coordinates.system === "court"
                   ? "Court 6.40 × 9.75 m · player where physics placed them"
                   : "Court 6.40 × 9.75 m · player placed with the hitting hand over the ball's assumed start (display only)"}
@@ -421,7 +447,7 @@ export function GhostDemo({ requestedSwing }: { requestedSwing: string | null })
             />
           )}
           {showGhost && compare && (
-            <div className={cn("grid gap-3", onCourt && "lg:grid-cols-2")}>
+            <div className={cn("grid gap-4 sm:gap-5", onCourt && "lg:grid-cols-2")}>
               {onCourt && <BallChanges compare={compare} samePath={samePath} />}
               <BodyChanges
                 compare={compare}
@@ -452,59 +478,79 @@ function SwingGone({
   missing: { id: string; offline: boolean; onRetry: () => void } | null;
 }) {
   return (
-    <div role="alert" className="flex flex-col items-start gap-3 rounded-xl border bg-card p-6">
+    <StateCard
+      tone="error"
+      role="alert"
+      actions={
+        <>
+          {missing && (
+            <Button variant="outline" className={look.pill} onClick={missing.onRetry}>
+              <RotateCcw data-icon="inline-start" />
+              Check again
+            </Button>
+          )}
+          <Button variant="outline" className={look.pill} onClick={onLeave}>
+            <ArrowLeft data-icon="inline-start" />
+            {hasDemo ? "Back to the demo swing" : "Pick a swing"}
+          </Button>
+        </>
+      }
+    >
       {missing ? (
-        <p className="text-sm">
+        <p>
           Swing <span className="font-mono break-all">{missing.id}</span> isn&apos;t in the list.{" "}
           {missing.offline
             ? "The live Python service isn't answering, so only the saved samples are listed."
             : "The live Python service doesn't list it, so the link may be out of date."}
         </p>
       ) : (
-        <p className="text-sm">That swing isn&apos;t available any more.</p>
+        <p>That swing isn&apos;t available any more.</p>
       )}
-      <div className="flex flex-wrap gap-2">
-        {missing && (
-          <Button variant="outline" onClick={missing.onRetry}>
-            <RotateCcw data-icon="inline-start" />
-            Check again
-          </Button>
-        )}
-        <Button variant="outline" onClick={onLeave}>
-          <ArrowLeft data-icon="inline-start" />
-          {hasDemo ? "Back to the demo swing" : "Pick a swing"}
-        </Button>
-      </div>
-    </div>
+    </StateCard>
   );
 }
 
+/**
+ * The step bar, in the Figma "Analysis view" look: a hairline track with the current step's
+ * segment in mint and a dot over it, and the step names under it.
+ */
 function StepNav({ step, canAdvance, onGo }: { step: Step; canAdvance: boolean; onGo: (step: Step) => void }) {
   const current = STEPS.findIndex((s) => s.id === step);
+  const segment = 100 / STEPS.length;
   return (
-    <nav aria-label="Demo steps">
-      <ol className="flex flex-wrap gap-2">
+    <nav aria-label="Demo steps" className="flex flex-col gap-1.5">
+      <div aria-hidden className="relative h-[3px] rounded-full bg-border">
+        <span
+          className="absolute inset-y-0 rounded-full bg-primary motion-safe:transition-[left] motion-safe:duration-300"
+          style={{ left: `${current * segment}%`, width: `${segment}%` }}
+        />
+        <span
+          className="absolute top-1/2 size-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary motion-safe:transition-[left] motion-safe:duration-300"
+          style={{ left: `${(current + 0.5) * segment}%` }}
+        />
+      </div>
+      <ol className="grid grid-cols-4">
         {STEPS.map((s, i) => {
           const isCurrent = i === current;
           return (
-            <li key={s.id}>
+            <li key={s.id} className="flex">
               <button
                 type="button"
                 onClick={() => onGo(s.id)}
                 disabled={i > 0 && !canAdvance && !isCurrent}
                 aria-current={isCurrent ? "step" : undefined}
                 className={cn(
-                  "flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm transition-colors outline-none",
-                  "focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-40",
+                  "flex min-h-11 w-full flex-col items-center justify-center gap-0.5 rounded-xl px-1 py-1 text-center text-[13px] leading-tight transition-colors sm:flex-row sm:gap-2 sm:text-[15px]",
+                  "disabled:cursor-not-allowed disabled:opacity-40",
                   isCurrent
-                    ? "border-foreground bg-foreground text-background"
+                    ? "text-primary"
                     : i < current
-                      ? "text-foreground hover:bg-muted"
-                      : "text-muted-foreground hover:bg-muted",
+                      ? "text-foreground hover:text-primary"
+                      : "text-muted-foreground hover:text-foreground",
                 )}
               >
-                <span className="font-mono text-xs tabular-nums">{i + 1}</span>
-                {s.title}
+                <span className="font-mono text-[11px] tabular-nums sm:text-xs">{i + 1}</span>{" "}
+                <span>{s.title}</span>
               </button>
             </li>
           );

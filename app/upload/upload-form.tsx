@@ -185,10 +185,10 @@ function UploadFlow() {
   }
 
   return (
-    <form onSubmit={send} noValidate className="flex flex-col gap-6">
-      <div className="flex flex-col gap-3">
+    <form onSubmit={send} noValidate className="upload-flow">
+      <div className="upload-input-column">
         <ClipDrop file={file} dragging={dragging} disabled={busy} error={clipError} onPick={pick} onClear={clear} />
-        <ul aria-label="Filming tips" className="grid gap-x-6 gap-y-1.5 text-sm text-muted-foreground sm:grid-cols-2">
+        <ul aria-label="Filming tips" className="upload-tips grid gap-x-6 gap-y-1.5 text-sm text-muted-foreground sm:grid-cols-2">
           {TIPS.map((tip) => (
             <li key={tip} className="flex items-center gap-2">
               <span aria-hidden className="size-1 shrink-0 rounded-full bg-muted-foreground" />
@@ -211,14 +211,14 @@ function UploadFlow() {
       ) : phase.kind === "done" ? (
         <Ready href={phase.href} />
       ) : (
-        <div className="flex flex-col gap-4">
+        <div className="upload-actions flex flex-col gap-4">
           {phase.kind === "failed" && <Failure failure={phase.failure} slowdown={phase.slowdown} />}
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
             <Button
               ref={submitRef}
               type="submit"
               size="lg"
-              className="h-11 px-5 text-base"
+              className="upload-submit"
               disabled={!file}
               aria-describedby="send-hint"
             >
@@ -244,7 +244,7 @@ function Ready({ href }: { href: string }) {
   return (
     <div
       role="status"
-      className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border bg-card p-4 sm:p-5"
+      className="upload-ready flex flex-wrap items-center justify-between gap-3 rounded-2xl border bg-card p-4 sm:p-5"
       style={{ borderColor: `color-mix(in oklch, ${GHOST_COLOUR} 45%, transparent)` }}
     >
       <p className="flex items-center gap-2 text-base font-medium">
@@ -326,7 +326,7 @@ function Failure({ failure, slowdown }: { failure: ProcessFailure; slowdown: Slo
   return (
     <div
       role={copy.waiting ? "status" : "alert"}
-      className={cn("flex gap-3 rounded-2xl border bg-card p-4 sm:p-5", !copy.waiting && "border-destructive/40")}
+      className={cn("upload-feedback flex gap-3 rounded-2xl border bg-card p-4 sm:p-5", copy.waiting ? "upload-waiting" : "upload-error border-destructive/40")}
     >
       <Icon aria-hidden className={cn("mt-0.5 size-5 shrink-0", copy.waiting ? "text-muted-foreground" : "text-destructive")} />
       <div className="flex min-w-0 flex-col gap-1.5">
