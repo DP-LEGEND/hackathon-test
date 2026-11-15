@@ -64,6 +64,11 @@ WRIST_MOCK = "mock wrist-sensor swings"  # synthetic data: replace with real swi
 # FH 0.95 deg) and contact 25 ms earlier makes both strokes overlap: retune on real hits.
 WRIST_SESSION_BH = "ESTIMATE, tuned on one session (n=29 shadow backhands: 15 good, 14 rolled)"
 WRIST_SESSION_FH = "ESTIMATE, tuned on one session (n=21 shadow forehands: 10 good, 11 rolled)"
+# The MOCK rule, for synthetic sessions only (wrist.synth): what python -m wrist.tune picks on
+# the mock run, 5 normal (16.5 deg) vs 5 rolled (62.0 deg), with the gyro-integral roll
+# (feat/wrist-shadow). Not used on real swings: the synthetic forearm rolls far less.
+MOCK_ROLLED_WRIST: dict[str, Any] = {"measurement": "forearm_roll_deg", "threshold": 39.2,
+                                     "severe_at": 62.0, "target": 16.5, "source": WRIST_MOCK}
 
 # ---- Tune here ---------------------------------------------------------------------
 THRESHOLDS: dict[str, dict[str, dict[str, Any]]] = {
@@ -97,7 +102,7 @@ THRESHOLDS: dict[str, dict[str, dict[str, Any]]] = {
         # Wrist sensor only (coach/wrist_sensor.py): size of the forearm roll -150..+100 ms
         # around contact; skipped when the swing has no sensor data. Real shadow forehands:
         # good 119.8-144.8 deg (median 136.75, target 136.8), rolled 146.7-165.0 (median 158.8).
-        # Was the MOCK 39.3 / 62.1 / 16.5 rule; real forearms roll far more than the mock.
+        # Replaces MOCK_ROLLED_WRIST (above); real forearms roll far more than the mock.
         "rolled_wrist": {"measurement": "forearm_roll_deg", "threshold": 145.75,
                          "severe_at": 158.8, "target": 136.8, "source": WRIST_SESSION_FH},
     },

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from coach.faults import MEASUREMENTS, THRESHOLDS, WRIST_MOCK, WRIST_SENSOR, severity
+from coach.faults import MEASUREMENTS, MOCK_ROLLED_WRIST, THRESHOLDS, WRIST_MOCK, WRIST_SENSOR, severity
 from wrist.tune import read_labels, separation, tune
 from wrist.tune import _verdict as verdict
 
@@ -78,7 +78,7 @@ def test_ties_keep_roll_change_the_primary_number() -> None:
 
 
 def test_mock_session_still_sets_a_mock_rule_and_faults_no_longer_uses_it(session) -> None:
-    """The mock run (seed 0) still sets a rule, labelled MOCK (the old 39.3 / 62.1 / 16.5).
+    """The mock run (seed 0) sets exactly faults.MOCK_ROLLED_WRIST, labelled MOCK.
 
     faults.py's rolled_wrist rules now come from real swings (coach/tests/test_rolled_wrist_real.py),
     so none of them may be the mock rule or carry the mock source.
@@ -86,6 +86,7 @@ def test_mock_session_still_sets_a_mock_rule_and_faults_no_longer_uses_it(sessio
     labels = {sid: t["label"] for sid, t in session.truth["swings"].items()}
     v = tune(session.metrics, labels)["verdict"]
     assert v["action"] == "set" and v["rule"]["source"] == WRIST_MOCK and v["honest"].startswith("MOCK")
+    assert v["rule"] == MOCK_ROLLED_WRIST
     for stroke in THRESHOLDS:
         committed = THRESHOLDS[stroke]["rolled_wrist"]
         assert committed != v["rule"] and committed["source"] != WRIST_MOCK

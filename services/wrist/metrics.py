@@ -4,15 +4,21 @@ Code measures, Claude explains: these are the only wrist-roll numbers the coach 
 Contact = the sensor's own impact spike (sync.py), so sync error doesn't move any number.
 A swing with no impact (a shadow swing) is timed from the double tap instead:
 contact_source "double tap", impact_s and impact null, and the sync error does move it.
+In a shadow SESSION (shadow.py: no ball, no video contact marks) contact is an ESTIMATE,
+the swing's fastest forearm turn: contact_source "gyro peak", impact_s and impact null.
 
 Per swing, in the window -150 ms .. +100 ms around contact:
 - roll_change_deg: forearm ROLL (rotation about the forearm's long axis) over the
-  window, from the orientation (see below). It's the twist of the phone's rotation
-  between the window's ends, about the forearm axis (swing-twist decomposition), so the
-  big swing about the elbow and shoulder doesn't leak in. Signed (+ = right-hand turn
-  about the axis); the rolled_wrist fault uses its size.
-- roll_change_gyro_deg: the same from integrating the gyro about the axis, a cross-check.
-  On the integrated-gyro fallback the estimated still bias is taken off first.
+  window: the gyro integrated about the forearm axis (on the integrated-gyro fallback,
+  with the estimated still bias taken off first). Signed (+ = right-hand turn about the
+  axis); the rolled_wrist fault uses its size. roll_change_gyro_deg is the same number,
+  kept for older readers.
+- roll_change_twist_deg: a cross-check only, the twist of the orientation's rotation
+  between the window's ends about the forearm axis (swing-twist decomposition). It is
+  NOT the roll: the forearm also turns 150-300 deg about other axes in the window, where
+  the twist is ill-conditioned. On the first real recording (a shadow session, 50 swings)
+  it scattered over +-180 deg (SD 86-156 deg per block) while the gyro integral's SD was
+  5-10 deg; the mock only agreed because its quaternions are exact.
 - peak_roll_rate_dps: the gyro about the forearm axis at its fastest (signed).
 - peak_angular_speed_dps: the forearm's fastest total turn rate (|gyro|), as seen by the
   phone on the wrist strap. Not used by the fault; context for the coach.
@@ -138,8 +144,8 @@ def axis_hint(rec: Recording, impacts_s: list[float], axis: str) -> dict[str, An
     return {"chosen": axis, "dominant_accel_axis": dominant, "agrees": dominant == axis.strip().lstrip("+-").lower()}
 
 
-ROLL_METHODS = {"orientation": "twist of the phone's orientation over the window",
-                "gyro": "gyro integrated about the forearm axis (orientation from the integrated gyro)"}
+ROLL_METHODS = {"orientation": "twist of the orientation over the window (comparison only)",
+                "gyro": "gyro integrated about the forearm axis"}
 
 
 def _axial_deg(rec: Recording, axis: np.ndarray, a: float, b: float,
@@ -151,24 +157,22 @@ def _axial_deg(rec: Recording, axis: np.ndarray, a: float, b: float,
 
 
 def swing_metrics(rec: Recording, slerp: Slerp, impact_s: float, axis: np.ndarray,
-                  roll_from: str = "orientation", gyro_bias: Optional[np.ndarray] = None) -> Optional[dict[str, Any]]:
+                  roll_from: str = "gyro", gyro_bias: Optional[np.ndarray] = None) -> Optional[dict[str, Any]]:
     """The wrist numbers for one swing, or None if the window runs off the recording.
 
-    roll_from: "orientation" (the twist, the phone's own orientation) or "gyro" (the axial
-    gyro integral, used with the integrated-gyro fallback: orient.py says why).
+    roll_from: "gyro" (the axial gyro integral: the default, and what wrist_report uses) or
+    "orientation" (the twist, for comparison only: the module doc says why it isn't used).
     gyro_bias: the still bias the fallback removed (choose_orientation), taken off the gyro
-    before the axial integral, so roll_change_gyro_deg (and roll_change_deg on the fallback)
-    don't drift by bias x window. None or zero = the raw gyro (the phone path estimates none).
+    before the axial integral, so the roll doesn't drift by bias x window. None or zero =
+    the raw gyro (the phone path estimates none).
     """
     t0, t1 = impact_s + WINDOW_MS[0] / 1000, impact_s + WINDOW_MS[1] / 1000
     if t0 < rec.t[0] or t1 > rec.t[-1]:
         return None
     roll_gyro = _axial_deg(rec, axis, t0, t1, gyro_bias)
-    if roll_from == "gyro":
-        roll = roll_gyro
-    else:
-        ends = slerp([t0, t1])
-        roll = float(twist_deg(ends[0].inv() * ends[1], axis)[0])
+    ends = slerp([t0, t1])
+    roll_twist = float(twist_deg(ends[0].inv() * ends[1], axis)[0])
+    roll = roll_gyro if roll_from == "gyro" else roll_twist
 
     rate_all = rec.gyro @ axis  # rad/s about the forearm
     mask = (rec.t >= t0) & (rec.t <= t1)
@@ -180,6 +184,7 @@ def swing_metrics(rec: Recording, slerp: Slerp, impact_s: float, axis: np.ndarra
         "roll_change_deg": round(roll, 1),
         "roll_change_abs_deg": round(abs(roll), 1),
         "roll_change_gyro_deg": round(roll_gyro, 1),
+        "roll_change_twist_deg": round(roll_twist, 1),
         "roll_method": ROLL_METHODS[roll_from],
         "peak_roll_rate_dps": round(float(rate[i])),
         "peak_roll_rate_abs_dps": round(abs(float(rate[i]))),
@@ -189,7 +194,7 @@ def swing_metrics(rec: Recording, slerp: Slerp, impact_s: float, axis: np.ndarra
 
 
 def roll_series(rec: Recording, slerp: Slerp, impact_s: float, axis: np.ndarray,
-                roll_from: str = "orientation", gyro_bias: Optional[np.ndarray] = None) -> dict[str, Any]:
+                roll_from: str = "gyro", gyro_bias: Optional[np.ndarray] = None) -> dict[str, Any]:
     """Forearm roll every 10 ms from -300 to +200 ms, zeroed at the window start (-150 ms).
 
     So the value at +100 ms is exactly roll_change_deg: the graph ends the window on the
@@ -234,7 +239,9 @@ def wrist_report(rec: Recording, sync: dict[str, Any], axis: str = "y",
 
     Every swing the video has gets an entry, in contact order. Contact is the sensor's
     impact spike ("contact_source": "impact spike"), or for a swing with no impact the
-    double tap's prediction ("double tap": impact_s, impact and align_error_ms are null).
+    double tap's prediction ("double tap": impact_s, impact and align_error_ms are null),
+    or in a shadow session the swing's fastest forearm turn ("gyro peak", an ESTIMATE:
+    sync["alignment"]["gyro_peak"] from shadow.shadow_sync, same nulls).
     "usable": false (with skip_reason) when its impact isn't trusted (alignment off,
     unpaired) or the window runs off the recording; the coach then skips rolled_wrist for
     it instead of guessing.
@@ -245,7 +252,7 @@ def wrist_report(rec: Recording, sync: dict[str, Any], axis: str = "y",
     """
     rots, orient, gyro_bias = choose_orientation(rec, sync.get("taps_s"))
     conv = gyro_convention(rec)
-    roll_from = "orientation" if orient["source"] == "phone" else "gyro"
+    roll_from = "gyro"  # on every path: the twist is ill-conditioned on real swings (module doc)
     slerp = Slerp(rec.t, rots)
     ax = axis_vector(axis)
     alignment = sync["alignment"]
@@ -265,6 +272,9 @@ def wrist_report(rec: Recording, sync: dict[str, Any], axis: str = "y",
     for tp in alignment.get("tap_only", []):
         base = {"usable": False, "mock": rec.mock, "contact_source": "double tap", "align_error_ms": None}
         todo.append((tp["contact_video_s"], tp["swing"], tp["contact_s"], False, base))
+    for gp in alignment.get("gyro_peak", []):  # shadow session (shadow.py): sensor time is the only clock
+        base = {"usable": False, "mock": rec.mock, "contact_source": "gyro peak", "align_error_ms": None}
+        todo.append((gp["contact_s"], gp["swing"], gp["contact_s"], False, base))
 
     for _, sid, contact, has_impact, base in sorted(todo, key=lambda x: x[0]):
         if contact is None:
@@ -311,6 +321,7 @@ def wrist_report(rec: Recording, sync: dict[str, Any], axis: str = "y",
                   "skip_reason": "no impact paired with this swing"}
 
     impacts = [p["impact_s"] for p in alignment["pairs"] if p["ok"]]
+    impacts += [gp["contact_s"] for gp in alignment.get("gyro_peak", [])]  # shadow swings pull along the forearm too
     hint = axis_hint(rec, impacts, axis)
     warnings = list(sync.get("warnings", []))
     if orient["source"] != "phone":
@@ -342,8 +353,9 @@ def wrist_report(rec: Recording, sync: dict[str, Any], axis: str = "y",
     series_json = {
         "mock": rec.mock,
         "about": ("Forearm roll (deg) from the wrist sensor, every 10 ms. t_ms is ms from contact "
-                  "(the sensor's impact spike, or the double tap's prediction when contact_source is "
-                  "'double tap'); roll_deg is zero at the window start (-150 ms), so "
+                  "(the sensor's impact spike, the double tap's prediction when contact_source is "
+                  "'double tap', or the swing's fastest forearm turn when it is 'gyro peak', an "
+                  "ESTIMATE for a shadow swing); roll_deg is zero at the window start (-150 ms), so "
                   "its value at +100 ms is roll_change_deg, the number the coach quotes. "
                   "angular_speed_dps is the forearm's turn rate on angular_speed_t_ms (ms from contact); "
                   "tempo marks its events. tempo, impact, racket_speed_sensor and forearm_fill are "
