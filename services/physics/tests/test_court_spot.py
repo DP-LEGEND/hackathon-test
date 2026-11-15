@@ -183,3 +183,22 @@ def test_explain_quotes_only_numbers_compare_measured_or_solved(forehand, fix, a
     for label in ("PREDICTED", "MEASURED", "ASSUMED"):
         assert label in text
     assert "down the right wall" in text  # every ghost aims a straight drive
+
+
+def test_the_demo_numbers_the_docs_quote(forehand):
+    # docs/pitch.md, docs/demo-runbook.md, docs/devpost*.md and scripts/demo_smoke.py quote these:
+    # the hero forehand from the MEASURED spot, aiming the player's stated straight drive.
+    spot = json.loads((SPOTS / "7178110a0b06-swing-0027.json").read_text())
+    r = compare(forehand, "turn_shoulders_less", 52.6, fps_real=120, side="forehand", intent="straight drive",
+                spot=spot, tracked=_result())
+    d = r["delta"]["ball"]
+    assert (d["speedKmh"]["you"], d["speedKmh"]["ghost"]) == (133.2, 119.1)
+    assert (d["frontWallHeightM"]["you"], d["frontWallHeightM"]["ghost"]) == (1.45, 1.44)
+    assert (d["landingDepthM"]["you"], d["landingDepthM"]["ghost"]) == (9.69, 8.84)
+    launch = r["assumptions"]["launch"]
+    assert (launch["you"]["azimuth"]["value"], launch["ghost"]["azimuth"]["value"]) == (-13.5, 0.0)  # cross-court -> straight
+    v = r["validation"]
+    assert (v["predicted"], v["tracked"], v["error_m"]) == (1.45, 1.17, -0.28)
+    # And the saved demo file is exactly this run.
+    saved = json.loads((ROOT / "public/swings/compare_fh_over_rotation_turn_shoulders_less.json").read_text())
+    assert saved["delta"] == r["delta"] and saved["validation"] == v and saved["fix"] == r["fix"]

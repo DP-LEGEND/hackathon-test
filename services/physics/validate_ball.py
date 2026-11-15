@@ -788,10 +788,10 @@ def table(results: list[dict]) -> str:
 def spot_check(entry: dict) -> dict | None:
     """Before and after measuring where the player hit from, next to the tracked ball.
 
-    before: your PREDICTED ball as the saved compare file has it (the ASSUMED drive spot).
-    after: the same compare() run (same fix, amount, rate, hand, stroke and ASSUMED launch angle)
-    with the MEASURED spot from validation/spots/<swing>.json. Nothing is fitted to the ball:
-    the spot comes from the court lines and the feet. None when the swing has no measured spot.
+    Two compare() runs with the saved compare file's settings (fix, amount, rate, hand, stroke and
+    ASSUMED launch angle): before with the ASSUMED drive spot, after with the MEASURED spot from
+    validation/spots/<swing>.json. Nothing is fitted to the ball: the spot comes from the court
+    lines and the feet. None when the swing has no measured spot.
     """
     path = SPOTS_DIR / f"{entry['swing']}.json"
     if not path.exists():
@@ -802,13 +802,16 @@ def spot_check(entry: dict) -> dict | None:
     swing = json.loads((REPO / entry["swingFile"]).read_text())
     result = json.loads((RESULTS_DIR / f"{entry['swing']}.json").read_text())
     a = saved["assumptions"]
-    after = compare(swing, saved["fix"]["id"], saved["fix"]["amount"], saved["fpsReal"], saved["hand"],
-                    a["launchElevationDeg"], side=a["stroke"]["value"], intent=None,
-                    spot=json.loads(path.read_text()))
-    before, now = predicted_from_compare(saved), predicted_from_compare(after)
+
+    def run(spot):
+        return predicted_from_compare(compare(
+            swing, saved["fix"]["id"], saved["fix"]["amount"], saved["fpsReal"], saved["hand"],
+            a["launchElevationDeg"], side=a["stroke"]["value"], intent=None, spot=spot))
+
+    spot = json.loads(path.read_text())
+    before, now = run(None), run(spot)
     return {"swing": entry["swing"], "stroke": entry["stroke"], "method": result["method"],
-            "tracked": result["tracked"], "before": before, "after": now,
-            "spot": after["assumptions"]["anchor"],
+            "tracked": result["tracked"], "before": before, "after": now, "spot": spot,
             "errorBefore": errors(result["tracked"], before), "errorAfter": errors(result["tracked"], now)}
 
 

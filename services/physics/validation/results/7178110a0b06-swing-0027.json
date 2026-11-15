@@ -305,9 +305,9 @@
  "predicted": {
   "label": "PREDICTED",
   "contactPointM": [
-   5.4,
+   5.457,
    0.6,
-   7.0
+   4.217
   ],
   "speedKmh": 133.2,
   "azimuthDeg": -13.5,
@@ -315,19 +315,19 @@
   "elevationDeg": 12.0,
   "elevationLabel": "ASSUMED",
   "frontWall": {
-   "xM": 3.719,
-   "heightM": 1.92,
-   "tS": 0.211
+   "xM": 4.445,
+   "heightM": 1.448,
+   "tS": 0.124
   }
  },
  "error": {
   "directionDeg": -7.7,
-  "frontWallHeightM": -0.75,
-  "frontWallXM": 0.28,
+  "frontWallHeightM": -0.28,
+  "frontWallXM": -0.45,
   "speedKmh": 2.8,
   "elevationDeg": -4.4,
-  "timeToWallS": -0.078,
-  "contactSpotM": 2.54
+  "timeToWallS": 0.009,
+  "contactSpotM": 0.38
  },
  "debugImage": "data/processed/validation/7178110a0b06-swing-0027.jpg"
 }

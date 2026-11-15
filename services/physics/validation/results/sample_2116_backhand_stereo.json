@@ -293,9 +293,9 @@
  "predicted": {
   "label": "PREDICTED",
   "contactPointM": [
-   2.0,
+   1.572,
    0.611,
-   7.0
+   4.417
   ],
   "speedKmh": 130.4,
   "azimuthDeg": 0.0,
@@ -303,19 +303,19 @@
   "elevationDeg": 3.0,
   "elevationLabel": "ASSUMED",
   "frontWall": {
-   "xM": 2.0,
-   "heightM": 0.78,
-   "tS": 0.205
+   "xM": 1.572,
+   "heightM": 0.766,
+   "tS": 0.126
   }
  },
  "error": {
   "directionDeg": 23.2,
-  "frontWallHeightM": -0.09,
-  "frontWallXM": 1.12,
+  "frontWallHeightM": -0.07,
+  "frontWallXM": 1.54,
   "speedKmh": -2.0,
   "elevationDeg": -0.8,
-  "timeToWallS": -0.051,
-  "contactSpotM": 2.37
+  "timeToWallS": 0.028,
+  "contactSpotM": 0.68
  },
  "debugImage": "data/processed/validation/sample_2116_backhand_stereo.jpg"
 }

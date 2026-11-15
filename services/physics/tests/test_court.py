@@ -309,7 +309,8 @@ def test_hero_ghost_keeps_your_line_because_its_contact_is_yours(forehand):
     assert launch["ghost"]["azimuth"]["racketLineTurnDeg"] == 0.0
     assert launch["ghost"]["azimuth"]["value"] == launch["you"]["azimuth"]["value"] == -13.5
     assert _front_wall_x(r["ghost"]["ball"]) == _front_wall_x(r["you"]["ball"])  # one line, less pace
-    # The numbers docs/demo-runbook.md, docs/pitch.md and scripts/demo_smoke.py quote.
+    # From the ASSUMED drive spot (no court lines, as on a live upload). The demo's numbers, from
+    # the MEASURED spot, are pinned in test_court_spot.py.
     d = r["delta"]["ball"]
     assert (d["speedKmh"]["you"], d["speedKmh"]["ghost"]) == (133.2, 119.1)
     assert (d["frontWallHeightM"]["you"], d["frontWallHeightM"]["ghost"]) == (1.92, 1.87)
@@ -478,7 +479,8 @@ def test_hero_aiming_a_straight_drive_holds_the_smallest_turn_that_sends_it_stra
     # You are untouched; the coil still drops by exactly the coach's 52.6 deg.
     assert r["you"] == plain["you"] and a["launch"]["you"] == plain["assumptions"]["launch"]["you"]
     assert (r["you"]["metrics"]["shoulder_turn_deg"], r["ghost"]["metrics"]["shoulder_turn_deg"]) == (137.6, 85.0)
-    # The numbers docs/demo-runbook.md, docs/pitch.md and scripts/demo_smoke.py quote.
+    # From the ASSUMED drive spot (no court lines, as on a live upload). The demo's numbers, from
+    # the MEASURED spot, are pinned in test_court_spot.py.
     d = r["delta"]["ball"]
     assert (d["speedKmh"]["you"], d["speedKmh"]["ghost"]) == (133.2, 119.1)
     assert (d["frontWallHeightM"]["you"], d["frontWallHeightM"]["ghost"]) == (1.92, 1.86)

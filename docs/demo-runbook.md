@@ -226,8 +226,8 @@ Browser tab 1 is http://localhost:3000/ghost, opened directly: `/` is now a land
 |---|---|---|
 | The top card, **"Forehand · over-rotation (acted and flagged) · iPhone 120 fps (IMG_2115 16:55)"** (badges *Saved sample*, *Demo swing*) | **The coach's call:** *"Over-rotation: hips turn 157°"*, cue *"Turn a little less and stay balanced through the ball."* | Code measured the swing; the coach names one fix and only quotes numbers the code measured. |
 | **Show the ghost** | **Your ghost makes the fix.** Fix *Turn shoulders less*, badge *Coach's pick*. *What the fix changes:* Shoulder turn 137.6° → 85°. It's already playing: click **0.25× slow-mo** only | Orange is the swing they played, cyan is the same body with one fix. |
-| **Show the court** | **Where the ball goes:** two paths, each labelled *PREDICTED · … · in* | These are **PREDICTED**; there's no real ball. Launch angle is **assumed, 12° for a forehand**. Checked by eye against the video, the real ball hit about 1.8 m. We set the 12° from this clip, so it's a sanity check, not a test. |
-| Scroll down with the pointer **beside** the replay, not over it (scrolling over the 3D view zooms it) | The **Ball** panel (*PREDICTED*): ball speed 133.2 → 119.1 km/h, **front wall height 1.92 → 1.86 m** | *(Read the front wall heights from this panel.)* |
+| **Show the court** | **Where the ball goes:** two paths, each labelled *PREDICTED · … · in*: orange goes cross-court, cyan goes straight down the right wall | These are **PREDICTED**; there's no real ball on screen. Launch angle is **assumed, 12° for a forehand**. Theirs goes cross-court; the ghost's goes straight down the wall. In the real video, the tracked ball hit the front wall at 1.17 m; Ghost predicted 1.45 m from body motion alone (0.28 m off, launch angle assumed). We set the 12° from this clip, so it's a check, not a test. |
+| Scroll down with the pointer **beside** the replay, not over it (scrolling over the 3D view zooms it) | The **Ball** panel (*PREDICTED*): ball speed 133.2 → 119.1 km/h, **front wall height 1.45 → 1.44 m** | *(Read the front wall heights from this panel.)* |
 | Scroll back up to the top, again with the pointer beside the replay | The step bar and **Try another swing** | |
 
 ### Beat 2: backhand, nothing to fix (1:16–1:34)
@@ -284,14 +284,15 @@ All of these come from the saved samples in `public/swings/` and are the same on
 | Ghost fix (Coach's pick) | Turn shoulders less, 52.6° | None: the coach flagged nothing, so beat 2 stops at the coach's call |
 | Body change | Shoulder turn 137.6° → 85° | Not shown |
 | Ball speed (PREDICTED) | 133.2 → 119.1 km/h | Not shown |
-| **Front wall height (PREDICTED)** | **1.92 → 1.86 m** | 0.78 m, not shown in beat 2 |
-| Lands from front wall | 8.97 → 8.04 m | Not shown |
+| **Ball direction (PREDICTED)** | **Cross-court (13.5° across) → straight down the right wall** | Straight (aim ASSUMED), not shown |
+| **Front wall height (PREDICTED)** | **1.45 → 1.44 m** | 0.77 m, not shown in beat 2 |
+| Lands from front wall | 9.69 → 8.84 m | Not shown |
 | Racket speed (ESTIMATE) | 28.3 → 25.3 m/s | Not shown |
 | **Launch angle (ASSUMED)** | **12°**, not on screen | 3°, not said in beat 2 |
 | Court | Two paths | Not shown |
-| Video check (checked by eye, not on screen) | Real ball hit about 1.8 m high | Real ball hit 0.5–0.8 m high, not said in beat 2 |
+| Real-ball check (tracked from the real video, not on screen) | The tracked ball hit the front wall at 1.17 m; Ghost predicted 1.45 m from body motion alone (0.28 m off, launch angle assumed) | Tracked 0.69 m vs 0.77 m predicted; the real ball went 23° cross-court where the aim is assumed straight. Not said in beat 2 |
 
-The launch angle isn't shown as a number. The court panel's footnote says the launch angle and the spot on court are assumed, so say the angle out loud and call it assumed.
+The launch angle isn't shown as a number. The court panel's footnote says the launch angle is assumed and the spot on court is measured from the video, so say the angle out loud and call it assumed.
 
 ## If X breaks, do Y
 
@@ -312,7 +313,7 @@ The launch angle isn't shown as a number. The court panel's footnote says the la
 
 - Only say numbers that are on screen. There are two named exceptions:
   - the **launch angle** (12° forehand, 3° backhand), which you always call **assumed**
-  - the **video-check heights** (about 1.8 m forehand, 0.5–0.8 m backhand), which you always say were **checked by eye against the video**
+  - the **real-ball check** on the forehand (the tracked ball hit the front wall at 1.17 m; Ghost predicted 1.45 m from body motion alone, 0.28 m off, launch angle assumed), which you always say was **tracked from the real video**
 - Every ball path is **PREDICTED**. Say the word the first time a path appears.
 - The wrist sensor: show terminal tab 3 only when it passes the checks in *Tab 3*, and call its numbers an **ESTIMATE**. Never show *MOCK DATA* on stage; if you mention the mock tests, say **mock**.
 - If a judge asks about the ghost's aim, the answer is: "We aimed it at the straight drive the player said he meant." That's #73's behaviour: until #73 merges, the ghost's ball direction comes from its own wrist motion, so don't give this answer before then.

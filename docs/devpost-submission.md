@@ -9,8 +9,8 @@ docs/devpost.md is older than main, this file follows main:
 Before pasting:
 - Figma: set the file's share link to "anyone with the link can view" and open it in a private window.
 - If #73 (ghost direction), #74 (real wrist threshold), #81 (Adaption) or #83 (Figma case study)
-  merge before 11:00, recheck the lines that mention their topics. #73 changes the ghost's front
-  wall from 1.88 m to 1.86 m in screenshot 3.
+  merge before 11:00, recheck the lines that mention their topics. Screenshot 3's numbers and the
+  real-ball check need #73 and #86 (measured hit spot, straight-drive ghosts) merged.
 Delete this comment before pasting.
 -->
 
@@ -81,7 +81,7 @@ We wanted to show a player the swing they haven't played yet.
 
 - **It works end to end.** A phone clip becomes a 3D skeleton, the coach's call, a ghost making the fix, and two PREDICTED ball paths, all in the browser.
 - **3D from two ordinary cameras with no calibration board**, synced on the sound of the hit.
-- **A sanity check against video.** On two real swings, the predicted front-wall height was within about 0.1–0.3 m of where the ball hit in the video. That's a check on two swings, not validation: the launch angle is assumed, and we set it from those same clips.
+- **A check against the real ball.** We tracked the ball in two demo clips: the tracked ball hit the front wall at 1.17 m; Ghost predicted 1.45 m from body motion alone (0.28 m off, launch angle assumed). That's a check on two swings, not validation: the launch angle is assumed, and we set it from those same clips.
 - **A coach that never guesses.** It measures in code, skips any fault that would rest on a joint the camera couldn't see, and labels every number with its source.
 - **A language model that can't invent a number.** Claude only words the fix, and code checks every sentence before it's spoken.
 - **A real design system.** Our Figma frames drove three restyle PRs, and the data, the coach's wording and the PREDICTED labels didn't change.
@@ -122,6 +122,6 @@ Five, from the running app in a 1440 × 900 window. Keep every PREDICTED, SAMPLE
 |---|---|---|---|
 | 1 | `/ghost` | Forehand · over-rotation, **Coach's call** step | The step bar on step 2, the orange skeleton, and the coach card: *"Over-rotation: hips turn 157°"* and the cyan cue *"Turn a little less and stay balanced through the ball."* |
 | 2 | `/ghost` | Same swing, **The ghost** step: click **Side by side** (it opens in Overlay), then scroll so the 3D view and the *What the fix changes* card both show | Orange swing and cyan ghost apart, the fix *Turn shoulders less 52.6°* with the *Coach's pick* badge, and *What the fix changes*: shoulder turn 137.6° → 85° |
-| 3 | `/ghost` | Same swing, **On court** step, scrolled so the 3D court and the Ball card both show | Both PREDICTED ball paths with their tags, the ghost legend, and the Ball card (PREDICTED badge): 133.2 → 119.1 km/h, front wall 1.92 → 1.88 m |
+| 3 | `/ghost` | Same swing, **On court** step, scrolled so the 3D court and the Ball card both show | Both PREDICTED ball paths with their tags (orange goes cross-court, cyan goes straight down the right wall), the ghost legend, and the Ball card (PREDICTED badge): 133.2 → 119.1 km/h, front wall 1.45 → 1.44 m |
 | 4 | `/ghost?swing=<id>` after an upload | A **Live** swing you uploaded, at the coach's call, with the coach naming a fault | The **Hear the coach** button and *worded by Claude*, which needs both keys and the Mac online. Without the button, capture `/upload` with a clip chosen instead |
 | 5 | `/` | Top of the landing page | The GHOST landing page built from the Figma frames, with the Home, Demo and Try your swing navigation |
