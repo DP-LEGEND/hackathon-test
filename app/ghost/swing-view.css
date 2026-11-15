@@ -1,0 +1,106 @@
+/*
+ * The swing view (ghost-demo.tsx and everything inside it) in the GHOST look: #71 and the Figma
+ * file's Results frames (21:651, 21:723). Inside GhostShell (/demo) it uses the shell's tokens and
+ * fonts as they are. /ghost has no shell, so there the view brings the same palette (the values
+ * of .ghost-theme in components/ghost/ghost.css) and page.tsx loads the same two fonts.
+ * Class names are prefixed because the installed CSS loader treats all CSS as global.
+ */
+.ghost-swing:not(.ghost-theme .ghost-swing) {
+  --background: #0b0f12;
+  --foreground: #f0f5f4;
+  --card: #151c22;
+  --card-foreground: #f0f5f4;
+  --popover: #151c22;
+  --popover-foreground: #f0f5f4;
+  --primary: #64f4c0;
+  --primary-foreground: #0b0f12;
+  --secondary: #202b32;
+  --secondary-foreground: #f0f5f4;
+  --muted: #202b32;
+  --muted-foreground: #94a3ab;
+  --accent: #15231f;
+  --accent-foreground: #64f4c0;
+  --border: #29343d;
+  --input: #29343d;
+  --ring: #64f4c0;
+  --panel: #10191e;
+  --media: #0b1419;
+  --destructive: #ffb4b4;
+  color-scheme: dark;
+}
+
+.ghost-swing {
+  color: var(--foreground);
+  font-family: var(--ghost-body), Arial, sans-serif;
+}
+
+/* Manrope, as the #71 headings. Two classes deep so the shell's h2/h3 rule doesn't set the weight. */
+.ghost-swing .ghost-swing-display {
+  font-family: var(--ghost-heading), Arial, sans-serif;
+  font-weight: 800;
+}
+.ghost-swing .ghost-swing-title {
+  font-family: var(--ghost-heading), Arial, sans-serif;
+  font-weight: 700;
+}
+
+/* Keyboard focus is always visible, in the shell's mint, on /ghost as well as /demo. */
+.ghost-swing :is(a, button, input, select, summary, [tabindex]:not([tabindex="-1"])):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+}
+.ghost-swing [data-slot="button"] {
+  min-height: 44px;
+}
+
+/* The replay scrubber: a 3px track filled to the thumb (--fill), a 16px mint thumb (THUMB_PX). */
+.ghost-swing .ghost-swing-range {
+  -webkit-appearance: none;
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: 32px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.ghost-swing .ghost-swing-range:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.ghost-swing .ghost-swing-range::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 3px;
+  background: linear-gradient(to right, var(--primary) var(--fill, 0%), var(--border) var(--fill, 0%));
+}
+.ghost-swing .ghost-swing-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  margin-top: -6.5px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--primary);
+  box-shadow: 0 0 0 3px var(--media);
+}
+.ghost-swing .ghost-swing-range::-moz-range-track {
+  height: 3px;
+  border-radius: 3px;
+  background: var(--border);
+}
+.ghost-swing .ghost-swing-range::-moz-range-progress {
+  height: 3px;
+  border-radius: 3px;
+  background: var(--primary);
+}
+.ghost-swing .ghost-swing-range::-moz-range-thumb {
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--primary);
+  box-shadow: 0 0 0 3px var(--media);
+}
