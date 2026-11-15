@@ -11,6 +11,8 @@ there are mock (the mock run gives 62.1° vs 16.5° medians). Say them only from
 
 # Ghost: 3-minute pitch
 
+**Rehearsal note:** If over 3:00, cut the forehand video-check sentence first.
+
 **PRESENTER** speaks. **OPERATOR** clicks. Every click is below. The full set-up, checks and fallbacks are in [docs/demo-runbook.md](demo-runbook.md). Rehearse with a stopwatch.
 
 | Section | Time | Length |
