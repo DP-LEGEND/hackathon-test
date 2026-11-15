@@ -1,9 +1,12 @@
 // Sends one clip to Dev's pipeline: POST /api/process, which the same-origin catch-all proxy
 // (app/api/[...path]/route.ts) forwards to POST /process in services/pipeline/server.py.
-// XMLHttpRequest rather than fetch, so the page can show real upload progress. The service
-// answers once, after pose, coach and ghost are all saved; it doesn't report steps in between.
+// With a second camera angle or a wrist sensor CSV, the same answer comes from
+// POST /api/process/multi instead (fields video_a, video_b, sensor_csv, slowdown_a, slowdown_b,
+// offset_b_s). XMLHttpRequest rather than fetch, so the page can show real upload progress. The
+// service answers once, after pose, coach and ghost are all saved; it doesn't report steps in between.
 
 const PROCESS_URL = "/api/process";
+const MULTI_URL = "/api/process/multi";
 
 /** Mirrors MAX_UPLOAD_BYTES in services/pipeline/server.py, so an oversized clip fails before uploading. */
 export const MAX_CLIP_BYTES = 250 * 1024 * 1024;
@@ -28,6 +31,25 @@ export type ClipSettings = { hand: Hand; stroke: Stroke; slowdown: Slowdown };
 /** Auto everywhere: the service works out hand, stroke and timing itself. */
 export const AUTO_SETTINGS: ClipSettings = { hand: "auto", stroke: "auto", slowdown: "auto" };
 
+/** Optional inputs beside the main clip. Either file switches the upload to /process/multi. */
+export type ExtraInputs = {
+  /** A second camera angle of the same swing, for measured depth. */
+  secondClip: File | null;
+  /** The wrist sensor's export. */
+  sensorCsv: File | null;
+  /** "Second clip offset (s)" as typed; empty leaves offset_b_s out. */
+  offset: string;
+};
+
+export const NO_EXTRAS: ExtraInputs = { secondClip: null, sensorCsv: null, offset: "" };
+
+export function usesMulti(extras: ExtraInputs): boolean {
+  return extras.secondClip !== null || extras.sensorCsv !== null;
+}
+
+/** For the sensor file picker. */
+export const SENSOR_ACCEPT = ".csv,text/csv";
+
 export type ProcessFailure =
   /** 429: the service processes one clip at a time. */
   | { kind: "busy" }
@@ -39,13 +61,16 @@ export type ProcessFailure =
   | { kind: "proxy-timeout" }
   /** 404/405: the service that answered has no upload route (it predates PR #41). */
   | { kind: "no-route" }
+  /** 404/405 from /process/multi: the service can't take a second angle or sensor file yet. */
+  | { kind: "no-multi-route" }
   /** Anything else, e.g. 422 "No fully tracked swing found…" or 503 "pose model unavailable". */
   | { kind: "failed"; status: number; message: string }
   /** No answer at all from the Next.js server. */
   | { kind: "network" };
 
 export type ProcessOutcome =
-  | { ok: true; swingId: string }
+  /** `warnings`: what the service flagged about this upload, as it worded them (often none). */
+  | { ok: true; swingId: string; warnings: string[] }
   | { ok: false; failure: ProcessFailure }
   /** Cancel was pressed. `uploaded`: the service already had the clip and may still finish it. */
   | { ok: false; cancelled: true; uploaded: boolean };
@@ -64,6 +89,54 @@ export function checkClip(file: File): string | null {
   return null;
 }
 
+/** Why this sensor file can't be sent, or null. */
+export function checkSensorCsv(file: File): string | null {
+  if (!file.name.toLowerCase().endsWith(".csv")) return `“${file.name}” isn’t a CSV file.`;
+  if (file.size === 0) return `“${file.name}” is empty.`;
+  return null;
+}
+
+/** The typed offset in seconds; null when it's empty or not a number. */
+function parseOffset(text: string): number | null {
+  const trimmed = text.trim();
+  if (!/^[-+]?(\d+(\.\d*)?|\.\d+)$/.test(trimmed)) return null;
+  const seconds = Number(trimmed);
+  return Number.isFinite(seconds) ? seconds : null;
+}
+
+/** Why the typed offset can't be sent, or null. Empty is fine: it's left out. */
+export function checkOffset(text: string): string | null {
+  if (text.trim() === "" || parseOffset(text) !== null) return null;
+  return "Enter the offset in seconds, such as 0.5 or -1.2.";
+}
+
+function singleForm(file: File, settings: ClipSettings): FormData {
+  const form = new FormData();
+  form.append("file", file, file.name);
+  // Auto settings are left out: the service treats a missing field as "work it out".
+  if (settings.hand !== "auto") form.append("hand", settings.hand);
+  if (settings.stroke !== "auto") form.append("stroke", settings.stroke);
+  if (settings.slowdown !== "auto") form.append("slowdown", settings.slowdown);
+  return form;
+}
+
+function multiForm(file: File, settings: ClipSettings, extras: ExtraInputs): FormData {
+  const form = new FormData();
+  form.append("video_a", file, file.name);
+  if (extras.secondClip) form.append("video_b", extras.secondClip, extras.secondClip.name);
+  if (extras.sensorCsv) form.append("sensor_csv", extras.sensorCsv, extras.sensorCsv.name);
+  // As for /process, Auto settings are left out. Both angles use the one Slowdown setting.
+  if (settings.hand !== "auto") form.append("hand", settings.hand);
+  if (settings.stroke !== "auto") form.append("stroke", settings.stroke);
+  if (settings.slowdown !== "auto") {
+    form.append("slowdown_a", settings.slowdown);
+    if (extras.secondClip) form.append("slowdown_b", settings.slowdown);
+  }
+  const offset = extras.secondClip ? parseOffset(extras.offset) : null;
+  if (offset !== null) form.append("offset_b_s", String(offset));
+  return form;
+}
+
 export function processClip(
   file: File,
   settings: ClipSettings,
@@ -73,13 +146,10 @@ export function processClip(
     /** The whole clip is sent; the service is working on it now. */
     uploaded: () => void;
   },
+  extras: ExtraInputs = NO_EXTRAS,
 ): ProcessJob {
-  const form = new FormData();
-  form.append("file", file, file.name);
-  // Auto settings are left out: the service treats a missing field as "work it out".
-  if (settings.hand !== "auto") form.append("hand", settings.hand);
-  if (settings.stroke !== "auto") form.append("stroke", settings.stroke);
-  if (settings.slowdown !== "auto") form.append("slowdown", settings.slowdown);
+  const multi = usesMulti(extras);
+  const form = multi ? multiForm(file, settings, extras) : singleForm(file, settings);
 
   const xhr = new XMLHttpRequest();
   let uploadedAt: number | null = null;
@@ -102,29 +172,31 @@ export function processClip(
     };
     xhr.onload = () => {
       const waited = uploadedAt === null ? 0 : performance.now() - uploadedAt;
-      resolve(readAnswer(xhr.status, xhr.responseText, waited));
+      resolve(readAnswer(xhr.status, xhr.responseText, waited, multi));
     };
     xhr.onerror = () => resolve({ ok: false, failure: { kind: "network" } });
     xhr.onabort = () => resolve({ ok: false, cancelled: true, uploaded: uploadedAt !== null });
   });
 
-  xhr.open("POST", PROCESS_URL);
+  xhr.open("POST", multi ? MULTI_URL : PROCESS_URL);
   xhr.setRequestHeader("Accept", "application/json");
   xhr.send(form);
   return { result, cancel: () => xhr.abort() };
 }
 
-function readAnswer(status: number, text: string, waitedAfterUpload: number): ProcessOutcome {
+function readAnswer(status: number, text: string, waitedAfterUpload: number, multi: boolean): ProcessOutcome {
   const body = parseJson(text);
   if (status >= 200 && status < 300) {
     const swingId = isRecord(body) ? body.swingId : undefined;
-    if (typeof swingId === "string" && swingId.trim() !== "") return { ok: true, swingId };
+    if (typeof swingId === "string" && swingId.trim() !== "") {
+      return { ok: true, swingId, warnings: isRecord(body) ? readWarnings(body.warnings) : [] };
+    }
     return failed({ kind: "failed", status, message: "The service finished but didn’t say which swing it saved." });
   }
   const message = serverMessage(body) ?? `The service answered HTTP ${status}.`;
   if (status === 429) return failed({ kind: "busy" });
   if (status === 413) return failed({ kind: "too-large", message });
-  if (status === 404 || status === 405) return failed({ kind: "no-route" });
+  if (status === 404 || status === 405) return failed({ kind: multi ? "no-multi-route" : "no-route" });
   if (status === 504) return failed({ kind: "proxy-timeout" });
   if (status === 502) {
     return failed(waitedAfterUpload >= PROXY_GAVE_UP_MS ? { kind: "proxy-timeout" } : { kind: "offline", message });
@@ -134,6 +206,12 @@ function readAnswer(status: number, text: string, waitedAfterUpload: number): Pr
 
 function failed(failure: ProcessFailure): ProcessOutcome {
   return { ok: false, failure };
+}
+
+/** `warnings` as a list of non-empty strings (a single string counts as one); anything else is none. */
+function readWarnings(value: unknown): string[] {
+  const list = typeof value === "string" ? [value] : Array.isArray(value) ? value : [];
+  return list.filter((item): item is string => typeof item === "string" && item.trim() !== "").map((item) => item.trim());
 }
 
 /** FastAPI says {"detail": "..."} or a list of field errors; the proxy says {"error": "..."}. */

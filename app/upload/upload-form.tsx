@@ -13,11 +13,15 @@ import { cn } from "@/lib/utils";
 import { GHOST_COLOUR } from "../ghost/colours";
 import { ClipDrop } from "./clip-drop";
 import { ClipSettingsPanel } from "./clip-settings";
+import { ExtraInputsPanel } from "./extra-inputs";
 import {
   AUTO_SETTINGS,
+  NO_EXTRAS,
   checkClip,
+  checkOffset,
   processClip,
   type ClipSettings,
+  type ExtraInputs,
   type ProcessFailure,
   type ProcessJob,
   type Slowdown,
@@ -28,7 +32,8 @@ type Phase =
   | { kind: "idle"; notice: string | null }
   | { kind: "working"; startedAt: number; uploadedAt: number | null; progress: number | null }
   | { kind: "failed"; failure: ProcessFailure; slowdown: Slowdown }
-  | { kind: "done"; href: string };
+  /** `warnings` from the service; with any, the page stays here so they can be read. */
+  | { kind: "done"; href: string; warnings: string[] };
 
 const IDLE: Phase = { kind: "idle", notice: null };
 const START_COMMAND = "python -m uvicorn pipeline.server:app --app-dir services --port 8000";
@@ -58,6 +63,10 @@ function UploadFlow() {
   const [settings, setSettings] = useState<ClipSettings>(AUTO_SETTINGS);
   const [phase, setPhase] = useState<Phase>(IDLE);
   const [dragging, setDragging] = useState(false);
+  const [extras, setExtras] = useState<ExtraInputs>(NO_EXTRAS);
+  const [overExtra, setOverExtra] = useState(false);
+  // The offset only goes out with a second angle, so it only blocks sending then.
+  const offsetProblem = extras.secondClip ? checkOffset(extras.offset) : null;
 
   const job = useRef<ProcessJob | null>(null);
   const focusTarget = useRef<"progress" | "submit" | null>(null);
@@ -101,6 +110,12 @@ function UploadFlow() {
     setPhase(IDLE);
   }
 
+  function changeExtras(next: ExtraInputs) {
+    if (busy) return;
+    setExtras(next);
+    setPhase(IDLE);
+  }
+
   // A video dropped anywhere on the page becomes the clip (dropped elsewhere, the browser would
   // open it and leave the page). Only file drags count, not dragged text.
   const onDropped = useEffectEvent((next: File) => pick(next));
@@ -126,9 +141,12 @@ function UploadFlow() {
     };
     const drop = (event: DragEvent) => {
       if (!hasFiles(event)) return;
+      // Already handled by an optional input's own drop zone (extra-inputs.tsx).
+      const handled = event.defaultPrevented;
       event.preventDefault();
       depth = 0;
       setDragging(false);
+      if (handled) return;
       const next = event.dataTransfer?.files[0];
       if (next) onDropped(next);
     };
@@ -146,20 +164,25 @@ function UploadFlow() {
 
   async function send(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!file || job.current) return;
+    if (!file || job.current || offsetProblem) return;
     const sent = settings;
     focusTarget.current = "progress";
     setPhase({ kind: "working", startedAt: Date.now(), uploadedAt: null, progress: 0 });
     router.prefetch("/ghost");
 
-    const current = processClip(file, sent, {
-      progress: (fraction) =>
-        setPhase((p) => (p.kind === "working" && p.uploadedAt === null ? { ...p, progress: fraction } : p)),
-      uploaded: () => {
-        const at = Date.now();
-        setPhase((p) => (p.kind === "working" ? { ...p, uploadedAt: at, progress: 1 } : p));
+    const current = processClip(
+      file,
+      sent,
+      {
+        progress: (fraction) =>
+          setPhase((p) => (p.kind === "working" && p.uploadedAt === null ? { ...p, progress: fraction } : p)),
+        uploaded: () => {
+          const at = Date.now();
+          setPhase((p) => (p.kind === "working" ? { ...p, uploadedAt: at, progress: 1 } : p));
+        },
       },
-    });
+      extras,
+    );
     job.current = current;
     const outcome = await current.result;
     if (job.current !== current) return; // the page was left: this upload was abandoned
@@ -167,8 +190,9 @@ function UploadFlow() {
 
     if (outcome.ok) {
       const href = `/ghost?swing=${encodeURIComponent(outcome.swingId)}`;
-      setPhase({ kind: "done", href });
-      router.push(href);
+      setPhase({ kind: "done", href, warnings: outcome.warnings });
+      // With warnings, stay so they can be read; Open it in Ghost goes on from here.
+      if (outcome.warnings.length === 0) router.push(href);
       return;
     }
     focusTarget.current = "submit";
@@ -187,7 +211,14 @@ function UploadFlow() {
   return (
     <form onSubmit={send} noValidate className="upload-flow">
       <div className="upload-input-column">
-        <ClipDrop file={file} dragging={dragging} disabled={busy} error={clipError} onPick={pick} onClear={clear} />
+        <ClipDrop
+          file={file}
+          dragging={dragging && !overExtra}
+          disabled={busy}
+          error={clipError}
+          onPick={pick}
+          onClear={clear}
+        />
         <ul aria-label="Filming tips" className="upload-tips grid gap-x-6 gap-y-1.5 text-sm text-muted-foreground sm:grid-cols-2">
           {TIPS.map((tip) => (
             <li key={tip} className="flex items-center gap-2">
@@ -196,6 +227,7 @@ function UploadFlow() {
             </li>
           ))}
         </ul>
+        <ExtraInputsPanel value={extras} onChange={changeExtras} disabled={busy} onHover={setOverExtra} />
       </div>
 
       <ClipSettingsPanel value={settings} onChange={setSettings} disabled={busy} />
@@ -209,7 +241,7 @@ function UploadFlow() {
           headingRef={progressRef}
         />
       ) : phase.kind === "done" ? (
-        <Ready href={phase.href} />
+        <Ready href={phase.href} warnings={phase.warnings} />
       ) : (
         <div className="upload-actions flex flex-col gap-4">
           {phase.kind === "failed" && <Failure failure={phase.failure} slowdown={phase.slowdown} />}
@@ -219,14 +251,18 @@ function UploadFlow() {
               type="submit"
               size="lg"
               className="upload-submit"
-              disabled={!file}
+              disabled={!file || offsetProblem !== null}
               aria-describedby="send-hint"
             >
               {phase.kind === "failed" ? "Try again" : "Build my ghost"}
               <ArrowRight data-icon="inline-end" />
             </Button>
             <p id="send-hint" className="text-sm text-muted-foreground">
-              {file ? "Processing can take a minute." : "Choose a video to start."}
+              {!file
+                ? "Choose a video to start."
+                : offsetProblem
+                  ? "Fix the second clip offset to start."
+                  : "Processing can take a minute."}
             </p>
           </div>
           {phase.kind === "idle" && phase.notice && (
@@ -240,13 +276,9 @@ function UploadFlow() {
   );
 }
 
-function Ready({ href }: { href: string }) {
-  return (
-    <div
-      role="status"
-      className="upload-ready flex flex-wrap items-center justify-between gap-3 rounded-2xl border bg-card p-4 sm:p-5"
-      style={{ borderColor: `color-mix(in oklch, ${GHOST_COLOUR} 45%, transparent)` }}
-    >
+function Ready({ href, warnings }: { href: string; warnings: string[] }) {
+  const row = (
+    <>
       <p className="flex items-center gap-2 text-base font-medium">
         <Check aria-hidden className="size-5" style={{ color: GHOST_COLOUR }} />
         Your ghost is ready.
@@ -255,6 +287,34 @@ function Ready({ href }: { href: string }) {
         Open it in Ghost
         <ArrowRight data-icon="inline-end" aria-hidden />
       </Link>
+    </>
+  );
+  const border = { borderColor: `color-mix(in oklch, ${GHOST_COLOUR} 45%, transparent)` };
+  if (warnings.length === 0) {
+    return (
+      <div
+        role="status"
+        className="upload-ready flex flex-wrap items-center justify-between gap-3 rounded-2xl border bg-card p-4 sm:p-5"
+        style={border}
+      >
+        {row}
+      </div>
+    );
+  }
+  return (
+    <div role="status" className="upload-ready flex flex-col gap-4 rounded-2xl border bg-card p-4 sm:p-5" style={border}>
+      <div className="flex flex-wrap items-center justify-between gap-3">{row}</div>
+      <div className="upload-warnings flex flex-col gap-2">
+        <h2 className="flex items-center gap-2 text-sm font-medium">
+          <CircleAlert aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+          {warnings.length === 1 ? "The service returned a warning" : `The service returned ${warnings.length} warnings`}
+        </h2>
+        <ul className="flex list-disc flex-col gap-1 pl-10 text-sm text-pretty text-muted-foreground">
+          {warnings.map((warning, index) => (
+            <li key={index}>{warning}</li>
+          ))}
+        </ul>
+      </div>
     </div>
   );
 }
@@ -298,6 +358,12 @@ function describe(failure: ProcessFailure, slowdown: Slowdown): FailureCopy {
         title: "This service can’t take uploads yet",
         message: "The Python service answered that it has no POST /process route.",
         hint: "Restart it from a version with the upload API (PR #41), then try again.",
+      };
+    case "no-multi-route":
+      return {
+        title: "This service can’t take a second angle or sensor file yet",
+        message: "The Python service answered that it has no POST /process/multi route.",
+        hint: "Remove the second angle and the sensor CSV to send just your video, or restart the service from a version with /process/multi.",
       };
     case "network":
       return {
