@@ -1,6 +1,8 @@
 // A small badge on the court view when physics checked the PREDICTED ball against a real one
 // (compare `validation`): the number predicted, the number seen, and how the real ball was found.
 // Shown only when the file has a complete `validation`; the numbers are the file's, unchanged.
+// Worded as a reference check, not a claim about the ball on screen, so the court view's
+// "There is no real ball" lines stay true beside it.
 
 import { CircleCheck } from "lucide-react";
 import type { BallValidation } from "./compare";
@@ -27,7 +29,7 @@ export function ValidationBadge({ validation }: { validation: BallValidation }) 
       <p className="flex items-start gap-2">
         <CircleCheck aria-hidden className="mt-0.5 size-4 shrink-0 text-primary" />
         <span>
-          Checked against the real ball: <span className={look.value}>{predicted} m</span> predicted,{" "}
+          Reference check against a real ball: <span className={look.value}>{predicted} m</span> predicted,{" "}
           <span className={look.value}>{tracked} m</span> tracked
         </span>
       </p>
