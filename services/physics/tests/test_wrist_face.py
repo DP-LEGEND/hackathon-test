@@ -187,6 +187,30 @@ def test_the_face_model_uses_a_roll_exactly_when_the_coach_judges_it(good, mock,
         assert r["you"]["ball"] == cam["you"]["ball"] and r["ghost"]["ball"] == cam["ghost"]["ball"]
 
 
+@pytest.mark.parametrize("fix, amount", [("turn_shoulders_less", 12), ("straighten_elbow", 12), ("firm_wrist", 22.0)])
+def test_with_the_face_model_no_target_turn_is_held_and_the_explain_follows_the_roll(good, fix, amount) -> None:
+    """Merged with #73: the racket face aims both balls, so the TARGET hold (a shoulder turn that aims the
+    camera's racket line) isn't applied and says why; the ghost's body is the fix alone."""
+    from physics.compare import FACE_AIMS_WHY
+    swing = with_roll(good, 158.8)
+    r = compare(swing, fix, amount)
+    aim = r["assumptions"]["aim"]
+    assert aim["applied"] is False and aim["label"] == "TARGET" and aim["why"] == FACE_AIMS_WHY
+    assert "aiming" not in r["fix"] and "Aiming:" not in r["assumptions"]["note"]
+    ghost_cam = r["assumptions"]["launch"]["ghost"]["azimuth"]["cameraAim"]
+    assert r["assumptions"]["face"]["applied"] is True and ghost_cam["label"] in ("ESTIMATE", "ASSUMED")
+    # the ghost's body is the fix alone: as compare with no intent held, and firm_wrist moves no joint
+    alone = r["you"]["metrics"] if fix == "firm_wrist" else compare(good, fix, amount, intent=None)["ghost"]["metrics"]
+    assert r["ghost"]["metrics"] == alone
+    explain = r["fix"]["explain"]
+    assert explain.startswith("Your forearm rolled 158.8° through contact (measured by the wrist sensor).")
+    assert "ASSUMED: the racket face turns" in explain and explain.count("PREDICTED ball") == 2
+    if fix == "firm_wrist":
+        assert "rolls its forearm 22° less through contact (158.8° → 136.8°), so its face is square" in explain
+    else:
+        assert "keeps your forearm roll" in explain
+
+
 # ---- no sensor data: nothing changes ---------------------------------------------------
 
 def test_without_sensor_data_there_is_no_face_and_the_note_is_unchanged(good) -> None:
@@ -207,7 +231,7 @@ def test_locked_hero_numbers_are_unchanged() -> None:
     r = compare(swing, "turn_shoulders_less", amount, fps_real=saved["fpsReal"])
     ball = r["delta"]["ball"]
     assert (ball["speedKmh"]["you"], ball["speedKmh"]["ghost"]) == (133.2, 119.1)
-    assert (ball["frontWallHeightM"]["you"], ball["frontWallHeightM"]["ghost"]) == (1.92, 1.88)
+    assert (ball["frontWallHeightM"]["you"], ball["frontWallHeightM"]["ghost"]) == (1.92, 1.86)  # main's (#73)
     assert "face" not in r["assumptions"]
 
 
