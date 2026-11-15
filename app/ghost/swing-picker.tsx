@@ -2,12 +2,13 @@
 // Saved samples always work; live swings appear when Dev's Python service is running
 // (reached through the same-origin /api proxy).
 
-import { ChevronRight, Play, RotateCcw } from "lucide-react";
+import { ArrowUpRight, Play, RotateCcw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { GHOST_COLOUR } from "./colours";
+import { look } from "./look";
 import type { ApiState, SwingEntry } from "./sources";
+import { StateCard } from "./state-card";
 
 export type CatalogueState =
   | { status: "loading" }
@@ -31,34 +32,41 @@ export function SwingPicker({
 }) {
   const demo = entries.find((e) => e.isDefault);
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-5">
       {demo && (
         <div>
-          <Button size="lg" className="h-11 px-4 text-base" onClick={() => onPick(demo.key)}>
+          <Button
+            size="lg"
+            className="h-12 rounded-full px-6 text-base sm:h-14 sm:px-8 sm:text-[17px]"
+            onClick={() => onPick(demo.key)}
+          >
             <Play data-icon="inline-start" />
             Start with the demo swing
           </Button>
         </div>
       )}
       {catalogue.status === "loading" && (
-        <p role="status" className="rounded-xl border bg-card p-6 text-sm text-muted-foreground">
+        <StateCard tone="loading" role="status">
           Loading swings…
-        </p>
+        </StateCard>
       )}
       {catalogue.status === "error" && (
-        <div role="alert" className="flex flex-col items-start gap-3 rounded-xl border bg-card p-6">
-          <p className="text-sm">The saved swings couldn&apos;t load: {catalogue.message}</p>
-          <Button variant="outline" onClick={catalogue.onRetry}>
-            <RotateCcw data-icon="inline-start" />
-            Try again
-          </Button>
-        </div>
+        <StateCard
+          tone="error"
+          role="alert"
+          actions={
+            <Button variant="outline" className={look.pill} onClick={catalogue.onRetry}>
+              <RotateCcw data-icon="inline-start" />
+              Try again
+            </Button>
+          }
+        >
+          <p>The saved swings couldn&apos;t load: {catalogue.message}</p>
+        </StateCard>
       )}
-      {catalogue.status === "ready" && entries.length === 0 && (
-        <p className="rounded-xl border bg-card p-6 text-sm text-muted-foreground">No swings yet.</p>
-      )}
+      {catalogue.status === "ready" && entries.length === 0 && <StateCard tone="empty">No swings yet.</StateCard>}
       {entries.length > 0 && (
-        <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <ul className="grid gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3">
           {entries.map((entry) => {
             const picked = entry.key === selectedKey;
             return (
@@ -68,20 +76,24 @@ export function SwingPicker({
                   onClick={() => onPick(entry.key)}
                   aria-current={picked ? "true" : undefined}
                   className={cn(
-                    "group flex h-full w-full items-start gap-3 rounded-xl border bg-card p-4 text-left transition-colors outline-none",
-                    "hover:bg-muted focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50",
+                    look.card,
+                    "group flex h-full w-full items-start gap-3 p-5 text-left transition-colors hover:border-primary/50",
+                    picked && "border-primary bg-accent",
                   )}
-                  style={picked ? { borderColor: GHOST_COLOUR } : undefined}
                 >
-                  <span className="flex min-w-0 flex-1 flex-col gap-1.5">
+                  <span className="flex min-w-0 flex-1 flex-col gap-2">
                     <span className="flex flex-wrap gap-1.5">
-                      <Badge variant={entry.origin === "api" ? "default" : "secondary"}>
+                      <Badge variant={entry.origin === "api" ? "default" : "secondary"} className={cn(look.chip, "uppercase")}>
                         {entry.origin === "api" ? "Live" : "Saved sample"}
                       </Badge>
-                      {entry.isDefault && <Badge variant="outline">Demo swing</Badge>}
+                      {entry.isDefault && (
+                        <Badge variant="outline" className={cn(look.chip, "uppercase")}>
+                          Demo swing
+                        </Badge>
+                      )}
                     </span>
-                    <span className="text-base font-medium text-balance">{entry.label}</span>
-                    <span className="text-sm text-muted-foreground">
+                    <span className={cn(look.title, "text-balance")}>{entry.label}</span>
+                    <span className="text-sm leading-relaxed text-muted-foreground">
                       {entry.origin === "api"
                         ? "The coach measures it live; ghosts are computed on request"
                         : "Coach's call and ghosts saved from the Python service"}
@@ -90,10 +102,12 @@ export function SwingPicker({
                       <span className="font-mono text-xs break-all text-muted-foreground">{entry.id}</span>
                     )}
                   </span>
-                  <ChevronRight
+                  <span
                     aria-hidden
-                    className="mt-1 size-5 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5"
-                  />
+                    className="grid size-9 shrink-0 place-items-center rounded-full border text-muted-foreground transition-colors group-hover:border-primary group-hover:text-primary"
+                  >
+                    <ArrowUpRight className="size-4" />
+                  </span>
                 </button>
               </li>
             );
@@ -107,21 +121,39 @@ export function SwingPicker({
 
 function ApiStatus({ api, onRetry }: { api: ApiState; onRetry: () => void }) {
   const retry = (
-    <Button variant="outline" size="sm" onClick={onRetry} disabled={api.status === "checking"}>
+    <Button variant="outline" size="sm" className={look.pill} onClick={onRetry} disabled={api.status === "checking"}>
       <RotateCcw data-icon="inline-start" />
       Check again
     </Button>
   );
+  const dot = (
+    <span
+      aria-hidden
+      className={cn(
+        "mt-1.5 size-2 shrink-0 rounded-full",
+        api.status === "online" ? "bg-primary" : "bg-muted-foreground",
+        api.status === "checking" && "motion-safe:animate-pulse",
+      )}
+    />
+  );
   return (
-    <div className="flex flex-col gap-2 rounded-xl border border-dashed p-3 text-sm text-muted-foreground sm:p-4">
-      {api.status === "checking" && <p role="status">Looking for live swings…</p>}
+    <div className="flex flex-col gap-3 rounded-[20px] border border-dashed p-4 text-sm leading-relaxed text-muted-foreground sm:p-5">
+      {api.status === "checking" && (
+        <p role="status" className="flex gap-2.5">
+          {dot}
+          <span>Looking for live swings…</span>
+        </p>
+      )}
       {api.status === "offline" && (
         <>
-          <p role="status">
-            The live Python service isn&apos;t running, so these are the saved samples. To add live swings, run this
-            from the repo folder:
+          <p role="status" className="flex gap-2.5">
+            {dot}
+            <span>
+              The live Python service isn&apos;t running, so these are the saved samples. To add live swings, run this
+              from the repo folder:
+            </span>
           </p>
-          <code className="w-fit rounded-md bg-muted px-2 py-1 font-mono text-xs break-all text-foreground">
+          <code className="w-fit max-w-full rounded-xl border bg-(--media) px-3 py-2 font-mono text-xs break-all text-foreground">
             python -m uvicorn pipeline.server:app --app-dir services --port 8000
           </code>
           <div>{retry}</div>
@@ -129,10 +161,13 @@ function ApiStatus({ api, onRetry }: { api: ApiState; onRetry: () => void }) {
       )}
       {api.status === "online" && (
         <>
-          <p role="status">
-            {api.swings.length === 0
-              ? "The live service is running but has no processed swings. Point GHOST_SWINGS_DIR at a processed session (services/pipeline/README.md)."
-              : `${api.swings.length} live ${api.swings.length === 1 ? "swing" : "swings"} from the Python service.`}
+          <p role="status" className="flex gap-2.5">
+            {dot}
+            <span>
+              {api.swings.length === 0
+                ? "The live service is running but has no processed swings. Point GHOST_SWINGS_DIR at a processed session (services/pipeline/README.md)."
+                : `${api.swings.length} live ${api.swings.length === 1 ? "swing" : "swings"} from the Python service.`}
+            </span>
           </p>
           <div>{retry}</div>
         </>

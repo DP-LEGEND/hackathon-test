@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import type { CaptionState } from "./coach-caption";
 import { YOU_COLOUR } from "./colours";
 import type { CoachFault } from "./compare";
+import { look } from "./look";
 import type { Async } from "./use-async";
 import { sampleAt, type WristSeries } from "./wrist";
 
@@ -47,10 +48,10 @@ export function WristSensorPanel({
 }) {
   if (state.status === "error") {
     return (
-      <section aria-label="Wrist sensor" className="rounded-xl border bg-card p-3 sm:p-4">
+      <section aria-label="Wrist sensor" className={cn(look.card, look.pad)}>
         <div role="alert" className="flex flex-wrap items-center gap-3">
           <p className="text-sm text-muted-foreground">The wrist sensor data didn&apos;t load: {state.message}</p>
-          <Button variant="outline" size="sm" onClick={onRetry}>
+          <Button variant="outline" size="sm" className={look.pill} onClick={onRetry}>
             <RotateCcw data-icon="inline-start" />
             Try again
           </Button>
@@ -60,7 +61,7 @@ export function WristSensorPanel({
   }
   if (state.status === "loading" && expected) {
     return (
-      <p role="status" className="rounded-xl border bg-card p-3 text-sm text-muted-foreground sm:p-4">
+      <p role="status" className={cn(look.card, look.pad, "text-sm text-muted-foreground")}>
         Loading wrist sensor data…
       </p>
     );
@@ -144,16 +145,16 @@ function Panel({ series, caption }: { series: WristSeries; caption: CaptionState
   const [w0, w1] = series.windowMs;
 
   return (
-    <section aria-labelledby="wrist-sensor" className="flex flex-col gap-4 rounded-xl border bg-card p-3 sm:p-4">
+    <section aria-labelledby="wrist-sensor" className={cn(look.card, look.pad, "flex flex-col gap-4")}>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <h3 id="wrist-sensor" className="text-sm font-medium">
+        <h3 id="wrist-sensor" className={look.title}>
           Wrist sensor
         </h3>
-        <Badge variant="outline" className="font-mono tracking-wide">
+        <Badge variant="outline" className="h-5 rounded-full font-mono tracking-wide">
           MEASURED (sensor)
         </Badge>
         {series.mock && (
-          <Badge variant="outline" className="border-amber-400/50 text-amber-300">
+          <Badge variant="outline" className="h-5 rounded-full border-amber-400/50 text-amber-300">
             MOCK sensor data
           </Badge>
         )}
@@ -199,9 +200,9 @@ function Panel({ series, caption }: { series: WristSeries; caption: CaptionState
 
 function Stat({ label, value, detail, tag }: { label: string; value: string; detail: string; tag: string }) {
   return (
-    <div className="flex flex-col gap-0.5 rounded-lg border p-3">
+    <div className="flex flex-col gap-0.5 rounded-2xl border bg-(--media) p-4">
       <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="text-xl font-semibold">{value}</dd>
+      <dd className={cn(look.title, look.value, "text-2xl")}>{value}</dd>
       <dd className="text-xs text-muted-foreground">{detail}</dd>
       <dd className="mt-1 font-mono text-[0.65rem] tracking-wide text-muted-foreground">{tag}</dd>
     </div>

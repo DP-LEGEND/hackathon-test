@@ -21,7 +21,7 @@ export function JointLegend({
       ? "measured from video"
       : "not flagged as guessed";
   return (
-    <div className="flex flex-wrap items-center gap-x-5 gap-y-1 px-1 text-xs text-muted-foreground">
+    <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 px-2 text-xs leading-relaxed text-muted-foreground">
       <span className="flex items-center gap-2">
         <span aria-hidden className="h-[3px] w-6 shrink-0 rounded-full bg-foreground/85" />
         <span>

@@ -86,9 +86,10 @@ THRESHOLDS: dict[str, dict[str, dict[str, Any]]] = {
                                             "fix_lowers": True}},
         # Wrist sensor only (coach/wrist_sensor.py): forearm roll -150..+100 ms around
         # contact; skipped when the swing has no sensor data. From MOCK 5 normal (16.5 deg)
-        # vs 5 rolled (62.1 deg) swings via python -m wrist.tune: retune on real swings.
-        "rolled_wrist": {"measurement": "forearm_roll_deg", "threshold": 39.3,
-                         "severe_at": 62.1, "target": 16.5, "source": WRIST_MOCK},
+        # vs 5 rolled (62.0 deg) swings via python -m wrist.tune: retune on real swings
+        # (the first real shadow session's GOOD drives rolled 96-145 deg: services/wrist/README.md).
+        "rolled_wrist": {"measurement": "forearm_roll_deg", "threshold": 39.2,
+                         "severe_at": 62.0, "target": 16.5, "source": WRIST_MOCK},
     },
     "backhand": {
         # Fastest wrist OPENING before contact; a fast cocking move never counts.
@@ -104,8 +105,8 @@ THRESHOLDS: dict[str, dict[str, dict[str, Any]]] = {
         "stance_too_open": {"measurement": "stance_open_deg", "threshold": 40.0,
                             "severe_at": 70.0, "target": 15.0, "source": GUESS},
         # Wrist sensor only; the same MOCK rule as the forehand until real backhands.
-        "rolled_wrist": {"measurement": "forearm_roll_deg", "threshold": 39.3,
-                         "severe_at": 62.1, "target": 16.5, "source": WRIST_MOCK},
+        "rolled_wrist": {"measurement": "forearm_roll_deg", "threshold": 39.2,
+                         "severe_at": 62.0, "target": 16.5, "source": WRIST_MOCK},
     },
 }
 # ------------------------------------------------------------------------------------

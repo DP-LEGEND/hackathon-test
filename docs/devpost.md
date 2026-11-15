@@ -2,11 +2,12 @@
 TODO (9 AM feature freeze): these are under "In progress / demoed from branch" because they
 aren't on main yet. When each one merges, move it into the built sections and delete its line.
 - Anam avatar lines (coach/avatar.py) are on main but only run from the command line
-- Adaption: the generator (physics/synth.py) is on main; data prep, the eval and the status script
-  are in PR #78 (draft). Move Adaption into the built sections only after #78 merges.
+- Adaption: generator, data prep, eval and status script are on main (#78 merged).
 - Adaption win rate: the AutoScientist run on Qwen3.5-2B succeeded (15 Nov 04:30, 3 of 3 rounds):
   66% vs the base model, below its 70% target; filled in below. If a later run beats it before
   submission, update the model and the number (check with `python -m physics.adaption_status`).
+- Figma: before submitting, set the Figma file's share link to "anyone with the link can view", or
+  judges can't open the case study.
 Delete this comment before pasting into Devpost.
 -->
 
@@ -109,7 +110,7 @@ These work on their own branches or from the command line and are being merged i
 | **Anthropic Claude** (Opus 5.5) | Words the coach's fix as one spoken sentence on swings you upload, checked against the measured numbers and the fix direction |
 | **ElevenLabs** | Reads that sentence aloud: the **Hear the coach** button on uploaded (Live) swings |
 | **Claude Code** and **Codex** | How four people built it in parallel in one weekend |
-| **Figma** | Designing the landing page; the build follows its desktop and mobile frames |
+| **Figma** | Designing the landing page, upload page and swing view; the build follows its frames |
 
 In progress: **Anam** (avatar), see *Anam avatar* above, and **Adaption** (AutoScientist fine-tune on our fault-injection data), see *Adaption* above.
 
@@ -146,6 +147,17 @@ Claude is the coach's voice, not its judge. Measuring the swing and choosing the
 - **Designed in Figma by Henoch.** The landing page (`/`) and the `/demo` entry follow the Figma frames: desktop and mobile landing, the three process panels, and the full-screen mobile menu (`components/ghost/DESIGN.md`).
 - **Taken from the design.** The charcoal and mint palette, the wordmark hierarchy, and the ghost and trail artwork as separate SVGs, so the ghost moves as you scroll. There's a still version for reduced motion.
 - **Checked against the frames** at desktop, tablet and phone sizes. The landing links only to flows that work: **Demo** (the saved 3D replay) and **Your swing** (upload). The process panels are labelled illustrations, not footage.
+- **Case study in Figma:** [Ghost — case study](https://www.figma.com/design/QlNELzqmM4MHcgjGcgSZN2/UI-design?node-id=60-452). It has three parts:
+  - the user flow: upload → swing view → coach's call → ghost replay → court;
+  - the components the app uses, with their colour and type tokens;
+  - before/after screenshots of the old UI and the restyle.
+
+**How the Figma frames drove the restyle.** The Figma file came first, and each restyle pull request was built straight from its frames:
+- **#71** turned the landing frames (desktop and mobile) and the process panels into the new home page and `/demo`.
+- **#76** built `/upload` from the upload frame, and gave every page one shared header and navigation, local fonts and the charcoal-and-mint palette.
+- **#82** restyles the swing view to the two Results frames: the step bar, the coach card, the ghost legend and the PREDICTED tags.
+
+The data, the coach's wording and the PREDICTED labels didn't change; only the design did.
 
 ### Adaption
 
