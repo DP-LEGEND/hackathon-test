@@ -39,14 +39,26 @@ def guarded(rc, tmp_path, monkeypatch):
     return folder
 
 
+SAME = object()
+
+
 def answer(fault="over_rotation", fix=("turn_shoulders_less", 52.6), walls=(1.45, 1.44), *,
-           written=1, rejected=(), predicted=True, note=None):
-    """A MOCK 201 body shaped like services/pipeline/live.py process_live_clip's."""
+           ghost_fault=SAME, ghost_fix=SAME, written=1, rejected=(), predicted=True, note=None):
+    """A MOCK 201 body shaped like services/pipeline/live.py process_live_clip's.
+
+    By default the top fault is the one the ghost animates (ghost_fault) and the compare made its fix
+    (ghost_fix); with no fix, there is no fault the ghost can show.
+    """
+    if ghost_fault is SAME:
+        ghost_fault = fault if fix else None
+    if ghost_fix is SAME:
+        ghost_fix = fix[0] if fix else None
     def ball(height):
         return {"predicted": predicted, "label": "PREDICTED" if predicted else "MEASURED", "frontWallHeightM": height}
     return {
         "status": "complete", "written": written, "rejected": list(rejected), "swingId": "mock-swing-0001",
         "coach": {"stroke": "forehand", "stroke_source": "given", "fault": {"id": fault} if fault else None,
+                  "ghost_fault": {"id": ghost_fault} if ghost_fault else None, "ghost_fix": ghost_fix,
                   "ghost_note": note},
         "compare": {"fix": {"id": fix[0] if fix else "straighten_elbow", "amount": fix[1] if fix else 0.0, "unit": "deg"},
                     "noCorrection": fix is None,
@@ -237,6 +249,35 @@ def test_judge(rc, body, ran, ok, error):
     assert (row.ran, row.ok, row.error) == (ran, ok, error)
     if body is not None and "compare" in body and body["compare"]["you"]["ball"]["frontWallHeightM"] is None:
         assert row.wall == "none → 1.30 m"  # the PREDICTED ball didn't reach the front wall
+
+
+def test_an_unanimated_top_fault_counts_when_the_ghost_makes_the_ghost_faults_fix(rc):
+    # The coach's top fault can't be animated; the ghost shows the next fault it can (agent.py).
+    body = answer(fault="rolled_wrist", ghost_fault="over_rotation", ghost_fix="turn_shoulders_less",
+                  fix=("turn_shoulders_less", 52.6), note="The ghost shows the next fault it can animate.")
+    row = rc.judge(rc.Row("x.mov"), 201, body)
+    assert (row.ran, row.ok, row.error) == (True, True, "")
+    assert row.call == "rolled_wrist (ghost shows over_rotation)"
+    assert row.ghost_fix == "turn_shoulders_less 52.6 deg"
+    lines = rc.table([row])
+    assert "rolled_wrist (ghost shows over_rotation)" in lines[2] and lines[2].split()[2] == "yes"
+
+
+def test_a_compare_that_doesnt_make_the_coachs_ghost_fix_isnt_counted(rc):
+    body = answer(fault="over_rotation", ghost_fix="turn_shoulders_less", fix=("straighten_elbow", 10))
+    row = rc.judge(rc.Row("x.mov"), 201, body)
+    assert (row.ran, row.ok) == (True, False)
+    assert row.error == "not counted: the ghost makes straighten_elbow, but the coach's ghost_fix is turn_shoulders_less"
+    assert row.call == "over_rotation" and row.ghost_fix == "straighten_elbow 10 deg"
+    # The top fault's own fix doesn't count either when the ghost is meant to show another fault.
+    body = answer(fault="rolled_wrist", ghost_fault="over_rotation", ghost_fix="turn_shoulders_less",
+                  fix=("firm_wrist", 10))
+    row = rc.judge(rc.Row("x.mov"), 201, body)
+    assert not row.ok and row.call == "rolled_wrist (ghost shows over_rotation)"
+    assert row.error == "not counted: the ghost makes firm_wrist, but the coach's ghost_fix is turn_shoulders_less"
+    # And a fix the coach never asked for (no ghost_fault at all) is not counted.
+    row = rc.judge(rc.Row("x.mov"), 201, answer(ghost_fault=None, ghost_fix=None))
+    assert not row.ok and row.error.endswith("but the coach's ghost_fix is none")
 
 
 def test_errors_without_any_clip(rc, tmp_path):

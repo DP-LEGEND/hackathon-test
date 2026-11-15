@@ -9,10 +9,17 @@ Sends every clip in a folder, one at a time, to the local service's POST /proces
 balls (yours and the ghost's) are PREDICTED paths. A refused upload shows the service's own error
 text in the error column.
 
-The summary counts an upload only when it ran ok, the coach named a fault (its call), and the ghost
-makes that fix (compare.noCorrection is false and the amount is above 0). A clean swing runs ok, but
-the coach finds no fault and the ghost doesn't change, so it isn't counted; its error column says
-"not counted: ..." and why. The line above the summary gives the plain ran-ok count.
+The summary counts an upload only when all of these hold:
+  - it ran ok;
+  - the coach named a fault (its call, the top fault);
+  - the ghost makes the coach's ghost_fix: the compare's fix id equals coach.ghost_fix, the amount
+    is above 0, and compare.noCorrection is false.
+When the top fault can't be animated, the coach's ghost shows its worst fault that can be
+(ghost_fault, whose fix is ghost_fix). The coach call column then reads
+"<top fault> (ghost shows <ghost_fault>)", and the row counts only if the compare made that fix.
+A clean swing runs ok, but the coach finds no fault and the ghost doesn't change, so it isn't
+counted. Its error column says "not counted: ..." and why. The line above the summary gives the
+plain ran-ok count.
 
 Read-only. Clips are only opened for reading, and the script writes no files. It snapshots this
 repo's public/swings before the first upload and again after every clip, and stops with exit 1 if
@@ -73,7 +80,7 @@ HEADERS = ("#", "clip", "ran ok?", "stroke detected", "coach call", "ghost_fix",
 class Row:
     clip: str
     ran: bool = False  # 201, coach and compare results, both balls PREDICTED
-    ok: bool = False   # ran, and the coach named a fault that the ghost fixes: what the summary counts
+    ok: bool = False   # ran, the coach named a fault, and the ghost makes the coach's ghost_fix: counted
     stroke: str = "-"
     call: str = "-"
     ghost_fix: str = "-"
@@ -201,20 +208,25 @@ def judge(row: Row, status: int, body: object) -> Row:
     source = _get(comparison, "you", "swing", "metadata", "strokeSource") or coach.get("stroke_source")
     row.stroke = f"{stroke} ({source})" if stroke and source else str(stroke or "none")
 
-    fault = coach.get("fault")
-    if isinstance(fault, dict) and fault.get("id"):
-        row.call = str(fault["id"])
+    # The call is the coach's top fault. The ghost animates ghost_fault (the worst fault it can show,
+    # services/coach/agent.py), whose fix is ghost_fix: the one the compare must have made to count.
+    top_id, ghost_id = _get(coach, "fault", "id"), _get(coach, "ghost_fault", "id")
+    if top_id:
+        row.call = str(top_id) + (f" (ghost shows {ghost_id})" if ghost_id and ghost_id != top_id else "")
     else:
         row.call = "no fault"
         uncounted.append("the coach named no fault")
 
-    fix, amount = comparison.get("fix"), _number(_get(comparison, "fix", "amount"))
-    if comparison.get("noCorrection") is True or not amount or amount <= 0 or not isinstance(fix, dict):
+    fix_id, amount = _get(comparison, "fix", "id"), _number(_get(comparison, "fix", "amount"))
+    coach_fix = coach.get("ghost_fix")
+    if comparison.get("noCorrection") is True or not fix_id or amount is None or amount <= 0:
         row.ghost_fix = "none (unchanged ghost)"
         note = coach.get("ghost_note")
         uncounted.append("the ghost makes no fix" + (f": {note}" if isinstance(note, str) and note else ""))
     else:
-        row.ghost_fix = f"{fix.get('id')} {amount:g} {fix.get('unit') or ''}".rstrip()
+        row.ghost_fix = f"{fix_id} {amount:g} {_get(comparison, 'fix', 'unit') or ''}".rstrip()
+        if fix_id != coach_fix:
+            uncounted.append(f"the ghost makes {fix_id}, but the coach's ghost_fix is {coach_fix or 'none'}")
 
     balls = {side: _get(comparison, side, "ball") for side in ("you", "ghost")}
     for side, ball in balls.items():
