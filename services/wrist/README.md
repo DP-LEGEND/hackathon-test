@@ -21,8 +21,11 @@ A **shadow swing** (no ball, so no impact) is timed from the double tap; its imp
 are null. Without the phone's own orientation, the integrated gyro takes over.
 
 **Tested on MOCK data** (`synth.py`) **and one real shadow session** (no ball: see
-[Shadow sessions](#shadow-sessions-no-ball)). The threshold in `coach/faults.py` comes from
-mock swings and must be retuned on real hits.
+[Shadow sessions](#shadow-sessions-no-ball)). The real-data `rolled_wrist` lines in
+`coach/faults.py` come from that one shadow session (`WRIST_SESSION_FH` / `WRIST_SESSION_BH`:
+forehand 145.75°, backhand 124.3°). They judge only rolls timed at the forearm's fastest turn
+(`contact_source: "gyro peak"`), as that session's were, and must be retuned on real hits.
+`MOCK_ROLLED_WRIST` (39.2°) is for mock entries (`synth.py`) only, never for real data.
 
 ## Recording (tonight)
 
@@ -278,8 +281,11 @@ The new parts:
 Each swing can carry its own entry as an optional field: `swing["wrist"]`
 (`wrist.run --swings-out` writes the swings with it; `coach.wrist_sensor.attach_wrist` adds
 it too). `measure_swing` reads it, and `rolled_wrist` fires when `forearm_roll_deg` is past
-the threshold. Its fix is `firm_wrist`, which the ghost can't animate yet, so it's never
-`ghost_ready`; the ghost shows the next fix instead. Labels say `(wrist sensor)`, plus
+the threshold. Its fix is `firm_wrist`, which `physics/ghost.py` animates: its `wrist_roll`
+edit lowers the forearm roll by the coach's amount (the roll above the stroke's good median).
+So a sensor-backed `rolled_wrist` is `ghost_ready` and `firm_wrist` is the coach's `ghost_fix`,
+with `ghost_fix_amount` set. `/ghost` offers `firm_wrist` only when the coach names it
+(`COACH_ONLY_FIXES` in `app/ghost/compare.ts`, #85), not from the catalogue. Labels say `(wrist sensor)`, plus
 `(MOCK sensor data)` when the data is synthetic. The field's contract is in
 `docs/interfaces.md`. The coach still treats `sensorAssisted` joints as guessed (it reads
 `filled`); trusting them is a coach change for later.
